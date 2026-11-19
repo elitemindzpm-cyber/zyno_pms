@@ -5,11 +5,6 @@ import { resolveAccountingAccounts } from "./account-resolver";
 import { postVoucher } from "./posting-engine";
 import {
   GUARANTEE_CHEQUE_DATE,
-  KAHRAMAA_DEPOSIT_ENTRIES,
-  KAHRAMAA_DEPOSIT_BY_UNIT,
-  SECURITY_DEPOSIT_GUARANTEE_ENTRIES,
-  SECURITY_DEPOSIT_GUARANTEE_BY_UNIT,
-  SECURITY_DEPOSIT_GUARANTEE_BY_RECEIPT,
   resolvePropertyFromUnitCode,
 } from "./kahramaa-deposits-data";
 
@@ -718,131 +713,17 @@ export interface VoucherDateCorrection {
 }
 
 export function buildKahramaaDepositVouchers(
-  unitInfoMap?: Map<string, { tenantName?: string; propertyName?: string }>
+  _unitInfoMap?: Map<string, { tenantName?: string; propertyName?: string }>
 ): FinanceVoucher[] {
-  const vouchersList: FinanceVoucher[] = [];
-  for (const entry of KAHRAMAA_DEPOSIT_ENTRIES) {
-    if (!entry.unitCode || Number(entry.amount) <= 0) continue;
-    const uUpper = entry.unitCode.toUpperCase().trim();
-    const info = unitInfoMap?.get(uUpper);
-    const propName = resolveCanonicalPropertyName(info?.propertyName, uUpper, "Main Portfolio");
-    const tenantName = info?.tenantName || "";
-    const rawMode = (entry.mode || "Cash").trim();
-    const isCash = rawMode.toLowerCase() === "cash";
-    const mode = isCash ? "Cash" : "Guarantee Cheque";
-    const effectiveDate = isCash ? (entry.date || "2026-09-30") : GUARANTEE_CHEQUE_DATE;
-    const drCode = isCash ? "12100001" : "12900002";
-    const drName = isCash ? "Cash In Hand" : "Deposit PDC In Hand";
-    const crCode = "21100004";
-    const crName = "Kahramaa Deposit Liability";
-    const vNo = `VCH-KAH-DEP-${uUpper}`;
-    const desc = isCash
-      ? `Kahramaa Utility Deposit (Cash) — ${tenantName ? `${tenantName} (${entry.unitCode})` : entry.unitCode}`
-      : `Guarantee Cheque — Kahramaa Utility Deposit — ${tenantName ? `${tenantName} (${entry.unitCode})` : entry.unitCode}`;
-
-    vouchersList.push({
-      id: `kah-dep-${uUpper.toLowerCase()}`,
-      voucher_no: vNo,
-      voucher_type: "Receipt Voucher",
-      date: effectiveDate,
-      name: desc,
-      debit: drName,
-      debit_code: drCode,
-      credit: crName,
-      credit_code: crCode,
-      amount: Number(entry.amount),
-      method: mode,
-      payment_mode: mode,
-      status: "Posted",
-      property_name: propName,
-      unit_ref: entry.unitCode,
-      tenant_name: tenantName,
-      account_code: crCode,
-      lines: [
-        {
-          id: `kah-dr-${uUpper.toLowerCase()}`,
-          type: "DR",
-          account: drName,
-          account_code: drCode,
-          amount: Number(entry.amount),
-          property_name: propName,
-          description: desc,
-        },
-        {
-          id: `kah-cr-${uUpper.toLowerCase()}`,
-          type: "CR",
-          account: crName,
-          account_code: crCode,
-          amount: Number(entry.amount),
-          property_name: propName,
-          description: desc,
-        },
-      ],
-    });
-  }
-  return vouchersList;
+  // Pure DB mode: zero static/mock entries
+  return [];
 }
 
 export function buildSecurityDepositGuaranteeVouchers(
-  unitInfoMap?: Map<string, { tenantName?: string; propertyName?: string }>
+  _unitInfoMap?: Map<string, { tenantName?: string; propertyName?: string }>
 ): FinanceVoucher[] {
-  const vouchersList: FinanceVoucher[] = [];
-  for (const entry of SECURITY_DEPOSIT_GUARANTEE_ENTRIES) {
-    if (!entry.unitCode || Number(entry.amount) <= 0) continue;
-    const uUpper = entry.unitCode.toUpperCase().trim();
-    const info = unitInfoMap?.get(uUpper);
-    const propName = resolveCanonicalPropertyName(info?.propertyName || entry.property, uUpper, "Main Portfolio");
-    const tenantName = info?.tenantName || entry.tenantName || "";
-    const effectiveDate = GUARANTEE_CHEQUE_DATE;
-    const drCode = "12900002";
-    const drName = "Deposit PDC In Hand";
-    const crCode = "21500001";
-    const crName = "Security Deposit Liability — Unit SL";
-    const vNo = entry.receiptNo ? `VCH-${entry.receiptNo}` : `VCH-SD-GCHQ-${uUpper}`;
-    const desc = `Guarantee Cheque — Security Deposit Receipt — ${tenantName ? `${tenantName} (${entry.unitCode})` : entry.unitCode}`;
-
-    vouchersList.push({
-      id: `sd-gchq-${uUpper.toLowerCase()}`,
-      voucher_no: vNo,
-      voucher_type: "Receipt Voucher",
-      date: effectiveDate,
-      name: desc,
-      debit: drName,
-      debit_code: drCode,
-      credit: crName,
-      credit_code: crCode,
-      amount: Number(entry.amount),
-      method: "Guarantee Cheque",
-      payment_mode: "Guarantee Cheque",
-      status: "Posted",
-      property_name: propName,
-      unit_ref: entry.unitCode,
-      tenant_name: tenantName,
-      account_code: crCode,
-      reference_number: entry.chequeRef,
-      lines: [
-        {
-          id: `sd-gchq-dr-${uUpper.toLowerCase()}`,
-          type: "DR",
-          account: drName,
-          account_code: drCode,
-          amount: Number(entry.amount),
-          property_name: propName,
-          description: desc,
-        },
-        {
-          id: `sd-gchq-cr-${uUpper.toLowerCase()}`,
-          type: "CR",
-          account: crName,
-          account_code: crCode,
-          amount: Number(entry.amount),
-          property_name: propName,
-          description: desc,
-        },
-      ],
-    });
-  }
-  return vouchersList;
+  // Pure DB mode: zero static/mock entries
+  return [];
 }
 
 export const VOUCHER_DATE_CORRECTIONS_KEY = "pms_voucher_date_corrections";

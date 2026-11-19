@@ -1,13 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useState, useRef, useCallback, type ReactNode } from "react";
 import { supabase } from "@/lib/supabase";
 import { DynamicMastersService } from "@/lib/dynamic-masters-service";
-import excelLeaseMasterData from "@/lib/excel-lease-master-data.json";
-import {
-  GUARANTEE_CHEQUE_DATE,
-  SECURITY_DEPOSIT_GUARANTEE_ENTRIES,
-  KAHRAMAA_DEPOSIT_ENTRIES,
-  resolvePropertyFromUnitCode,
-} from "@/lib/finance/kahramaa-deposits-data";
+
 
 const today = new Date();
 
@@ -549,51 +543,29 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       );
 
 
-      // Map existing relational leases with exact dates from Excel Lease Master
+      // Map existing relational leases strictly from database
       const existingLeases: PmsLease[] = (leasesRes.data || [])
         .map((l: any) => {
           const uIdentifier = unitMap.get(l.unit_id) || l.unit_ref || l.unit || "";
-          const uKey = uIdentifier.toUpperCase().trim();
-          const rawExcel = (excelLeaseMasterData as Record<string, any>)[uKey];
-
-          if (uKey.includes("OA22-10")) {
-            return null as any;
-          }
-
-          // The Excel master marks some units "Vacant". That placeholder only applies while the
-          // database has no live lease for the unit; a live DB lease (e.g. OA24-10) always wins.
-          const excelIsVacant = rawExcel?.tenant === "Vacant";
-          const dbLeaseIsLive = ["active", "fully_signed", "collection_completed", "renewal_due"].includes(
-            String(l.lease_status || "").toLowerCase()
-          );
-          if (excelIsVacant && !dbLeaseIsLive) {
-            return null as any;
-          }
-          const excelOverride = excelIsVacant ? undefined : rawExcel;
-
-          // The database is the source of truth; the static Excel master is only a fallback
-          // for records that have no value stored (otherwise contract edits would be ignored).
-          const startDate = l.commencement_date || excelOverride?.start || "";
-          const endDate = l.expiry_date || excelOverride?.end || "";
-          // Once a contract has been saved (has_rent_free not null) the stored free period is
-          // authoritative, including "no free period". Otherwise fall back to the Excel master.
+          const startDate = l.commencement_date || "";
+          const endDate = l.expiry_date || "";
           const rfSaved = l.has_rent_free != null;
-          const dbHasRf = rfSaved ? Boolean(l.has_rent_free) : Boolean(excelOverride?.hasRentFree);
-          const dbRfDays = rfSaved ? Number(l.rent_free_period_days ?? 0) : Number(excelOverride?.rentFreeDays ?? 0);
+          const dbHasRf = rfSaved ? Boolean(l.has_rent_free) : false;
+          const dbRfDays = rfSaved ? Number(l.rent_free_period_days ?? 0) : 0;
 
           return {
             id: l.lease_number || l.id,
             customerId: l.customer_id || "",
             reservationId: l.id || "",
-            property: excelOverride?.property || l.properties?.title || propMap.get(l.property_id) || "Property",
+            property: l.properties?.title || propMap.get(l.property_id) || "Property",
             unit: uIdentifier || "Unit",
-            tenantName: canonicalName(excelOverride?.tenant || l.customers?.full_name || l.tenant_name || "Tenant"),
+            tenantName: canonicalName(l.customers?.full_name || l.tenant_name || "Tenant"),
             startDate: startDate,
             endDate: endDate,
             monthlyRent: Number(l.rental_amount || 0) > 0
               ? Math.round((Number(l.rental_amount) / 12) * 100) / 100
-              : (excelOverride?.rent || 0),
-            securityDeposit: Number(l.security_deposit || 0) || excelOverride?.rent || 0,
+              : 0,
+            securityDeposit: Number(l.security_deposit || 0),
             pdcCount: Number(l.number_of_pdc || 12),
             paymentFrequency: (l.payment_frequency?.toLowerCase() as LeasePaymentFrequency) || "monthly",
             gracePeriodDays: Number(l.grace_period_days || 7),
@@ -607,77 +579,12 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             collectionCompleted: true,
             hasRentFree: dbHasRf,
             rentFreeDays: dbRfDays,
-            rentFreePosition: l.rent_free_position || excelOverride?.freePeriodPosition || "FIRST_MONTH",
+            rentFreePosition: l.rent_free_position || "FIRST_MONTH",
           } as any;
         })
         .filter(Boolean);
 
-      // Also synthesize active leases for occupied units or units with current_tenant / contract
-      const seenLeaseUnits = new Set(existingLeases.map((l) => `${l.property}-${l.unit}`.toLowerCase()));
       const unitContracts: PmsLease[] = [];
-
-      (unitsRes.data || []).forEach((u: any, idx: number) => {
-        const unitIdentifier = u.unit_ref || u.unit_name || u.unit_code || "Unit";
-        const uKey = unitIdentifier.toUpperCase().trim();
-        if (uKey.includes("OA22-10")) return;
-        const rawExcel = (excelLeaseMasterData as Record<string, any>)[uKey];
-        const excelIsVacant = Boolean(rawExcel && (rawExcel.tenant === "Vacant" || rawExcel.rent === 0));
-        // Excel "Vacant" is overridden when the unit record itself carries a real tenant and rent.
-        const unitHasLiveTenant = Boolean(u.current_tenant && String(u.current_tenant).trim()) && Number(u.current_rent || 0) > 0;
-        if (excelIsVacant && !unitHasLiveTenant) return;
-        const excelOverride = excelIsVacant ? undefined : rawExcel;
-
-        const isOccupied =
-          (u.status?.toLowerCase() === "occupied" ||
-          (u.lease_status?.toLowerCase() === "leased" && u.status?.toLowerCase() !== "available") ||
-          (u.current_tenant && u.current_tenant.trim().length > 0)) &&
-          // Exclude vacated / closed units regardless of stale field values
-          u.lease_status?.toUpperCase() !== "VACANT" &&
-          u.lease_status?.toUpperCase() !== "CLOSED" &&
-          u.lease_status?.toUpperCase() !== "TERMINATED" &&
-          u.status?.toLowerCase() !== "available" &&
-          u.status?.toLowerCase() !== "vacant";
-
-        if (isOccupied) {
-          const propTitle = u.properties?.title || propMap.get(u.property_id) || u.property_id || "Property";
-          const unitKey = `${propTitle}-${unitIdentifier}`.toLowerCase();
-
-          if (!seenLeaseUnits.has(unitKey)) {
-            seenLeaseUnits.add(unitKey);
-
-            const startDate = u.contract_start_date || excelOverride?.start || "2026-01-01";
-            const endDate = u.contract_end_date || excelOverride?.end || (() => { const d = new Date(); d.setFullYear(d.getFullYear() + 1); return d.toISOString().split("T")[0]; })();
-            const monthlyRent = Number(u.current_rent || 0) > 0 ? Number(u.current_rent) : (excelOverride?.rent || Number(u.price || u.rent_amount || 6500));
-            const secDeposit = Number(u.security_deposit_amount || monthlyRent);
-            const contractNo = u.contract_no || `L-${unitIdentifier.replace(/\W/g, "") || u.id.slice(0, 5)}`;
-            const tenantName = canonicalName(excelOverride?.tenant || (u.current_tenant && u.current_tenant.trim() ? u.current_tenant.trim() : `Tenant (${unitIdentifier})`));
-            const custId = `cust-${u.id.slice(0, 8)}`;
-
-            const hasRf = Boolean(excelOverride?.hasRentFree || excelOverride?.freePeriodMonths || excelOverride?.tenureMonths === 13);
-            const rfDays = excelOverride?.rentFreeDays || (excelOverride?.freePeriodMonths ? excelOverride.freePeriodMonths * 30 : (hasRf ? 30 : 0));
-            const rfPos = excelOverride?.freePeriodPosition || "FIRST_MONTH";
-            const pdcCnt = Number(excelOverride?.numberOfPDCs || excelOverride?.pdcCount || 12);
-
-            unitContracts.push({
-              id: contractNo,
-              customerId: custId,
-              reservationId: `res-${u.id.slice(0, 8)}`,
-              property: excelOverride?.property || propTitle,
-              unit: unitIdentifier,
-              tenantName: tenantName,
-              startDate: startDate,
-              endDate: endDate,
-              monthlyRent: monthlyRent,
-              securityDeposit: secDeposit,
-              pdcCount: pdcCnt,
-              paymentFrequency: ((u.rent_frequency || "monthly").toLowerCase() as LeasePaymentFrequency),
-              gracePeriodDays: 7,
-              penalties: "5%",
-              maintenanceResponsibility: u.maintenance_responsibility || "Landlord",
-              utilityResponsibility: "Tenant",
-              parkingDetails: u.parking_slot_no ? `Slot ${u.parking_slot_no}` : "Dedicated parking",
-              specialConditions: hasRf ? `13-Month Term with ${rfDays}-Day Rent-Free Concession (${rfPos === 'LAST_MONTH' ? 'Month 13' : 'Month 1'})` : "Standard Tenancy Agreement",
-              noticePeriodDays: 60,
               status: "active",
               collectionCompleted: true,
               hasRentFree: hasRf,
@@ -997,88 +904,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         }
       } catch { /* ignore */ }
 
-      // Guarantee Cheques Integration (Security Deposit & Kahramaa Deposits dated 31.12.2036)
-      // 1. Security Deposit Guarantee Cheques (90 entries)
-      for (const sd of SECURITY_DEPOSIT_GUARANTEE_ENTRIES) {
-        if (!sd.unitCode || Number(sd.amount) <= 0) continue;
-        const uUpper = sd.unitCode.trim().toUpperCase();
-        const chqRef = (sd.chequeRef || `GCHQ-${uUpper}`).trim();
-        const exists = mappedPdcs.some(mp => {
-          const mChq = String(mp.chequeNo || mp.chequeNumber || "").trim().toLowerCase();
-          const mUnit = String(mp.unit || mp.unitName || "").trim().toUpperCase();
-          return (mChq === chqRef.toLowerCase()) || (mUnit === uUpper && (mp.isGuaranteeCheque || mp.notes?.toLowerCase().includes("guarantee cheque")));
-        });
-        if (!exists) {
-          const linkedLease = mappedLeases.find(l => String(l.unit).toUpperCase() === uUpper);
-          const tName = sd.tenantName || linkedLease?.tenantName || "Tenant";
-          const pName = sd.property || linkedLease?.property || resolvePropertyFromUnitCode(uUpper);
-          mappedPdcs.push({
-            id: `pdc-sd-gchq-${uUpper.toLowerCase()}`,
-            leaseId: linkedLease?.id || "",
-            chequeNo: chqRef,
-            chequeNumber: chqRef,
-            bank: "Guarantee Cheque (Undated / In Hand)",
-            propertyName: pName,
-            unitName: sd.unitCode,
-            tenantName: tName,
-            date: GUARANTEE_CHEQUE_DATE,
-            dueDate: GUARANTEE_CHEQUE_DATE,
-            depositDate: "",
-            unit: sd.unitCode,
-            property: pName,
-            tenureStart: "2026-10-01",
-            tenureEnd: GUARANTEE_CHEQUE_DATE,
-            amount: Number(sd.amount),
-            status: "received",
-            payerName: tName,
-            period: "Tenancy Security Deposit (Guarantee Cheque)",
-            isGuaranteeCheque: true,
-            notes: `Guarantee Cheque — Security Deposit (${tName} - ${sd.unitCode})`,
-            type: "Security Deposit Guarantee Cheque",
-          });
-        }
-      }
-
-      // 2. Kahramaa Deposit Guarantee Cheques (42 entries)
-      for (const kd of KAHRAMAA_DEPOSIT_ENTRIES) {
-        if (!kd.unitCode || kd.mode !== "Guarantee Cheque" || Number(kd.amount) <= 0) continue;
-        const uUpper = kd.unitCode.trim().toUpperCase();
-        const chqRef = `KAH-GCHQ-${uUpper}`;
-        const exists = mappedPdcs.some(mp => {
-          const mChq = String(mp.chequeNo || mp.chequeNumber || "").trim().toLowerCase();
-          const mUnit = String(mp.unit || mp.unitName || "").trim().toUpperCase();
-          return (mChq === chqRef.toLowerCase()) || (mUnit === uUpper && (mp.isGuaranteeCheque || mp.notes?.toLowerCase().includes("kahramaa")));
-        });
-        if (!exists) {
-          const linkedLease = mappedLeases.find(l => String(l.unit).toUpperCase() === uUpper);
-          const tName = linkedLease?.tenantName || "Tenant";
-          const pName = kd.property || linkedLease?.property || resolvePropertyFromUnitCode(uUpper);
-          mappedPdcs.push({
-            id: `pdc-kah-gchq-${uUpper.toLowerCase()}`,
-            leaseId: linkedLease?.id || "",
-            chequeNo: chqRef,
-            chequeNumber: chqRef,
-            bank: "Guarantee Cheque (Undated / In Hand)",
-            propertyName: pName,
-            unitName: kd.unitCode,
-            tenantName: tName,
-            date: GUARANTEE_CHEQUE_DATE,
-            dueDate: GUARANTEE_CHEQUE_DATE,
-            depositDate: "",
-            unit: kd.unitCode,
-            property: pName,
-            tenureStart: "2026-10-01",
-            tenureEnd: GUARANTEE_CHEQUE_DATE,
-            amount: Number(kd.amount),
-            status: "received",
-            payerName: tName,
-            period: "Kahramaa Utility Deposit (Guarantee Cheque)",
-            isGuaranteeCheque: true,
-            notes: `Guarantee Cheque — Kahramaa Utility Deposit (${kd.unitCode})`,
-            type: "Kahramaa Utility Deposit Guarantee Cheque",
-          });
-        }
-      }
+      // Guarantee Cheques Integration - strict DB data only, zero static fallbacks
 
       // Map raw reservations or synthesize realistic reservations from available units and ALL active/expired leases
       const rawReservations: PmsReservation[] = (reservationsRes.data || []).map((r: any) => ({
@@ -1121,36 +947,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         }
       });
 
-      let mappedReservations: PmsReservation[] = combinedReservations;
-      if (mappedReservations.length === 0) {
-        // Generate seed reservations for Available or Reserved units
-        const availUnits = mappedUnits.filter((u) => u.status === "Available" || u.status === "Reserved").slice(0, 6);
-        const sampleProspects = [
-          { name: "Khalid Ibrahim Al-Hajri", agent: "Sarah Jenkins (Leasing Officer)", days: 7, rent: 7500 },
-          { name: "Doha Engineering Services W.L.L.", agent: "Ahmed Al-Baker (Corporate Leasing)", days: 10, rent: 11000 },
-          { name: "Mariam Al-Kaabi", agent: "Sarah Jenkins (Leasing Officer)", days: 5, rent: 6200 },
-          { name: "Apex International Media", agent: "Marketing Direct", days: 14, rent: 8500 },
-          { name: "Mohammed Reza", agent: "Leasing Desk", days: 3, rent: 5800 },
-        ];
+      const mappedReservations: PmsReservation[] = combinedReservations;
 
-        mappedReservations = (availUnits.length > 0 ? availUnits : mappedUnits.slice(0, 5)).map((u, i) => {
-          const prospect = sampleProspects[i % sampleProspects.length];
-          const todayIso = today.toISOString().split("T")[0];
-          const validDate = addDays(today, prospect.days);
-          return {
-            id: `res-seed-${i + 1}`,
-            property: u.property,
-            unit: u.unit,
-            tenantName: prospect.name,
-            agent: prospect.agent,
-            startDate: todayIso,
-            validUntil: validDate,
-            rent: u.rent || prospect.rent,
-            status: i === 0 ? "reserved" : i === 1 ? "reserved" : i === 2 ? "reserved" : i === 3 ? "converted" : "reserved",
-            remarks: "Deposit hold confirmed. Tenancy agreement under draft.",
-          };
-        });
-      }
 
       const standardVouchers: PmsVoucher[] = (vouchersRes.data || [])
         .filter((v: any) => v.source_type === "SECURITY_DEPOSIT" || (v.voucher_number || "").startsWith("VCH-SD-"))
