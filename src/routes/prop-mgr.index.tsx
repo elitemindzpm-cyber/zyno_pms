@@ -1,0 +1,222 @@
+import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
+import { Plus, Home, Inbox, CalendarIcon, Loader2, BarChart, Package, Users } from "lucide-react";
+import { useEffect, useState } from "react";
+import { fetchAllProperties, supabase, type Property } from "@/lib/supabase";
+
+export const Route = createFileRoute("/prop-mgr/")({
+  component: HostDashboard,
+});
+
+const MOCK_HOST_ID = "00000000-0000-4000-8000-000000000001";
+const FALLBACK_IMAGE = "https://images.unsplash.com/photo-1600596542815-ffad4c1539a9?auto=format&fit=crop&q=80&w=100";
+
+function HostDashboard() {
+  const navigate = useNavigate();
+  const [properties, setProperties] = useState<Property[]>([]);
+  const [hostName, setHostName] = useState("Host");
+  const [stats, setStats] = useState({
+    properties: 0,
+    units: 0,
+    activeLeases: 0,
+    monthlyRevenue: 0,
+    pendingTickets: 0,
+    assetsCount: 0,
+    employeesCount: 0
+  });
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    async function loadDashboard() {
+      // Get current user session (for name display if logged in)
+      const { data: { session } } = await supabase.auth.getSession();
+      
+      if (session?.user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('full_name')
+          .eq('id', session.user.id)
+          .single();
+          
+        if (profile) {
+          setHostName(profile.full_name.split(' ')[0]);
+        }
+      }
+      
+      // Internal PMS: fetch ALL properties (host_id is null on seeded data)
+      fetchAllProperties()
+        .then(setProperties)
+        .catch(console.error)
+        .finally(() => setLoading(false));
+
+      // Fetch real stats without host_id filter
+      try {
+        const { count: propCount } = await supabase.from('properties').select('*', { count: 'exact', head: true });
+        const { count: unitCount } = await supabase.from('units').select('*', { count: 'exact', head: true });
+        const { count: leaseCount } = await supabase.from('leases').select('*', { count: 'exact', head: true }).or('lease_status.ilike.active,lease_status.ilike.fully_signed,lease_status.ilike.renewed');
+        const { count: occupiedCount } = await supabase.from('units').select('*', { count: 'exact', head: true }).or('status.ilike.occupied,lease_status.ilike.leased');
+        
+        const { data: propData } = await supabase.from('properties').select('id');
+        const propIds = propData?.map(p => p.id) || [];
+        
+        let assetsCount = 0;
+        let empIds = new Set();
+        if (propIds.length > 0) {
+          const { data: assetsData } = await supabase.from('assets').select('id, assigned_employee_id').in('assigned_property_id', propIds);
+          if (assetsData) {
+            assetsCount = assetsData.length;
+            assetsData.forEach(a => { if (a.assigned_employee_id) empIds.add(a.assigned_employee_id) });
+          }
+        }
+        
+        setStats({
+          properties: propCount || 0,
+          units: unitCount || 0,
+          activeLeases: leaseCount || occupiedCount || 0,
+          monthlyRevenue: 0, 
+          pendingTickets: 0,
+          assetsCount: assetsCount,
+          employeesCount: empIds.size
+        });
+      } catch (e) {
+        console.warn("Could not load full stats, using defaults/partial");
+      }
+    }
+    
+    loadDashboard();
+  }, []);
+
+  const activeCount = properties.filter(p => p.is_active).length;
+  const monthlyEarnings = properties.reduce((sum, p) => sum + p.base_price_per_night * 15, 0);
+
+  return (
+    <div className="space-y-6">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <h1 className="text-3xl font-bold tracking-tight">Welcome back, {hostName}</h1>
+          <p className="text-muted-foreground mt-2">Manage your properties and reservations.</p>
+        </div>
+      </div>
+
+      {/* Stats Cards */}
+      <div className="grid gap-6 md:grid-cols-4 mb-8">
+        <Card className="border-border">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Active Listings</CardTitle>
+            <Home className="h-4 w-4 text-primary" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-foreground">{loading ? <Loader2 className="h-5 w-5 animate-spin text-primary" /> : activeCount}</div>
+            <p className="text-xs text-muted-foreground">Properties live in portfolio</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Active Leases</CardTitle>
+            <BarChart className="h-4 w-4 text-primary" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-foreground">{loading ? <Loader2 className="h-5 w-5 animate-spin text-primary" /> : stats.activeLeases}</div>
+            <p className="text-xs text-muted-foreground">Currently active contracts</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Available Units</CardTitle>
+            <Home className="h-4 w-4 text-primary" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-foreground">{loading ? <Loader2 className="h-5 w-5 animate-spin text-primary" /> : stats.units}</div>
+            <p className="text-xs text-muted-foreground">Total rentable units</p>
+          </CardContent>
+        </Card>
+        <Card className="border-border">
+          <CardHeader className="flex flex-row items-center justify-between pb-2">
+            <CardTitle className="text-sm font-medium text-muted-foreground">Linked Assets</CardTitle>
+            <Package className="h-4 w-4 text-primary" />
+          </CardHeader>
+          <CardContent>
+            <div className="text-2xl font-bold text-foreground">{loading ? <Loader2 className="h-5 w-5 animate-spin text-primary" /> : stats.assetsCount}</div>
+            <p className="text-xs text-muted-foreground">Assigned to your properties</p>
+          </CardContent>
+        </Card>
+      </div>
+
+      {/* Properties Table */}
+      <Card className="border-border">
+        <CardHeader>
+          <CardTitle>Your Properties</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {loading ? (
+            <div className="flex items-center justify-center py-12">
+              <Loader2 className="h-6 w-6 animate-spin text-primary" />
+              <span className="ml-2 text-muted-foreground">Loading properties...</span>
+            </div>
+          ) : properties.length === 0 ? (
+            <div className="text-center py-12 text-muted-foreground">
+              <Home className="mx-auto h-12 w-12 mb-4 opacity-30" />
+              <p className="font-medium">No properties yet</p>
+              <p className="text-sm mt-1">Get started by creating your first listing.</p>
+              <Button className="mt-4 bg-primary hover:bg-primary/90 text-primary-foreground" onClick={() => alert("Create property coming soon!")}>
+                <Plus className="mr-2 h-4 w-4" /> Create listing
+              </Button>
+            </div>
+          ) : (
+            <div className="relative w-full overflow-auto">
+              <table className="w-full caption-bottom text-sm">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Property</th>
+                    <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Status</th>
+                    <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Price/Night</th>
+                    <th className="h-12 px-4 text-left align-middle font-medium text-muted-foreground">Location</th>
+                    <th className="h-12 px-4 text-right align-middle font-medium text-muted-foreground">Action</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {properties.map((property) => {
+                    const thumb = property.property_images?.find(i => i.is_primary)?.image_url
+                      || property.property_images?.[0]?.image_url
+                      || FALLBACK_IMAGE;
+                    return (
+                      <tr key={property.id} className="border-b border-border hover:bg-muted/50 transition-colors">
+                        <td className="p-4 align-middle font-medium">
+                          <div className="flex items-center gap-3">
+                            <div className="h-10 w-10 rounded bg-muted overflow-hidden flex-shrink-0">
+                              <img src={thumb} className="object-cover h-full w-full" alt={property.title} />
+                            </div>
+                            <span className="line-clamp-1">{property.title}</span>
+                          </div>
+                        </td>
+                        <td className="p-4 align-middle">
+                          <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${
+                            property.is_active
+                              ? "bg-green-100 text-green-700"
+                              : "bg-muted text-muted-foreground"
+                          }`}>
+                            {property.is_active ? "Active" : "Unlisted"}
+                          </span>
+                        </td>
+                        <td className="p-4 align-middle">${property.base_price_per_night}</td>
+                        <td className="p-4 align-middle text-muted-foreground">{property.city}, {property.country}</td>
+                        <td className="p-4 align-middle text-right">
+                          <Button asChild variant="outline" size="sm">
+                            <Link to="/prop-mgr/manage/$id" params={{ id: property.id }}>
+                              Manage
+                            </Link>
+                          </Button>
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </div>
+  );
+}

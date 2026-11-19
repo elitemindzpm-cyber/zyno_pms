@@ -1,0 +1,1447 @@
+import type { LinkProps } from "@tanstack/react-router";
+import {
+  Activity,
+  BarChart3,
+  Bell,
+  BookOpen,
+  Box,
+  Building2,
+  CreditCard,
+  DollarSign,
+  DoorOpen,
+  FileSignature,
+  FileText,
+  Globe,
+  LayoutDashboard,
+  Package,
+  Receipt,
+  SearchCheck,
+  Settings,
+  ShieldCheck,
+  Ticket,
+  Users,
+  Wallet,
+  Wrench,
+  Home,
+  MapPin,
+  MinusCircle,
+  PlusCircle,
+  FileCheck,
+  TrendingUp,
+  TrendingDown,
+  Database,
+  ClipboardList,
+  UserCheck,
+  Key,
+  AlertTriangle,
+  PieChart,
+  Landmark,
+  Scale,
+  Clock,
+  Calendar,
+  Award,
+  LogOut,
+  Megaphone,
+  ArrowLeftRight,
+  Layers,
+  Inbox,
+  Truck,
+  ShieldAlert,
+  Banknote,
+  Phone,
+  Lock,
+  RefreshCw,
+  GitBranch,
+  FileSpreadsheet,
+  HelpCircle,
+} from "lucide-react";
+import type { NavGroup, NavItem, NavModule } from "@/components/app-shell";
+import type { Profile } from "@/lib/supabase";
+
+export type ConsoleKey =
+  | "portal"
+  | "prop-mgr"
+  | "admin"
+  | "super-admin"
+  | "leasing"
+  | "finance"
+  | "cashier"
+  | "maintenance";
+
+type TitleRule = {
+  match: string;
+  title: string;
+  mode?: "exact" | "prefix";
+};
+
+type ConsoleConfig = {
+  variant: "portal" | "admin" | "host";
+  consoleLabel: string;
+  titleFallback: string;
+  user: {
+    initials: string;
+    name: string;
+    meta: string;
+  };
+  nav?: NavItem[];
+  navGroups?: NavGroup[];
+  /** 3-layer nav: Module → Sub-module → Items */
+  navModules?: NavModule[];
+  titleRules: TitleRule[];
+};
+
+export function getEssNavModule(baseRoute: string): NavModule {
+  return {
+    module: "My Self-Service",
+    icon: <UserCheck className="h-4 w-4" />,
+    color: "text-teal-500",
+    bg: "bg-teal-500/10",
+    activeBg: "bg-teal-500",
+    groups: [
+      {
+        group: "Profile & Security",
+        icon: <Users className="h-3.5 w-3.5" />,
+        color: "text-teal-500",
+        bg: "bg-teal-500/10",
+        items: [
+          { to: baseRoute as any, search: { tab: "my_details" }, label: "My Profile Details", icon: <Users className="h-3.5 w-3.5" /> },
+          { to: baseRoute as any, search: { tab: "change_password" }, label: "Change Password", icon: <Key className="h-3.5 w-3.5" /> },
+        ],
+      },
+      {
+        group: "Attendance & Leaves",
+        icon: <Clock className="h-3.5 w-3.5" />,
+        color: "text-blue-500",
+        bg: "bg-blue-500/10",
+        items: [
+          { to: baseRoute as any, search: { tab: "attendance" }, label: "Punch Attendance", icon: <Clock className="h-3.5 w-3.5" /> },
+          { to: baseRoute as any, search: { tab: "leaves" }, label: "Apply Leave", icon: <Calendar className="h-3.5 w-3.5" /> },
+          { to: baseRoute as any, search: { tab: "cancel_leave" }, label: "Cancel Leave", icon: <MinusCircle className="h-3.5 w-3.5" /> },
+        ],
+      },
+      {
+        group: "Payroll & Claims",
+        icon: <DollarSign className="h-3.5 w-3.5" />,
+        color: "text-emerald-500",
+        bg: "bg-emerald-500/10",
+        items: [
+          { to: baseRoute as any, search: { tab: "payslips" }, label: "My Payslips", icon: <DollarSign className="h-3.5 w-3.5" /> },
+          { to: baseRoute as any, search: { tab: "statutory_gratuity" }, label: "Statutory & Gratuity", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+          { to: baseRoute as any, search: { tab: "expenses" }, label: "Claim Expense", icon: <Receipt className="h-3.5 w-3.5" /> },
+          { to: baseRoute as any, search: { tab: "loans" }, label: "Apply Loan", icon: <CreditCard className="h-3.5 w-3.5" /> },
+        ],
+      },
+      {
+        group: "Support & Exit",
+        icon: <HelpCircle className="h-3.5 w-3.5" />,
+        color: "text-rose-500",
+        bg: "bg-rose-500/10",
+        items: [
+          { to: baseRoute as any, search: { tab: "helpdesk" }, label: "Help Desk", icon: <HelpCircle className="h-3.5 w-3.5" /> },
+          { to: baseRoute as any, search: { tab: "resignation" }, label: "Notice & Exit", icon: <LogOut className="h-3.5 w-3.5" /> },
+        ],
+      },
+    ],
+  };
+}
+
+const consoleConfigs: Record<ConsoleKey, ConsoleConfig> = {
+  // ── Tenant Portal ──────────────────────────────────────────────────────────
+  portal: {
+    variant: "portal",
+    consoleLabel: "Tenant Portal",
+    titleFallback: "Tenant Portal",
+    user: {
+      initials: "TP",
+      name: "Tenant User",
+      meta: "Payments and maintenance self service",
+    },
+    navModules: [
+      {
+        module: "My Home",
+        icon: <Home className="h-4 w-4" />,
+        color: "text-sky-500",
+        bg: "bg-sky-500/10",
+        activeBg: "bg-sky-500",
+        groups: [
+          {
+            group: "Home",
+            icon: <Home className="h-3.5 w-3.5" />,
+            color: "text-sky-500",
+            bg: "bg-sky-500/10",
+            items: [
+              { to: "/portal", label: "Overview", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+              { to: "/portal/lease", label: "My Lease", icon: <FileSignature className="h-3.5 w-3.5" /> },
+              { to: "/portal/payments", label: "Payments & Invoices", icon: <CreditCard className="h-3.5 w-3.5" /> },
+              { to: "/portal/documents", label: "Documents", icon: <FileText className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Services",
+        icon: <Wrench className="h-4 w-4" />,
+        color: "text-orange-500",
+        bg: "bg-orange-500/10",
+        activeBg: "bg-orange-500",
+        groups: [
+          {
+            group: "Building Services",
+            icon: <Wrench className="h-3.5 w-3.5" />,
+            color: "text-orange-500",
+            bg: "bg-orange-500/10",
+            items: [
+              { to: "/portal/tickets", label: "Maintenance", icon: <Ticket className="h-3.5 w-3.5" /> },
+              { to: "/portal/bookings", label: "Facility Bookings", icon: <Calendar className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Account",
+        icon: <Settings className="h-4 w-4" />,
+        color: "text-slate-500",
+        bg: "bg-slate-500/10",
+        activeBg: "bg-slate-500",
+        groups: [
+          {
+            group: "Account",
+            icon: <Settings className="h-3.5 w-3.5" />,
+            color: "text-slate-500",
+            bg: "bg-slate-500/10",
+            items: [
+              { to: "/portal/settings", label: "Account Settings", icon: <Settings className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+    ],
+    titleRules: [
+      { match: "/portal", title: "My Home" },
+      { match: "/portal/lease", title: "My Lease" },
+      { match: "/portal/payments", title: "Payments & Invoices" },
+      { match: "/portal/documents", title: "Documents" },
+      { match: "/portal/tickets", title: "Maintenance Tickets" },
+      { match: "/portal/bookings", title: "Facility Bookings" },
+      { match: "/portal/settings", title: "Account Settings" },
+    ],
+  },
+
+
+
+  // ── Property Manager Console ───────────────────────────────────────────────
+    "prop-mgr": {
+    variant: "host",
+    consoleLabel: "Property Manager Console",
+    titleFallback: "Property Manager Console",
+    user: {
+      initials: "PM",
+      name: "Property Manager",
+      meta: "Portfolio operations and approvals",
+    },
+    navModules: [
+      {
+        module: "Portfolio",
+        icon: <Building2 className="h-4 w-4" />,
+        color: "text-blue-500",
+        bg: "bg-blue-500/10",
+        activeBg: "bg-blue-500",
+        groups: [
+          {
+            group: "Overview",
+            icon: <LayoutDashboard className="h-3.5 w-3.5" />,
+            color: "text-blue-500",
+            bg: "bg-blue-500/10",
+            items: [
+              { to: "/prop-mgr", label: "Dashboard", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/properties", label: "Properties", icon: <Building2 className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/units", label: "Units", icon: <DoorOpen className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Leasing",
+        icon: <FileSignature className="h-4 w-4" />,
+        color: "text-emerald-500",
+        bg: "bg-emerald-500/10",
+        activeBg: "bg-emerald-500",
+        groups: [
+          {
+            group: "Lease Lifecycle",
+            icon: <FileSignature className="h-3.5 w-3.5" />,
+            color: "text-emerald-500",
+            bg: "bg-emerald-500/10",
+            items: [
+              { to: "/prop-mgr/leasing", search: { tab: "customers" }, label: "Customer Master", icon: <Users className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/leasing", search: { tab: "reservations" }, label: "Reservations", icon: <Lock className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/leasing", search: { tab: "documents" }, label: "Documents", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/leasing", search: { tab: "agreement" }, label: "Agreement Terms", icon: <FileSignature className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/leasing", search: { tab: "signatures" }, label: "Signatures", icon: <FileCheck className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/leasing", search: { tab: "keys" }, label: "Keys & Check-In", icon: <Key className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/leasing", search: { tab: "vouchers" }, label: "Vouchers", icon: <Receipt className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/leasing", search: { tab: "renewals" }, label: "Renewals", icon: <RefreshCw className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/leasing", search: { tab: "checkout" }, label: "Checkout", icon: <LogOut className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/leasing", search: { tab: "audit" }, label: "Audit Flow", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/leases", label: "All Leases", icon: <ClipboardList className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Finance",
+        icon: <Wallet className="h-4 w-4" />,
+        color: "text-violet-500",
+        bg: "bg-violet-500/10",
+        activeBg: "bg-violet-500",
+        groups: [
+          {
+            group: "Setup",
+            icon: <Settings className="h-3.5 w-3.5" />,
+            color: "text-blue-500",
+            bg: "bg-blue-500/10",
+            items: [
+              { to: "/prop-mgr/finance", search: { tab: "financial_year" }, label: "Financial Year", icon: <Settings className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "region" }, label: "Region", icon: <MapPin className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "vendor_list" }, label: "Vendor List", icon: <Users className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "customer_list" }, label: "Customer List", icon: <UserCheck className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "cost_center" }, label: "Cost Center", icon: <Landmark className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "budget_head" }, label: "Budget Head & Type", icon: <PieChart className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Core Finance",
+            icon: <Wallet className="h-3.5 w-3.5" />,
+            color: "text-emerald-500",
+            bg: "bg-emerald-500/10",
+            items: [
+              { to: "/prop-mgr/finance", search: { tab: "finance_dashboard" }, label: "Finance Dashboard", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "posting_period" }, label: "Posting Period", icon: <Settings className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "chart_of_accounts" }, label: "Chart Of Account", icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "journal_ledger" }, label: "Journal Ledger", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "credit_debit_builder" }, label: "Credit Debit Builder", icon: <FileText className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Payments",
+            icon: <CreditCard className="h-3.5 w-3.5" />,
+            color: "text-purple-500",
+            bg: "bg-purple-500/10",
+            items: [
+              { to: "/prop-mgr/finance", search: { tab: "grn_cost_mapping" }, label: "GRN Cost Mapping", icon: <Settings className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "payable_invoice" }, label: "Payable Invoice", icon: <CreditCard className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "journal_voucher" }, label: "Journal Voucher", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "payment_voucher" }, label: "Payment Voucher", icon: <CreditCard className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "receivable_invoice" }, label: "Receivable Invoices & Bulk Billing", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "receipt_voucher" }, label: "Receipt Voucher", icon: <Receipt className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "debit_note" }, label: "Debit Note", icon: <MinusCircle className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "credit_note" }, label: "Credit Note", icon: <PlusCircle className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Receivables",
+            icon: <TrendingUp className="h-3.5 w-3.5" />,
+            color: "text-orange-500",
+            bg: "bg-orange-500/10",
+            items: [
+              { to: "/prop-mgr/finance", search: { tab: "pdc_management" }, label: "PDC Management", icon: <FileCheck className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "deposits_guarantees" }, label: "Deposits & Guarantees", icon: <Landmark className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "legal_receivables" }, label: "Legal Receivables", icon: <Scale className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "payroll_sync" }, label: "Payroll Sync Engine", icon: <Users className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Banking",
+            icon: <Landmark className="h-3.5 w-3.5" />,
+            color: "text-amber-500",
+            bg: "bg-amber-500/10",
+            items: [
+              { to: "/prop-mgr/finance", search: { tab: "bank" }, label: "Bank", icon: <Building2 className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "bank_account" }, label: "Bank Account", icon: <CreditCard className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "bank_clearance" }, label: "Bank Clearance", icon: <FileCheck className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "bank_reconciliation" }, label: "Bank Reconciliation", icon: <Scale className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "bank_reconciliation_statement_list" }, label: "Reconciliation Statements", icon: <FileText className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Finance Reports",
+            icon: <PieChart className="h-3.5 w-3.5" />,
+            color: "text-rose-500",
+            bg: "bg-rose-500/10",
+            items: [
+              { to: "/prop-mgr/finance", search: { tab: "unbilled_units_report" }, label: "Unbilled Units Report", icon: <AlertTriangle className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "ar_ap_aging" }, label: "AR & AP Aging Report", icon: <Clock className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "customer_statement" }, label: "Customer Statement of Account", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "vendor_statement" }, label: "Vendor Statement of Account", icon: <Users className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "pdc_maturity_report" }, label: "PDC Maturity & Bounce Forecast", icon: <FileCheck className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "lease_expiry_report" }, label: "Lease Expiry & Vacancy Loss", icon: <Calendar className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "utility_recharge_report" }, label: "Utility Recharge & Recovery", icon: <Activity className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "deposit_reconciliation_report" }, label: "Deposit & Snagging Reconciliation", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "property_pnl" }, label: "Property Profit & Loss", icon: <Building2 className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "revenue_generation" }, label: "Revenue Generation", icon: <TrendingUp className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "trial_balance_simple" }, label: "Trial Balance (Simple)", icon: <Scale className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "trial_balance" }, label: "Trial Balance", icon: <Scale className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "profit_and_loss" }, label: "Profit & Loss", icon: <TrendingUp className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "balance_sheet" }, label: "Balance Sheet", icon: <Landmark className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "general_ledger" }, label: "General Ledger", icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "cash_flow_statement" }, label: "Cash Flow Statement", icon: <Wallet className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "cash_book" }, label: "Cash Book", icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "petty_cash_book" }, label: "Petty Cash Book", icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/finance", search: { tab: "cash_on_hand" }, label: "Cash On Hand", icon: <Wallet className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Assets",
+        icon: <Package className="h-4 w-4" />,
+        color: "text-amber-500",
+        bg: "bg-amber-500/10",
+        activeBg: "bg-amber-500",
+        groups: [
+          {
+            group: "Asset Management",
+            icon: <Package className="h-3.5 w-3.5" />,
+            color: "text-amber-500",
+            bg: "bg-amber-500/10",
+            items: [
+              { to: "/prop-mgr/assets", search: { tab: "registry" }, label: "Asset Registry", icon: <Package className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/assets", search: { tab: "depreciation" }, label: "Asset Depreciation", icon: <TrendingDown className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/assets", search: { tab: "allocation" }, label: "Asset Allocation", icon: <ArrowLeftRight className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/assets", search: { tab: "warranty" }, label: "Asset Warranty", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/assets", search: { tab: "maintenance" }, label: "Asset Maintenance", icon: <Wrench className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/assets", search: { tab: "revaluation" }, label: "Asset Revaluation", icon: <TrendingUp className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/assets", search: { tab: "sell" }, label: "Asset Sale", icon: <DollarSign className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/assets", search: { tab: "writeoff" }, label: "Asset Write-off", icon: <AlertTriangle className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Procurement",
+        icon: <ClipboardList className="h-4 w-4" />,
+        color: "text-cyan-500",
+        bg: "bg-cyan-500/10",
+        activeBg: "bg-cyan-500",
+        groups: [
+          {
+            group: "Procurement Operations",
+            icon: <ClipboardList className="h-3.5 w-3.5" />,
+            color: "text-cyan-500",
+            bg: "bg-cyan-500/10",
+            items: [
+              { to: "/prop-mgr/procurement", search: { tab: "requests" }, label: "Purchase Requests", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/procurement", search: { tab: "orders" }, label: "Purchase Orders", icon: <ClipboardList className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/procurement", search: { tab: "shipments" }, label: "Shipments", icon: <Truck className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/procurement", search: { tab: "receiving" }, label: "GRN / Receiving", icon: <Receipt className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Vendor & Sourcing",
+            icon: <Users className="h-3.5 w-3.5" />,
+            color: "text-violet-500",
+            bg: "bg-violet-500/10",
+            items: [
+              { to: "/prop-mgr/procurement", search: { tab: "rfx" }, label: "RFX / Tenders", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/procurement", search: { tab: "quotations" }, label: "Quotations", icon: <FileCheck className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Approvals & Invoices",
+            icon: <CreditCard className="h-3.5 w-3.5" />,
+            color: "text-emerald-500",
+            bg: "bg-emerald-500/10",
+            items: [
+              { to: "/prop-mgr/procurement", search: { tab: "inbox" }, label: "Approval Inbox", icon: <Inbox className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/procurement", search: { tab: "invoices" }, label: "Payable Invoices", icon: <CreditCard className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Control Tower",
+            icon: <BarChart3 className="h-3.5 w-3.5" />,
+            color: "text-rose-500",
+            bg: "bg-rose-500/10",
+            items: [
+              { to: "/prop-mgr/procurement", search: { tab: "dashboard" }, label: "Procurement Analytics", icon: <BarChart3 className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/procurement", search: { tab: "supplier_perf" }, label: "Supplier Scorecards", icon: <Activity className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Asset & Maintenance Integration",
+            icon: <Package className="h-3.5 w-3.5" />,
+            color: "text-amber-500",
+            bg: "bg-amber-500/10",
+            items: [
+              { to: "/prop-mgr/procurement", search: { tab: "assets" }, label: "Asset Linkage", icon: <Package className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/procurement", search: { tab: "maintenance" }, label: "Maintenance Stock", icon: <Wrench className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Item Master",
+            icon: <Database className="h-3.5 w-3.5" />,
+            color: "text-indigo-500",
+            bg: "bg-indigo-500/10",
+            items: [
+              { to: "/prop-mgr/procurement", search: { tab: "catalog" }, label: "Item Catalog", icon: <Database className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Vendor Management",
+        icon: <Banknote className="h-4 w-4" />,
+        color: "text-violet-500",
+        bg: "bg-violet-500/10",
+        activeBg: "bg-violet-500",
+        groups: [
+          {
+            group: "Vendor Registry",
+            icon: <Users className="h-3.5 w-3.5" />,
+            color: "text-violet-500",
+            bg: "bg-violet-500/10",
+            items: [
+              { to: "/prop-mgr/vendors", search: { tab: "master" }, label: "Vendor Master", icon: <Users className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Financial",
+            icon: <CreditCard className="h-3.5 w-3.5" />,
+            color: "text-cyan-500",
+            bg: "bg-cyan-500/10",
+            items: [
+              { to: "/prop-mgr/vendors", search: { tab: "invoices" }, label: "AP Invoices", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/vendors", search: { tab: "advances" }, label: "Vendor Advances", icon: <DollarSign className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/vendors", search: { tab: "payments" }, label: "Payment History", icon: <CreditCard className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/vendors", search: { tab: "performance" }, label: "Supplier Scorecard", icon: <TrendingUp className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Operations",
+        icon: <Wrench className="h-4 w-4" />,
+        color: "text-orange-500",
+        bg: "bg-orange-500/10",
+        activeBg: "bg-orange-500",
+        groups: [
+          {
+            group: "Maintenance",
+            icon: <Wrench className="h-3.5 w-3.5" />,
+            color: "text-orange-500",
+            bg: "bg-orange-500/10",
+            items: [
+              { to: "/prop-mgr/maintenance", search: { tab: "tickets" }, label: "Service Tickets", icon: <Ticket className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/maintenance", search: { tab: "work_orders" }, label: "Work Orders", icon: <ClipboardList className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/maintenance", search: { tab: "ppm" }, label: "Preventive (PPM)", icon: <Calendar className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/maintenance", search: { tab: "technicians" }, label: "Technicians & Teams", icon: <Users className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/maintenance", search: { tab: "inventory" }, label: "Spare Parts Inventory", icon: <Package className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/maintenance", search: { tab: "vendor_jobs" }, label: "Vendor Jobs & AP", icon: <Building2 className="h-3.5 w-3.5" /> },
+              { to: "/prop-mgr/maintenance", search: { tab: "chargebacks" }, label: "Costing & Chargebacks", icon: <DollarSign className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Management",
+            icon: <ShieldCheck className="h-3.5 w-3.5" />,
+            color: "text-rose-500",
+            bg: "bg-rose-500/10",
+            items: [
+              { to: "/prop-mgr/approvals", label: "Approvals", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      getEssNavModule("/prop-mgr/ess"),
+    ],
+    titleRules: [
+      { match: "/prop-mgr", title: "Operations Dashboard" },
+      { match: "/prop-mgr/properties", title: "Properties" },
+      { match: "/prop-mgr/units", title: "Units" },
+      { match: "/prop-mgr/leasing", title: "Lease Lifecycle" },
+      { match: "/prop-mgr/leases", title: "All Leases" },
+      { match: "/prop-mgr/finance", title: "Finance" },
+      { match: "/prop-mgr/assets", title: "Assets" },
+      { match: "/prop-mgr/procurement", title: "Procurement" },
+      { match: "/prop-mgr/vendors", title: "Vendor Management" },
+      { match: "/prop-mgr/maintenance", title: "Maintenance" },
+      { match: "/prop-mgr/approvals", title: "Approvals" },
+      { match: "/prop-mgr/users", title: "Users" },
+      { match: "/prop-mgr/ess", title: "My Self-Service (ESS)" },
+    ],
+  },
+
+  // ── Admin Console ──────────────────────────────────────────────────────────
+  admin: {
+    variant: "admin",
+    consoleLabel: "Staff Console",
+    titleFallback: "Staff Console",
+    user: {
+      initials: "AD",
+      name: "Admin User",
+      meta: "System administration and oversight",
+    },
+    navModules: [
+      {
+        module: "Portfolio",
+        icon: <Building2 className="h-4 w-4" />,
+        color: "text-blue-500",
+        bg: "bg-blue-500/10",
+        activeBg: "bg-blue-500",
+        groups: [
+          {
+            group: "Overview",
+            icon: <LayoutDashboard className="h-3.5 w-3.5" />,
+            color: "text-blue-500",
+            bg: "bg-blue-500/10",
+            items: [
+              { to: "/admin", label: "Dashboard", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+              { to: "/admin/properties", label: "Properties", icon: <Building2 className="h-3.5 w-3.5" /> },
+              { to: "/admin/units", label: "Units", icon: <DoorOpen className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Leasing",
+        icon: <FileSignature className="h-4 w-4" />,
+        color: "text-emerald-500",
+        bg: "bg-emerald-500/10",
+        activeBg: "bg-emerald-500",
+        groups: [
+          {
+            group: "Lease Lifecycle",
+            icon: <FileSignature className="h-3.5 w-3.5" />,
+            color: "text-emerald-500",
+            bg: "bg-emerald-500/10",
+            items: [
+              { to: "/admin/leases", search: { tab: "customers" }, label: "Customer Master", icon: <Users className="h-3.5 w-3.5" /> },
+              { to: "/admin/leases", search: { tab: "reservations" }, label: "Reservations", icon: <Lock className="h-3.5 w-3.5" /> },
+              { to: "/admin/leases", search: { tab: "documents" }, label: "Documents", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/admin/leases", search: { tab: "agreement" }, label: "Agreement Terms", icon: <FileSignature className="h-3.5 w-3.5" /> },
+              { to: "/admin/leases", search: { tab: "signatures" }, label: "Signatures", icon: <FileCheck className="h-3.5 w-3.5" /> },
+              { to: "/admin/leases", search: { tab: "keys" }, label: "Keys & Check-In", icon: <Key className="h-3.5 w-3.5" /> },
+              { to: "/admin/leases", search: { tab: "vouchers" }, label: "Vouchers", icon: <Receipt className="h-3.5 w-3.5" /> },
+              { to: "/admin/leases", search: { tab: "renewals" }, label: "Renewals", icon: <RefreshCw className="h-3.5 w-3.5" /> },
+              { to: "/admin/leases", search: { tab: "checkout" }, label: "Checkout", icon: <LogOut className="h-3.5 w-3.5" /> },
+              { to: "/admin/leases", search: { tab: "audit" }, label: "Audit Flow", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+              { to: "/admin/leases/all", label: "All Leases", icon: <FileText className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Finance",
+        icon: <Wallet className="h-4 w-4" />,
+        color: "text-violet-500",
+        bg: "bg-violet-500/10",
+        activeBg: "bg-violet-500",
+        groups: [
+          {
+            group: "Setup",
+            icon: <Settings className="h-3.5 w-3.5" />,
+            color: "text-blue-500",
+            bg: "bg-blue-500/10",
+            items: [
+              { to: "/admin/finance", search: { tab: "financial_year" }, label: "Financial Year", icon: <Settings className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "region" }, label: "Region", icon: <MapPin className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "vendor_list" }, label: "Vendor List", icon: <Users className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "customer_list" }, label: "Customer List", icon: <UserCheck className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "cost_center" }, label: "Cost Center", icon: <Landmark className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "budget_head" }, label: "Budget Head & Type", icon: <PieChart className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Core Finance",
+            icon: <Wallet className="h-3.5 w-3.5" />,
+            color: "text-emerald-500",
+            bg: "bg-emerald-500/10",
+            items: [
+              { to: "/admin/finance", search: { tab: "finance_dashboard" }, label: "Finance Dashboard", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "posting_period" }, label: "Posting Period", icon: <Settings className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "chart_of_accounts" }, label: "Chart Of Account", icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "journal_ledger" }, label: "Journal Ledger", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "credit_debit_builder" }, label: "Credit Debit Builder", icon: <FileText className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Payments",
+            icon: <CreditCard className="h-3.5 w-3.5" />,
+            color: "text-purple-500",
+            bg: "bg-purple-500/10",
+            items: [
+              { to: "/admin/finance", search: { tab: "grn_cost_mapping" }, label: "GRN Cost Mapping", icon: <Settings className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "payable_invoice" }, label: "Payable Invoice", icon: <CreditCard className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "journal_voucher" }, label: "Journal Voucher", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "payment_voucher" }, label: "Payment Voucher", icon: <CreditCard className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "receivable_invoice" }, label: "Receivable Invoices & Bulk Billing", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "receipt_voucher" }, label: "Receipt Voucher", icon: <Receipt className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "debit_note" }, label: "Debit Note", icon: <MinusCircle className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "credit_note" }, label: "Credit Note", icon: <PlusCircle className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Receivables",
+            icon: <TrendingUp className="h-3.5 w-3.5" />,
+            color: "text-orange-500",
+            bg: "bg-orange-500/10",
+            items: [
+              { to: "/admin/finance", search: { tab: "pdc_management" }, label: "PDC Management", icon: <FileCheck className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "deposits_guarantees" }, label: "Deposits & Guarantees", icon: <Landmark className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "legal_receivables" }, label: "Legal Receivables", icon: <Scale className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "payroll_sync" }, label: "Payroll Sync Engine", icon: <Users className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Banking",
+            icon: <Landmark className="h-3.5 w-3.5" />,
+            color: "text-amber-500",
+            bg: "bg-amber-500/10",
+            items: [
+              { to: "/admin/finance", search: { tab: "bank" }, label: "Bank", icon: <Building2 className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "bank_account" }, label: "Bank Account", icon: <CreditCard className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "bank_clearance" }, label: "Bank Clearance", icon: <FileCheck className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "bank_reconciliation" }, label: "Bank Reconciliation", icon: <Scale className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "bank_reconciliation_statement_list" }, label: "Reconciliation Statements", icon: <FileText className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Finance Reports",
+            icon: <PieChart className="h-3.5 w-3.5" />,
+            color: "text-rose-500",
+            bg: "bg-rose-500/10",
+            items: [
+              { to: "/admin/finance", search: { tab: "unbilled_units_report" }, label: "Unbilled Units Report", icon: <AlertTriangle className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "ar_ap_aging" }, label: "AR & AP Aging Report", icon: <Clock className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "customer_statement" }, label: "Customer Statement of Account", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "vendor_statement" }, label: "Vendor Statement of Account", icon: <Users className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "pdc_maturity_report" }, label: "PDC Maturity & Bounce Forecast", icon: <FileCheck className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "lease_expiry_report" }, label: "Lease Expiry & Vacancy Loss", icon: <Calendar className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "utility_recharge_report" }, label: "Utility Recharge & Recovery", icon: <Activity className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "deposit_reconciliation_report" }, label: "Deposit & Snagging Reconciliation", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "revenue_generation" }, label: "Revenue Generation", icon: <TrendingUp className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "trial_balance_simple" }, label: "Trial Balance (Simple)", icon: <Scale className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "trial_balance" }, label: "Trial Balance", icon: <Scale className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "profit_and_loss" }, label: "Profit & Loss", icon: <TrendingUp className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "balance_sheet" }, label: "Balance Sheet", icon: <Landmark className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "general_ledger" }, label: "General Ledger", icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "cash_flow_statement" }, label: "Cash Flow Statement", icon: <Wallet className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "cash_book" }, label: "Cash Book", icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "petty_cash_book" }, label: "Petty Cash Book", icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { to: "/admin/finance", search: { tab: "cash_on_hand" }, label: "Cash On Hand", icon: <Wallet className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Assets",
+        icon: <Package className="h-4 w-4" />,
+        color: "text-amber-500",
+        bg: "bg-amber-500/10",
+        activeBg: "bg-amber-500",
+        groups: [
+          {
+            group: "Asset Management",
+            icon: <Package className="h-3.5 w-3.5" />,
+            color: "text-amber-500",
+            bg: "bg-amber-500/10",
+            items: [
+              { to: "/admin/assets", search: { tab: "registry" }, label: "Asset Registry", icon: <Package className="h-3.5 w-3.5" /> },
+              { to: "/admin/assets", search: { tab: "depreciation" }, label: "Asset Depreciation", icon: <TrendingDown className="h-3.5 w-3.5" /> },
+              { to: "/admin/assets", search: { tab: "allocation" }, label: "Asset Allocation", icon: <ArrowLeftRight className="h-3.5 w-3.5" /> },
+              { to: "/admin/assets", search: { tab: "warranty" }, label: "Asset Warranty", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+              { to: "/admin/assets", search: { tab: "maintenance" }, label: "Asset Maintenance", icon: <Wrench className="h-3.5 w-3.5" /> },
+              { to: "/admin/assets", search: { tab: "revaluation" }, label: "Asset Revaluation", icon: <TrendingUp className="h-3.5 w-3.5" /> },
+              { to: "/admin/assets", search: { tab: "sell" }, label: "Asset Sale", icon: <DollarSign className="h-3.5 w-3.5" /> },
+              { to: "/admin/assets", search: { tab: "writeoff" }, label: "Asset Write-off", icon: <AlertTriangle className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Procurement",
+        icon: <ClipboardList className="h-4 w-4" />,
+        color: "text-cyan-500",
+        bg: "bg-cyan-500/10",
+        activeBg: "bg-cyan-500",
+        groups: [
+          {
+            group: "Procurement Operations",
+            icon: <ClipboardList className="h-3.5 w-3.5" />,
+            color: "text-cyan-500",
+            bg: "bg-cyan-500/10",
+            items: [
+              { to: "/admin/procurement", search: { tab: "requests" }, label: "Purchase Requests", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/admin/procurement", search: { tab: "orders" }, label: "Purchase Orders", icon: <ClipboardList className="h-3.5 w-3.5" /> },
+              { to: "/admin/procurement", search: { tab: "shipments" }, label: "Shipments", icon: <Truck className="h-3.5 w-3.5" /> },
+              { to: "/admin/procurement", search: { tab: "receiving" }, label: "GRN / Receiving", icon: <Receipt className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Vendor & Sourcing",
+            icon: <Users className="h-3.5 w-3.5" />,
+            color: "text-violet-500",
+            bg: "bg-violet-500/10",
+            items: [
+              { to: "/admin/procurement", search: { tab: "rfx" }, label: "RFX / Tenders", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/admin/procurement", search: { tab: "quotations" }, label: "Quotations", icon: <FileCheck className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Approvals & Invoices",
+            icon: <CreditCard className="h-3.5 w-3.5" />,
+            color: "text-emerald-500",
+            bg: "bg-emerald-500/10",
+            items: [
+              { to: "/admin/procurement", search: { tab: "inbox" }, label: "Approval Inbox", icon: <Inbox className="h-3.5 w-3.5" /> },
+              { to: "/admin/procurement", search: { tab: "invoices" }, label: "Payable Invoices", icon: <CreditCard className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Control Tower",
+            icon: <BarChart3 className="h-3.5 w-3.5" />,
+            color: "text-rose-500",
+            bg: "bg-rose-500/10",
+            items: [
+              { to: "/admin/procurement", search: { tab: "dashboard" }, label: "Procurement Analytics", icon: <BarChart3 className="h-3.5 w-3.5" /> },
+              { to: "/admin/procurement", search: { tab: "supplier_perf" }, label: "Supplier Scorecards", icon: <Activity className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Asset & Maintenance Integration",
+            icon: <Package className="h-3.5 w-3.5" />,
+            color: "text-amber-500",
+            bg: "bg-amber-500/10",
+            items: [
+              { to: "/admin/procurement", search: { tab: "assets" }, label: "Asset Linkage", icon: <Package className="h-3.5 w-3.5" /> },
+              { to: "/admin/procurement", search: { tab: "maintenance" }, label: "Maintenance Stock", icon: <Wrench className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Item Master",
+            icon: <Database className="h-3.5 w-3.5" />,
+            color: "text-indigo-500",
+            bg: "bg-indigo-500/10",
+            items: [
+              { to: "/admin/procurement", search: { tab: "catalog" }, label: "Item Catalog", icon: <Database className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Vendor Management",
+        icon: <Banknote className="h-4 w-4" />,
+        color: "text-violet-500",
+        bg: "bg-violet-500/10",
+        activeBg: "bg-violet-500",
+        groups: [
+          {
+            group: "Vendor Registry",
+            icon: <Users className="h-3.5 w-3.5" />,
+            color: "text-violet-500",
+            bg: "bg-violet-500/10",
+            items: [
+              { to: "/admin/vendors", search: { tab: "master" }, label: "Vendor Master", icon: <Users className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Financial",
+            icon: <CreditCard className="h-3.5 w-3.5" />,
+            color: "text-cyan-500",
+            bg: "bg-cyan-500/10",
+            items: [
+              { to: "/admin/vendors", search: { tab: "invoices" }, label: "AP Invoices", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/admin/vendors", search: { tab: "payments" }, label: "Payment History", icon: <CreditCard className="h-3.5 w-3.5" /> },
+              { to: "/admin/vendors", search: { tab: "performance" }, label: "Supplier Scorecard", icon: <TrendingUp className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Operations",
+        icon: <Wrench className="h-4 w-4" />,
+        color: "text-orange-500",
+        bg: "bg-orange-500/10",
+        activeBg: "bg-orange-500",
+        groups: [
+          {
+            group: "Maintenance",
+            icon: <Wrench className="h-3.5 w-3.5" />,
+            color: "text-orange-500",
+            bg: "bg-orange-500/10",
+            items: [
+              { to: "/admin/maintenance", search: { tab: "tickets" }, label: "Service Tickets", icon: <Ticket className="h-3.5 w-3.5" /> },
+              { to: "/admin/maintenance", search: { tab: "work_orders" }, label: "Work Orders", icon: <ClipboardList className="h-3.5 w-3.5" /> },
+              { to: "/admin/maintenance", search: { tab: "ppm" }, label: "Preventive (PPM)", icon: <Calendar className="h-3.5 w-3.5" /> },
+              { to: "/admin/maintenance", search: { tab: "technicians" }, label: "Technicians & Teams", icon: <Users className="h-3.5 w-3.5" /> },
+              { to: "/admin/maintenance", search: { tab: "inventory" }, label: "Spare Parts Inventory", icon: <Package className="h-3.5 w-3.5" /> },
+              { to: "/admin/maintenance", search: { tab: "vendor_jobs" }, label: "Vendor Jobs & AP", icon: <Building2 className="h-3.5 w-3.5" /> },
+              { to: "/admin/maintenance", search: { tab: "chargebacks" }, label: "Costing & Chargebacks", icon: <DollarSign className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "HRMS",
+        icon: <Users className="h-4 w-4" />,
+        color: "text-teal-500",
+        bg: "bg-teal-500/10",
+        activeBg: "bg-teal-500",
+        groups: [
+          {
+            group: "Core HR",
+            icon: <UserCheck className="h-3.5 w-3.5" />,
+            color: "text-teal-500",
+            bg: "bg-teal-500/10",
+            items: [
+              { to: "/admin/hrms", search: { tab: "dashboard" }, label: "Dashboard", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+              { to: "/admin/hrms", search: { tab: "employees" }, label: "Employees", icon: <Users className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Workforce & Time",
+            icon: <Clock className="h-3.5 w-3.5" />,
+            color: "text-blue-500",
+            bg: "bg-blue-500/10",
+            items: [
+              { to: "/admin/hrms", search: { tab: "attendance" }, label: "Attendance & Shifts", icon: <Clock className="h-3.5 w-3.5" /> },
+              { to: "/admin/hrms", search: { tab: "leaves" }, label: "Leave Management", icon: <Calendar className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Payroll & Finance",
+            icon: <Wallet className="h-3.5 w-3.5" />,
+            color: "text-emerald-500",
+            bg: "bg-emerald-500/10",
+            items: [
+              { to: "/admin/hrms", search: { tab: "payroll" }, label: "Payroll & Salary", icon: <CreditCard className="h-3.5 w-3.5" /> },
+              { to: "/admin/hrms", search: { tab: "expenses" }, label: "Expenses & Claims", icon: <Receipt className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Appraisal & Lifecycle",
+            icon: <Award className="h-3.5 w-3.5" />,
+            color: "text-rose-500",
+            bg: "bg-rose-500/10",
+            items: [
+              { to: "/admin/hrms", search: { tab: "performance" }, label: "Performance / KPA", icon: <Award className="h-3.5 w-3.5" /> },
+              { to: "/admin/hrms", search: { tab: "exit_lifecycle" }, label: "Exit & FNF", icon: <LogOut className="h-3.5 w-3.5" /> },
+              { to: "/admin/hrms", search: { tab: "services" }, label: "Help Desk & Notices", icon: <Megaphone className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      getEssNavModule("/admin/ess"),
+      {
+        module: "System & Config",
+        icon: <Settings className="h-4 w-4" />,
+        color: "text-blue-500",
+        bg: "bg-blue-500/10",
+        activeBg: "bg-blue-500",
+        groups: [
+          {
+            group: "HR Masters",
+            icon: <Users className="h-3.5 w-3.5" />,
+            color: "text-blue-500",
+            bg: "bg-blue-500/10",
+            items: [
+              { to: "/admin/masters", search: { tab: "gender" }, label: "Gender", icon: <Users className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "role" }, label: "Roles", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "department" }, label: "Department", icon: <Building2 className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "designation" }, label: "Designation", icon: <UserCheck className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "employment_type" }, label: "Employment Type", icon: <Award className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "work_location" }, label: "Work Location", icon: <MapPin className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "employee_status" }, label: "Employee Status", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Asset Masters",
+            icon: <Package className="h-3.5 w-3.5" />,
+            color: "text-emerald-500",
+            bg: "bg-emerald-500/10",
+            items: [
+              { to: "/admin/masters", search: { tab: "asset_category" }, label: "Asset Categories", icon: <Package className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "asset_subcategory" }, label: "Asset Subcategories", icon: <Package className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "ownership_type" }, label: "Ownership Types", icon: <Settings className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "asset_condition" }, label: "Conditions", icon: <Settings className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "asset_status" }, label: "Statuses", icon: <Settings className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Property Masters",
+            icon: <Building2 className="h-3.5 w-3.5" />,
+            color: "text-amber-500",
+            bg: "bg-amber-500/10",
+            items: [
+              { to: "/admin/masters", search: { tab: "property_type" }, label: "Property Type", icon: <Building2 className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "property_category" }, label: "Property Category", icon: <Layers className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "property_status" }, label: "Property Status", icon: <Activity className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "country" }, label: "Country", icon: <Globe className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "vat_tax_treatment" }, label: "VAT / Tax Treatment", icon: <Receipt className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "amenities_facilities" }, label: "Amenities / Facilities", icon: <Box className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Unit Masters",
+            icon: <DoorOpen className="h-3.5 w-3.5" />,
+            color: "text-purple-500",
+            bg: "bg-purple-500/10",
+            items: [
+              { to: "/admin/masters", search: { tab: "unit_type" }, label: "Unit Type", icon: <DoorOpen className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "unit_usage" }, label: "Unit Usage", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "bedroom_count" }, label: "Bedrooms", icon: <Home className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "bathroom_count" }, label: "Bathrooms", icon: <Home className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "view_type" }, label: "View Types", icon: <Globe className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "furnishing" }, label: "Furnishing", icon: <Box className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "unit_status" }, label: "Unit Status", icon: <Activity className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "lease_status" }, label: "Lease Status", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "rent_frequency" }, label: "Rent Frequency", icon: <Clock className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "maintenance_responsibility" }, label: "Maintenance Responsibility", icon: <Wrench className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "security_deposit_type" }, label: "Security Deposit", icon: <Landmark className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Admin & Operations",
+            icon: <ShieldCheck className="h-3.5 w-3.5" />,
+            color: "text-rose-500",
+            bg: "bg-rose-500/10",
+            items: [
+              { to: "/admin/branding", label: "Document Branding & Signatures", icon: <FileSignature className="h-3.5 w-3.5" /> },
+              { to: "/admin/imports", label: "Excel Bulk Import", icon: <FileSpreadsheet className="h-3.5 w-3.5" /> },
+              { to: "/admin/notifications", label: "Notification Center", icon: <Bell className="h-3.5 w-3.5" /> },
+              { to: "/admin/audit-logs", search: { tab: "audit-trail" }, label: "System Audit Trail", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+              { to: "/admin/audit-logs", search: { tab: "engagement-analytics" }, label: "Notification Engagement Analytics", icon: <BarChart3 className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Access Control",
+            icon: <Lock className="h-3.5 w-3.5" />,
+            color: "text-violet-500",
+            bg: "bg-violet-500/10",
+            items: [
+              { to: "/admin/permissions", label: "Permissions & RBAC", icon: <ShieldAlert className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+    ],
+    titleRules: [
+      { match: "/admin", title: "Staff Console" },
+      { match: "/admin/branding", title: "Document Branding & Signatures" },
+      { match: "/admin/properties", title: "Properties" },
+      { match: "/admin/units", title: "Units" },
+      { match: "/admin/leasing", title: "Lease Lifecycle" },
+      { match: "/admin/leases/all", title: "All Leases" },
+      { match: "/admin/leases", title: "Lease Lifecycle" },
+      { match: "/admin/finance", title: "Finance" },
+      { match: "/admin/assets", title: "Assets" },
+      { match: "/admin/procurement", title: "Procurement" },
+      { match: "/admin/vendors", title: "Vendor Management" },
+      { match: "/admin/maintenance", title: "Maintenance" },
+      { match: "/admin/masters", title: "Masters & Config" },
+      { match: "/admin/users", title: "Users" },
+      { match: "/admin/hrms", title: "HRMS" },
+      { match: "/admin/ess", title: "My Self-Service (ESS)" },
+      { match: "/admin/imports", title: "Excel Import & Bulk Management Engine" },
+      { match: "/admin/notifications", title: "Notification Center" },
+      { match: "/admin/audit-logs", title: "System Audit Trail & Notification Analytics" },
+      { match: "/admin/permissions", title: "Role Permissions & RBAC Matrix" },
+    ],
+  },
+  // ── Super Admin Console ───────────────────────────────────────────────────
+  "super-admin": {
+    variant: "admin",
+    consoleLabel: "Super Admin Console",
+    titleFallback: "Super Admin Console",
+    user: {
+      initials: "SA",
+      name: "Super Admin",
+      meta: "Platform governance and tenancy",
+    },
+    navModules: [
+      {
+        module: "Platform",
+        icon: <Globe className="h-4 w-4" />,
+        color: "text-blue-500",
+        bg: "bg-blue-500/10",
+        activeBg: "bg-blue-500",
+        groups: [
+          {
+            group: "Overview",
+            icon: <LayoutDashboard className="h-3.5 w-3.5" />,
+            color: "text-blue-500",
+            bg: "bg-blue-500/10",
+            items: [
+              { to: "/super-admin", label: "Platform Overview", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+              { to: "/super-admin/analytics", label: "Platform Analytics", icon: <BarChart3 className="h-3.5 w-3.5" /> },
+              { to: "/super-admin/health", label: "Health & Telemetry", icon: <Activity className="h-3.5 w-3.5" /> },
+              { to: "/super-admin/config", label: "Global Config", icon: <Globe className="h-3.5 w-3.5" /> },
+              { to: "/super-admin/alerts", label: "In-App & Alerts", icon: <Bell className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Tenants",
+        icon: <Building2 className="h-4 w-4" />,
+        color: "text-indigo-500",
+        bg: "bg-indigo-500/10",
+        activeBg: "bg-indigo-500",
+        groups: [
+          {
+            group: "Tenant Management",
+            icon: <Building2 className="h-3.5 w-3.5" />,
+            color: "text-indigo-500",
+            bg: "bg-indigo-500/10",
+            items: [
+              { to: "/super-admin/tenants", label: "Tenant Management", icon: <Building2 className="h-3.5 w-3.5" /> },
+              { to: "/super-admin/billing", label: "Billing & Plans", icon: <CreditCard className="h-3.5 w-3.5" /> },
+              { to: "/super-admin/invoices", label: "Platform Invoices", icon: <Receipt className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      {
+        module: "Security",
+        icon: <ShieldCheck className="h-4 w-4" />,
+        color: "text-rose-500",
+        bg: "bg-rose-500/10",
+        activeBg: "bg-rose-500",
+        groups: [
+          {
+            group: "Access Control",
+            icon: <ShieldCheck className="h-3.5 w-3.5" />,
+            color: "text-rose-500",
+            bg: "bg-rose-500/10",
+            items: [
+              { to: "/super-admin/users", label: "User Management", icon: <Users className="h-3.5 w-3.5" /> },
+              { to: "/super-admin/permissions", label: "Permissions & RBAC", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Governance & Audit",
+            icon: <FileText className="h-3.5 w-3.5" />,
+            color: "text-indigo-500",
+            bg: "bg-indigo-500/10",
+            items: [
+              { to: "/super-admin/security", search: { tab: "audit-trail" }, label: "System Audit Trail", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+              { to: "/super-admin/security", search: { tab: "engagement-analytics" }, label: "Notification Engagement Analytics", icon: <BarChart3 className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+    ],
+    titleRules: [
+      { match: "/super-admin", title: "Platform Overview" },
+      { match: "/super-admin/tenants", title: "Tenant Management" },
+      { match: "/super-admin/users", title: "User Management" },
+      { match: "/super-admin/permissions", title: "Permissions & RBAC" },
+      { match: "/super-admin/billing", title: "Billing & Plans" },
+      { match: "/super-admin/invoices", title: "Platform Subscription Invoices" },
+      { match: "/super-admin/analytics", title: "Platform Analytics" },
+      { match: "/super-admin/health", title: "Platform Health & Microservices Telemetry" },
+      { match: "/super-admin/config", title: "Global Configuration" },
+      { match: "/super-admin/alerts", title: "In-App & Alerts Governance" },
+      { match: "/super-admin/security", title: "System Audit Trail & Notification Analytics" },
+    ],
+  },
+
+  // ── Leasing Console ───────────────────────────────────────────────────────
+  leasing: {
+    variant: "admin",
+    consoleLabel: "Leasing Console",
+    titleFallback: "Leasing Console",
+    user: {
+      initials: "LS",
+      name: "Leasing Officer",
+      meta: "Reservations and lease execution",
+    },
+    navModules: [
+      {
+        module: "Leasing",
+        icon: <FileSignature className="h-4 w-4" />,
+        color: "text-emerald-500",
+        bg: "bg-emerald-500/10",
+        activeBg: "bg-emerald-500",
+        groups: [
+          {
+            group: "Lease Lifecycle",
+            icon: <FileSignature className="h-3.5 w-3.5" />,
+            color: "text-emerald-500",
+            bg: "bg-emerald-500/10",
+            items: [
+              { to: "/leasing", label: "Overview", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+              { to: "/leasing/create", search: { tab: "customers" }, label: "Customer Master", icon: <Users className="h-3.5 w-3.5" /> },
+              { to: "/leasing/create", search: { tab: "reservations" }, label: "Reservations", icon: <Lock className="h-3.5 w-3.5" /> },
+              { to: "/leasing/create", search: { tab: "documents" }, label: "KYC & Documents", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/leasing/create", search: { tab: "agreement" }, label: "Lease Agreement", icon: <FileSignature className="h-3.5 w-3.5" /> },
+              { to: "/leasing/create", search: { tab: "signatures" }, label: "Signatures & Approval", icon: <FileCheck className="h-3.5 w-3.5" /> },
+              { to: "/leasing/create", search: { tab: "vouchers" }, label: "Lease Vouchers", icon: <Receipt className="h-3.5 w-3.5" /> },
+              { to: "/leasing/create", search: { tab: "audit" }, label: "Forward to Property Manager", icon: <GitBranch className="h-3.5 w-3.5" /> },
+              { to: "/leasing/manage", label: "Manage Leases", icon: <ClipboardList className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      getEssNavModule("/leasing/ess"),
+    ],
+    titleRules: [
+      { match: "/leasing", title: "Leasing Overview" },
+      { match: "/leasing/manage", title: "Manage Leases" },
+      { match: "/leasing/create", title: "Create Lease" },
+      { match: "/leasing/ess", title: "My Self-Service (ESS)" },
+    ],
+  },
+
+  // ── Finance Console ───────────────────────────────────────────────────────
+  finance: {
+    variant: "admin",
+    consoleLabel: "Finance Console",
+    titleFallback: "Finance Operations",
+    user: {
+      initials: "FI",
+      name: "Finance Controller",
+      meta: "Financial reporting and ledger management",
+    },
+    navModules: [
+      {
+        module: "Finance",
+        icon: <Wallet className="h-4 w-4" />,
+        color: "text-violet-500",
+        bg: "bg-violet-500/10",
+        activeBg: "bg-violet-500",
+        groups: [
+          {
+            group: "Setup",
+            icon: <Settings className="h-3.5 w-3.5" />,
+            color: "text-blue-500",
+            bg: "bg-blue-500/10",
+            items: [
+              { to: "/finance", search: { tab: "financial_year" }, label: "Financial Year", icon: <Settings className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "region" }, label: "Region", icon: <MapPin className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "vendor_list" }, label: "Vendor List", icon: <Users className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "customer_list" }, label: "Customer List", icon: <UserCheck className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "cost_center" }, label: "Cost Center", icon: <Landmark className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "budget_head" }, label: "Budget Head & Type", icon: <PieChart className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Core Finance",
+            icon: <BookOpen className="h-3.5 w-3.5" />,
+            color: "text-indigo-500",
+            bg: "bg-indigo-500/10",
+            items: [
+              { to: "/finance", search: { tab: "finance_dashboard" }, label: "Finance Dashboard", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "posting_period" }, label: "Posting Period", icon: <Clock className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "chart_of_accounts" }, label: "Chart Of Account", icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "journal_voucher" }, label: "Journal Voucher", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "general_ledger" }, label: "General Ledger", icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "credit_debit_builder" }, label: "Credit Debit Builder", icon: <PlusCircle className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "contra_entry" }, label: "Contra Entry", icon: <ArrowLeftRight className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "credit_note" }, label: "Credit Note", icon: <Receipt className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "debit_note" }, label: "Debit Note", icon: <Receipt className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Payments",
+            icon: <Wallet className="h-3.5 w-3.5" />,
+            color: "text-emerald-500",
+            bg: "bg-emerald-500/10",
+            items: [
+              { to: "/finance", search: { tab: "financial_year" }, label: "Financial Year", icon: <Calendar className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "region" }, label: "Region", icon: <MapPin className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "vendor_list" }, label: "Vendor List", icon: <Users className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "customer_list" }, label: "Customer List", icon: <UserCheck className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "cost_center" }, label: "Cost Center", icon: <Landmark className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "budget_head" }, label: "Budget Head & Type", icon: <PieChart className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "payable_invoice" }, label: "Payable Invoices (AP)", icon: <Receipt className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "grn_mapping" }, label: "GRN Cost Mapping", icon: <Layers className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "payment_voucher" }, label: "Payment Voucher", icon: <CreditCard className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Banking",
+            icon: <Landmark className="h-3.5 w-3.5" />,
+            color: "text-amber-500",
+            bg: "bg-amber-500/10",
+            items: [
+              { to: "/finance", search: { tab: "bank" }, label: "Bank", icon: <Building2 className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "bank_account" }, label: "Bank Accounts", icon: <CreditCard className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "bank_clearance" }, label: "Bank Clearance", icon: <FileCheck className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "bank_reconciliation" }, label: "Bank Reconciliation", icon: <Scale className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "bank_reconciliation_statement_list" }, label: "Reconciliation Statements", icon: <FileText className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Receivables",
+            icon: <TrendingUp className="h-3.5 w-3.5" />,
+            color: "text-cyan-500",
+            bg: "bg-cyan-500/10",
+            items: [
+              { to: "/finance", search: { tab: "receipt_voucher" }, label: "Receipt Voucher", icon: <Receipt className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "receivable_invoice" }, label: "Receivable Invoices & Bulk Billing", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "pdc_management" }, label: "PDC Management", icon: <Clock className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "deposits_guarantees" }, label: "Deposits & Guarantees", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "legal_receivables" }, label: "Legal Receivables", icon: <Scale className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "payroll_sync" }, label: "Payroll Sync Engine", icon: <Users className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
+            group: "Finance Reports",
+            icon: <PieChart className="h-3.5 w-3.5" />,
+            color: "text-rose-500",
+            bg: "bg-rose-500/10",
+            items: [
+              { to: "/finance", search: { tab: "unbilled_units_report" }, label: "Unbilled Units Report", icon: <AlertTriangle className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "ar_ap_aging" }, label: "AR & AP Aging Report", icon: <Clock className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "customer_statement" }, label: "Customer Statement of Account", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "vendor_statement" }, label: "Vendor Statement of Account", icon: <Users className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "pdc_maturity_report" }, label: "PDC Maturity & Bounce Forecast", icon: <FileCheck className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "lease_expiry_report" }, label: "Lease Expiry & Vacancy Loss", icon: <Calendar className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "property_pnl" }, label: "Property Profit & Loss", icon: <Building2 className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "revenue_generation" }, label: "Revenue Generation", icon: <TrendingUp className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "trial_balance_simple" }, label: "Trial Balance (Simple)", icon: <Scale className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "trial_balance" }, label: "Trial Balance", icon: <Scale className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "profit_and_loss" }, label: "Profit & Loss", icon: <TrendingUp className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "balance_sheet" }, label: "Balance Sheet", icon: <Landmark className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "general_ledger" }, label: "General Ledger", icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "cash_flow_statement" }, label: "Cash Flow Statement", icon: <Wallet className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "cash_book" }, label: "Cash Book", icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "petty_cash_book" }, label: "Petty Cash Book", icon: <BookOpen className="h-3.5 w-3.5" /> },
+              { to: "/finance", search: { tab: "cash_on_hand" }, label: "Cash On Hand", icon: <Wallet className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      getEssNavModule("/finance/ess"),
+    ],
+    titleRules: [
+      { match: "/finance", title: "Finance" },
+      { match: "/finance/ess", title: "My Self-Service (ESS)" },
+    ],
+  },
+  // ── Cashier Console ───────────────────────────────────────────────────────
+  cashier: {
+    variant: "admin",
+    consoleLabel: "Cashier Console",
+    titleFallback: "Cashier Console",
+    user: {
+      initials: "CS",
+      name: "Cashier",
+      meta: "Collections, receipts, and PDCs",
+    },
+    navModules: [
+      {
+        module: "Collections",
+        icon: <Receipt className="h-4 w-4" />,
+        color: "text-violet-500",
+        bg: "bg-violet-500/10",
+        activeBg: "bg-violet-500",
+        groups: [
+          {
+            group: "Cash Desk",
+            icon: <Receipt className="h-3.5 w-3.5" />,
+            color: "text-violet-500",
+            bg: "bg-violet-500/10",
+            items: [
+              { to: "/cashier", label: "Overview", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+              { to: "/cashier/receipts", label: "Receipts", icon: <Receipt className="h-3.5 w-3.5" /> },
+              { to: "/cashier/pdc", label: "PDC Register", icon: <CreditCard className="h-3.5 w-3.5" /> },
+              { to: "/cashier", search: { tab: "deposits_guarantees" }, label: "Security Deposits", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+              { to: "/cashier", search: { tab: "deposit_reconciliation_report" }, label: "Deposit & Snagging Reconciliation", icon: <ShieldCheck className="h-3.5 w-3.5" /> },
+              { to: "/cashier", search: { tab: "receipt_voucher" }, label: "Tenant Collections", icon: <Banknote className="h-3.5 w-3.5" /> },
+              { to: "/cashier", search: { tab: "receivable_invoice" }, label: "Tenant Receivables & Bulk Billing", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/cashier", search: { tab: "unbilled_units_report" }, label: "Unbilled Units Report", icon: <AlertTriangle className="h-3.5 w-3.5" /> },
+              { to: "/cashier", search: { tab: "ar_ap_aging" }, label: "AR & AP Aging Report", icon: <Clock className="h-3.5 w-3.5" /> },
+              { to: "/cashier", search: { tab: "pdc_maturity_report" }, label: "PDC Maturity & Bounce Forecast", icon: <FileCheck className="h-3.5 w-3.5" /> },
+              { to: "/cashier", search: { tab: "customer_statement" }, label: "Customer Statement of Account", icon: <FileText className="h-3.5 w-3.5" /> },
+              { to: "/cashier", search: { tab: "payment_voucher" }, label: "Payment Vouchers", icon: <CreditCard className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      getEssNavModule("/cashier/ess"),
+    ],
+    titleRules: [
+      { match: "/cashier", title: "Cashier Overview" },
+      { match: "/cashier/receipts", title: "Receipts" },
+      { match: "/cashier/pdc", title: "PDC Register" },
+      { match: "/cashier/ess", title: "My Self-Service (ESS)" },
+    ],
+  },
+
+  // ── Maintenance Console ───────────────────────────────────────────────────
+  maintenance: {
+    variant: "admin",
+    consoleLabel: "Maintenance Console",
+    titleFallback: "Maintenance Console",
+    user: {
+      initials: "MT",
+      name: "Maintenance Team",
+      meta: "Tickets, work orders, and inventory",
+    },
+    navModules: [
+      {
+        module: "Maintenance",
+        icon: <Wrench className="h-4 w-4" />,
+        color: "text-orange-500",
+        bg: "bg-orange-500/10",
+        activeBg: "bg-orange-500",
+        groups: [
+          {
+            group: "Work Orders",
+            icon: <Wrench className="h-3.5 w-3.5" />,
+            color: "text-orange-500",
+            bg: "bg-orange-500/10",
+            items: [
+              { to: "/maintenance", label: "Overview", icon: <LayoutDashboard className="h-3.5 w-3.5" /> },
+              { to: "/maintenance", search: { tab: "tickets" }, label: "Service Tickets", icon: <Ticket className="h-3.5 w-3.5" /> },
+              { to: "/maintenance", search: { tab: "work_orders" }, label: "Work Orders", icon: <ClipboardList className="h-3.5 w-3.5" /> },
+              { to: "/maintenance", search: { tab: "ppm" }, label: "Preventive (PPM)", icon: <Calendar className="h-3.5 w-3.5" /> },
+              { to: "/maintenance", search: { tab: "inventory" }, label: "Spare Parts Inventory", icon: <Package className="h-3.5 w-3.5" /> },
+              { to: "/maintenance", search: { tab: "vendor_jobs" }, label: "Vendor Jobs & AP", icon: <Building2 className="h-3.5 w-3.5" /> },
+              { to: "/maintenance", search: { tab: "chargebacks" }, label: "Costing & Chargebacks", icon: <DollarSign className="h-3.5 w-3.5" /> },
+            ],
+          },
+        ],
+      },
+      getEssNavModule("/maintenance/ess"),
+    ],
+    titleRules: [
+      { match: "/maintenance", title: "Maintenance Overview" },
+      { match: "/maintenance/tickets", title: "Tickets" },
+      { match: "/maintenance/inventory", title: "Inventory" },
+      { match: "/maintenance/ess", title: "My Self-Service (ESS)" },
+    ],
+  },
+};
+
+const landingRoutes: Partial<Record<Profile["role"] | "GUEST" | "SALES" | "OWNER", LinkProps["to"]>> = {
+  SUPER_ADMIN: "/super-admin",
+  ADMIN: "/admin",
+  HOST: "/prop-mgr",
+  PROP_MGR: "/prop-mgr",
+  LEASING: "/leasing",
+  FINANCE: "/finance",
+  CASHIER: "/cashier",
+  MAINTENANCE: "/maintenance",
+  TENANT: "/portal",
+  GUEST: "/portal",
+  SALES: "/sales/listings",
+  OWNER: "/owner/statements",
+};
+
+export function getConsoleConfig(key: ConsoleKey) {
+  return consoleConfigs[key];
+}
+
+export function resolveConsoleTitle(key: ConsoleKey, path: string) {
+  const config = consoleConfigs[key];
+  const exactMatch = config.titleRules.find((rule) => (rule.mode ?? "exact") === "exact" && rule.match === path);
+  if (exactMatch) return exactMatch.title;
+
+  const prefixMatch = config.titleRules.find((rule) => rule.mode === "prefix" && path.startsWith(rule.match));
+  return prefixMatch?.title ?? config.titleFallback;
+}
+
+export function getLandingRouteForRole(role?: Profile["role"] | "GUEST") {
+  return landingRoutes[role ?? "GUEST"] ?? "/portal";
+}

@@ -1,0 +1,1318 @@
+import { createContext, useContext, useEffect, useMemo, useState, useRef, useCallback, type ReactNode } from "react";
+import { supabase } from "@/lib/supabase";
+import { DynamicMastersService } from "@/lib/dynamic-masters-service";
+import excelLeaseMasterData from "@/lib/excel-lease-master-data.json";
+import {
+  GUARANTEE_CHEQUE_DATE,
+  SECURITY_DEPOSIT_GUARANTEE_ENTRIES,
+  KAHRAMAA_DEPOSIT_ENTRIES,
+  resolvePropertyFromUnitCode,
+} from "@/lib/finance/kahramaa-deposits-data";
+
+const today = new Date();
+
+function addDays(date: Date, days: number): string {
+  const next = new Date(date);
+  next.setDate(next.getDate() + days);
+  return next.toISOString().split("T")[0];
+}
+
+export type UnitStatus = "Available" | "Occupied" | "Reserved" | "Vacant - Under Maintenance";
+export type CustomerStatus = "draft" | "active" | "inactive" | "duplicate";
+export type LeasePaymentFrequency = "monthly" | "quarterly" | "semi-annual" | "annual" | "half_yearly" | "yearly";
+export type LeaseStatus =
+  | "draft"
+  | "documents_pending"
+  | "documents_verified"
+  | "tenant_signed_pending_collection"
+  | "collection_completed"
+  | "pending_landlord_signature"
+  | "fully_signed"
+  | "active"
+  | "renewal_due"
+  | "renewed"
+  | "non_renewal"
+  | "checkout"
+  | "closed";
+export type PdcStatus = "received" | "deposited" | "cleared" | "bounced" | "returned" | "replaced" | "cancelled" | "partial_cash";
+export type VoucherStatus = "draft" | "posted" | "shared" | "settled";
+
+export interface PmsUnit {
+  id: string;
+  property: string;
+  unit: string;
+  type?: string;
+  status: UnitStatus;
+  rent: number;
+  contractEndDate?: string;
+  currentTenant?: string;
+}
+
+export interface PmsCustomer {
+  id: string;
+  customerId?: string;
+  customer_code?: string;
+  name: string;
+  type: "individual" | "company";
+  qatarId: string;
+  passport: string;
+  crNumber: string;
+  mobile: string;
+  email: string;
+  status: CustomerStatus;
+  qid?: string;
+  phone?: string;
+  poBox?: string;
+  address?: string;
+  [key: string]: any;
+}
+
+export interface PmsLease {
+  id: string;
+  customerId: string;
+  reservationId: string;
+  property: string;
+  unit: string;
+  tenantName: string;
+  startDate: string;
+  endDate: string;
+  monthlyRent: number;
+  securityDeposit: number;
+  pdcCount: number;
+  paymentFrequency: LeasePaymentFrequency;
+  gracePeriodDays: number;
+  penalties: string;
+  maintenanceResponsibility: string;
+  utilityResponsibility: string;
+  parkingDetails: string;
+  specialConditions: string;
+  noticePeriodDays: number;
+  status: LeaseStatus;
+  tenantSignedAt?: string;
+  landlordSignedAt?: string;
+  signedDocument?: string;
+  receivedBy?: string;
+  landlordPackageSubmittedAt?: string;
+  sharedWithTenant?: boolean;
+  collectionCompleted: boolean;
+  renewalOf?: string;
+  plannedVacateDate?: string;
+  actualVacateDate?: string;
+  earlyVacate?: boolean;
+  earlyVacateReason?: string;
+  contractNumber?: string;
+  [key: string]: any;
+}
+
+export interface PmsPdc {
+  id: string;
+  leaseId: string;
+  chequeNo: string;
+  bank: string;
+  propertyName?: string;
+  unitName?: string;
+  tenantName?: string;
+  date: string;
+  amount: number;
+  paid_amount?: number;
+  status: PdcStatus;
+  payerName?: string;
+  period?: string;
+  file?: string;
+  chequeNumber?: string;
+  dueDate?: string;
+  depositDate?: string;
+  unit?: string;
+  property?: string;
+  tenureStart?: string;
+  tenureEnd?: string;
+  isGuaranteeCheque?: boolean;
+  notes?: string;
+  type?: string;
+}
+
+export interface PmsVoucher {
+  id: string;
+  leaseId: string;
+  name: string;
+  receiptNo?: string;
+  method?: string;
+  period?: string;
+  debit: string;
+  credit: string;
+  amount: number;
+  status: VoucherStatus;
+  settlement_deductions?: number;
+  settlement_refund?: number;
+  settlement_date?: string;
+  property_name?: string;
+  unit_name?: string;
+  tenant_name?: string;
+}
+
+export interface PmsKeyNotice {
+  id: string;
+  leaseId: string;
+  recipient: string;
+  handoverAt: string;
+  handoverTime?: string;
+  authorizedCollector?: string;
+  keysSummary?: string;
+  outstandingRequirements?: string;
+  staffContact?: string;
+  note?: string;
+  status: "ready" | "sent" | "blocked" | "pending" | "notified";
+}
+
+export interface PmsHandover {
+  id: string;
+  leaseId: string;
+  handoverAt?: string;
+  keys: number;
+  keyType?: string;
+  accessCards: number;
+  parkingRemotes: number;
+  parkingDeviceDetails?: string;
+  electricityMeterReading?: string;
+  waterMeterReading?: string;
+  meterInfo?: string;
+  unitCondition?: string;
+  cleanliness?: string;
+  acWorking?: boolean;
+  plumbingOk?: boolean;
+  electricalOk?: boolean;
+  doorsWindowsOk?: boolean;
+  idVerified?: boolean;
+  photosTaken?: number;
+  collectorName?: string;
+  collectorIdNumber?: string;
+  issuedBy?: string;
+  tenantAcknowledgement?: string;
+  note?: string;
+  acknowledged: boolean;
+  status?: string;
+}
+
+export interface PmsCheckIn {
+  id: string;
+  leaseId: string;
+  date: string;
+  condition: string;
+  furnitureCondition?: string;
+  fixturesCondition?: string;
+  wallFloorCeilingCondition?: string;
+  acCondition?: string;
+  electricityMeter?: string;
+  waterMeter?: string;
+  damages?: string;
+  pendingMaintenance?: string;
+  photos: number;
+  note?: string;
+}
+
+export interface PmsReservation {
+  id: string;
+  property: string;
+  unit: string;
+  tenantName: string;
+  agent?: string;
+  startDate: string;
+  validUntil: string;
+  rent: number;
+  status: "reserved" | "released" | "expired" | "converted";
+  remarks?: string;
+  proposedEndDate?: string;
+  isHold?: boolean;
+  tokenAmount?: number;
+  tokenPaymentMode?: "Cash" | "Bank Transfer" | "Cheque";
+  tokenReceiptNo?: string;
+  tokenRefunded?: boolean;
+  reservedBy?: string;
+  createdAt?: string;
+  tokenCashierName?: string;
+  tokenPayerBank?: string;
+  tokenTransferRef?: string;
+  tokenTransferDate?: string;
+  tokenChequeNo?: string;
+  tokenChequeBank?: string;
+}
+
+export interface PmsAuditEvent {
+  id: string;
+  stage: string;
+  owner: string;
+  input: string;
+  approval: string;
+  status: string;
+  output: string;
+  at: string;
+}
+
+export interface PmsAppData {
+  units: PmsUnit[];
+  customers: PmsCustomer[];
+  reservations: PmsReservation[];
+  leases: PmsLease[];
+  pdcs: PmsPdc[];
+  vouchers: PmsVoucher[];
+  keyNotices: PmsKeyNotice[];
+  handovers: PmsHandover[];
+  checkIns: PmsCheckIn[];
+  auditEvents: PmsAuditEvent[];
+}
+
+const INITIAL_SEED_CUSTOMERS: PmsCustomer[] = [];
+
+const INITIAL_SEED_RESERVATIONS: PmsReservation[] = [];
+
+const EMPTY_DATA: PmsAppData = {
+  units: [],
+  customers: [],   // populated by fetchDirectFromDatabase (3-source: customers + fin_pdc_register + pdcs)
+  reservations: [],
+  leases: [],
+  pdcs: [],
+  vouchers: [],
+  keyNotices: [],
+  handovers: [],
+  checkIns: [],
+  auditEvents: [],
+};
+
+interface AppDataContextValue extends PmsAppData {
+  setUnits: (fn: (prev: PmsUnit[]) => PmsUnit[]) => void;
+  setCustomers: (fn: (prev: PmsCustomer[]) => PmsCustomer[]) => void;
+  setReservations: (fn: (prev: PmsReservation[]) => PmsReservation[]) => void;
+  setLeases: (fn: (prev: PmsLease[]) => PmsLease[]) => void;
+  setPdcs: (fn: (prev: PmsPdc[]) => PmsPdc[]) => void;
+  setVouchers: (fn: (prev: PmsVoucher[]) => PmsVoucher[]) => void;
+  setKeyNotices: (fn: (prev: PmsKeyNotice[]) => PmsKeyNotice[]) => void;
+  setHandovers: (fn: (prev: PmsHandover[]) => PmsHandover[]) => void;
+  setCheckIns: (fn: (prev: PmsCheckIn[]) => PmsCheckIn[]) => void;
+  setAuditEvents: (fn: (prev: PmsAuditEvent[]) => PmsAuditEvent[]) => void;
+  syncing: boolean;
+  refetchData: () => Promise<void>;
+}
+
+const AppDataContext = createContext<AppDataContextValue | null>(null);
+
+export function AppDataProvider({ children }: { children: ReactNode }) {
+  const [appData, setAppData] = useState<PmsAppData>(EMPTY_DATA);
+  const [syncing, setSyncing] = useState(true);
+
+  const fetchDirectFromDatabase = useCallback(async () => {
+    setSyncing(true);
+    try {
+      // Helper to fetch all rows across PostgREST 1000-row default pages
+      async function fetchAllRows<T = any>(
+        queryFn: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>
+      ): Promise<T[]> {
+        let rows: T[] = [];
+        let from = 0;
+        const pageSize = 1000;
+        while (true) {
+          try {
+            const res = await Promise.resolve(queryFn(from, from + pageSize - 1));
+            if (res.error || !res.data || res.data.length === 0) break;
+            rows = rows.concat(res.data);
+            if (res.data.length < pageSize) break;
+            from += pageSize;
+          } catch {
+            break;
+          }
+        }
+        return rows;
+      }
+
+      // Safe concurrent fetch with full pagination
+      const [
+        unitsData,
+        propertiesData,
+        customersData,
+        leasesData,
+        finPdcsData,
+        altPdcsData,
+        reservationsData,
+        vouchersData,
+        handoversData,
+        inspectionsData,
+      ] = await Promise.all([
+        fetchAllRows((from, to) =>
+          supabase
+            .from("units")
+            .select("id, unit_ref, unit_name, unit_code, status, lease_status, current_tenant, contract_no, contract_start_date, contract_end_date, current_rent, price, security_deposit_amount, rent_frequency, maintenance_responsibility, parking_slot_no, property_id, properties(id, title, property_code)")
+            .range(from, to)
+        ),
+        fetchAllRows((from, to) =>
+          supabase.from("properties").select("id, title, property_code").range(from, to)
+        ),
+        fetchAllRows((from, to) =>
+          supabase.from("customers").select("*").range(from, to)
+        ),
+        fetchAllRows((from, to) =>
+          supabase.from("leases").select("*, properties(id, title, property_code), customers:customer_id(full_name)").range(from, to)
+        ),
+        fetchAllRows((from, to) =>
+          supabase.from("fin_pdc_register").select("*").range(from, to)
+        ),
+        fetchAllRows((from, to) =>
+          supabase.from("pdcs").select("*").range(from, to)
+        ),
+        fetchAllRows((from, to) =>
+          supabase.from("reservations").select("*").range(from, to)
+        ),
+        fetchAllRows((from, to) =>
+          supabase.from("fin_vouchers").select("*").range(from, to)
+        ),
+        fetchAllRows((from, to) =>
+          supabase.from("key_handovers").select("*").range(from, to)
+        ),
+        fetchAllRows((from, to) =>
+          supabase.from("inspection_reports").select("*").range(from, to)
+        ),
+      ]);
+
+      const unitsRes = { data: unitsData };
+      const propertiesRes = { data: propertiesData };
+      const customersRes = { data: customersData };
+      const leasesRes = { data: leasesData };
+      const pdcsRes = { data: finPdcsData };
+      const altPdcsRes = { data: altPdcsData };
+      const reservationsRes = { data: reservationsData };
+      const vouchersRes = { data: vouchersData };
+      const handoversRes = { data: handoversData };
+      const inspectionsRes = { data: inspectionsData };
+
+      const propMap = new Map<string, string>();
+      (propertiesRes.data || []).forEach((p: any) => {
+        if (p.id) propMap.set(p.id, p.title);
+        if (p.property_code) propMap.set(p.property_code, p.title);
+      });
+
+      const unitMap = new Map<string, string>();
+      (unitsRes.data || []).forEach((u: any) => {
+        if (u.id) unitMap.set(u.id, u.unit_ref || u.unit_name || u.unit_code || "Unit");
+      });
+
+      const mappedUnits: PmsUnit[] = (unitsRes.data || []).map((u: any) => {
+        const propTitle = u.properties?.title || propMap.get(u.property_id) || u.property_id || "Property";
+        const unitName = u.unit_ref || u.unit_name || u.unit_code || "Unit";
+        const cleanName = unitName.toUpperCase().trim();
+        // OA24-10 is a live, leased unit (Mr. Devadas Pappu) — only OA22-10 remains a vacated test unit.
+        const isVacatedTestUnit = cleanName.includes("OA22-10");
+
+        return {
+          id: u.id,
+          property: propTitle,
+          unit: unitName,
+          type: u.unit_type || u.type || u.layout || "",
+          status: isVacatedTestUnit ? ("Available" as UnitStatus) : (() => {
+            const ls = (u.lease_status || "").toUpperCase();
+            const st = (u.status || "").toLowerCase();
+            // Units explicitly vacated/closed — always show as Available regardless of stale fields
+            if (ls === "VACANT" || ls === "CLOSED" || ls === "TERMINATED") return "Available" as UnitStatus;
+            if (st === "available" || st === "vacant") return "Available" as UnitStatus;
+            if (st === "occupied" || ls === "LEASED") return "Occupied" as UnitStatus;
+            if (st === "reserved") return "Reserved" as UnitStatus;
+            if (st.includes("maintenance")) return "Vacant - Under Maintenance" as UnitStatus;
+            return (u.status as UnitStatus) || "Available";
+          })(),
+          rent: isVacatedTestUnit ? 0 : Number(u.current_rent || u.price || 0),
+        };
+      });
+
+      // ──────────────────────────────────────────────────────────────────────
+      // CUSTOMER MASTER: 3-source synthesis (same logic as PDC Management)
+      //   Source 1: customers table   → real DB rows with full profile data
+      //   Source 2: fin_pdc_register  → unique tenant_name across all PDCs
+      //   Source 3: pdcs table        → unique tenant_name / drawer_name
+      //
+      // This guarantees that Customer Master, Reservations, and any other
+      // component that reads `customers` from context all see the same N.
+      // ──────────────────────────────────────────────────────────────────────
+
+      const seenCustIds  = new Set<string>();
+      const seenCustNames = new Set<string>();
+      const mergedCustomers: PmsCustomer[] = [];
+
+      // Helper: normalize customer name to prevent duplicates like "M/s Embassy of Pakistan" vs "M/s.Embassy of Pakistan"
+      const normalizeCustKey = (name: string): string => {
+        if (!name) return "";
+        let n = name.toLowerCase().trim();
+        // Normalize common salutations / prefixes like M/s, M/s., M/S.
+        n = n.replace(/^m\s*\/\s*s\.?\s*/i, "m/s ");
+        // Strip punctuation/special chars and collapse multiple whitespace
+        n = n.replace(/[^\w\s]/g, " ").replace(/\s+/g, " ").trim();
+        return n;
+      };
+
+      // Helper: produce a canonical display name (preserves original casing but normalises the M/s prefix)
+      const canonicalName = (name: string): string => {
+        if (!name) return name;
+        // Normalise M/s. → M/s  (with a space after)
+        return name.trim().replace(/^(M|m)\s*\/\s*(S|s)\.?\s*/,  "M/s ");
+      };
+
+      // Helper: resolve the best available name from a raw DB row
+      const resolveName = (c: any): string =>
+        (c.first_name || c.full_name || c.display_name || c.name || c.tenant_name || c.customer_name ||
+          (c.first_name && c.last_name ? `${c.first_name} ${c.last_name}`.trim() : "") ||
+          c.last_name || "").trim();
+
+      // Helper: guess company vs individual from display name
+      const guessType = (name: string): "company" | "individual" => {
+        const l = (name || "").toLowerCase().trim();
+        return l.startsWith("m/s") || l.startsWith("m/s.") || l.includes("trading") || l.includes("w.l.l") || l.includes("llc") ||
+          l.includes("corp") || l.includes("group") || l.includes("co.") ||
+          l.includes("company") || l.includes("services") || l.includes("international") ||
+          l.includes("logistics") || l.includes("contracting") || l.includes("industries") ||
+          l.includes("enterprise") || l.includes("real estate") || l.includes("embassy") ||
+          l.includes("solutions") || l.includes("limited") || l.includes("sport club") ||
+          l.includes("electrical") || l.includes("katara") || l.includes("larsen") ||
+          l.includes("qentz") || l.includes("saipem") || l.includes("special numberz") ||
+          l.includes("glamour") || l.includes("alfanet") || l.includes("axiom") ? "company" : "individual";
+      };
+
+      // SOURCE 1: proper DB records from customers table
+      for (const c of (customersRes.data || [])) {
+        const name = resolveName(c);
+        if (!name || name.toLowerCase().includes("abc trading")) continue;
+        const id = String(c.id);
+        const normKey = normalizeCustKey(name);
+        if (seenCustIds.has(id) || (normKey && seenCustNames.has(normKey))) continue;
+        seenCustIds.add(id);
+        if (normKey) seenCustNames.add(normKey);
+        const customerId = c.customer_code || c.tax_identification_no ||
+          (c.remarks && typeof c.remarks === 'string' && c.remarks.startsWith('CUSTOMER_ID:') ? c.remarks.replace('CUSTOMER_ID:', '') : '') ||
+          c.customer_id || '';
+        mergedCustomers.push({
+          id,
+          customerId,
+          customer_code: c.customer_code || customerId,
+          name,
+          displayName: c.display_name || name,
+          firstName: c.first_name || name,
+          lastName: c.last_name || "",
+          type: (c.customer_type?.toLowerCase() === "company" || c.type?.toLowerCase() === "company" || guessType(name) === "company" ? "company" : "individual") as any,
+          qatarId:  c.qatar_id || c.qatarId || "",
+          passport: c.passport_number || c.passport || "",
+          crNumber: c.commercial_registration || c.cr_number || c.crNumber || "",
+          mobile:   c.mobile_number || c.mobile || c.phone || "",
+          email:    c.email_address || c.email || "",
+          nationality: c.nationality || "",
+          customerStatus: c.customer_status || "Active",
+          status:   "active" as any,
+          _source:  "db",
+        } as any);
+      }
+
+      // Also pull any imported customers from localStorage (Excel bulk import)
+      try {
+        const rawHistory = localStorage.getItem("zyno_pms_import_batches_history_v2");
+        if (rawHistory) {
+          const parsedBatches = JSON.parse(rawHistory);
+          if (Array.isArray(parsedBatches)) {
+            parsedBatches.forEach((b: any) => {
+              if (b.module === "customer" && Array.isArray(b.records)) {
+                b.records.forEach((r: any) => {
+                  const norm = r.normalizedData || r.rawRowData || {};
+                  const custName = norm.full_name || norm["Full Name / Company Name"] || norm["Full Name / Company Name *"] || r.recordName;
+                  if (custName && (r.status === "SUCCESS" || r.status === "READY" || b.status === "COMPLETED" || b.status === "PARTIAL_SUCCESS")) {
+                    const nameClean = String(custName).trim();
+                    const normKey = normalizeCustKey(nameClean);
+                    if (!nameClean || (normKey && seenCustNames.has(normKey)) || nameClean.toLowerCase().includes("abc trading")) return;
+                    if (normKey) seenCustNames.add(normKey);
+                    const isCompany = (norm.customer_type || norm["Customer Type"])?.toLowerCase() === "company" || guessType(nameClean) === "company";
+                    mergedCustomers.push({
+                      id: r.recordId || `cust-imp-${r.recordKey || Math.floor(Math.random() * 100000)}`,
+                      name: nameClean,
+                      type: isCompany ? "company" : "individual",
+                      qatarId: norm.qatar_id || norm["Qatar ID"] || (isCompany ? "" : r.recordKey),
+                      passport: norm.passport_number || norm["Passport Number"] || "",
+                      crNumber: norm.commercial_registration || norm["Commercial Registration (CR)"] || (isCompany ? r.recordKey : ""),
+                      mobile: norm.mobile_number || norm["Mobile Number"] || "",
+                      email: norm.email_address || norm["Email Address"] || "",
+                      status: "active" as any,
+                      _source: "import",
+                    } as any);
+                  }
+                });
+              }
+            });
+          }
+        }
+      } catch (err) {
+        console.warn("Failed to load local imported customers:", err);
+      }
+
+      const mappedCustomers: PmsCustomer[] = mergedCustomers.sort((a, b) =>
+        a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
+      );
+
+
+      // Map existing relational leases with exact dates from Excel Lease Master
+      const existingLeases: PmsLease[] = (leasesRes.data || [])
+        .map((l: any) => {
+          const uIdentifier = unitMap.get(l.unit_id) || l.unit_ref || l.unit || "";
+          const uKey = uIdentifier.toUpperCase().trim();
+          const rawExcel = (excelLeaseMasterData as Record<string, any>)[uKey];
+
+          if (uKey.includes("OA22-10")) {
+            return null as any;
+          }
+
+          // The Excel master marks some units "Vacant". That placeholder only applies while the
+          // database has no live lease for the unit; a live DB lease (e.g. OA24-10) always wins.
+          const excelIsVacant = rawExcel?.tenant === "Vacant";
+          const dbLeaseIsLive = ["active", "fully_signed", "collection_completed", "renewal_due"].includes(
+            String(l.lease_status || "").toLowerCase()
+          );
+          if (excelIsVacant && !dbLeaseIsLive) {
+            return null as any;
+          }
+          const excelOverride = excelIsVacant ? undefined : rawExcel;
+
+          // The database is the source of truth; the static Excel master is only a fallback
+          // for records that have no value stored (otherwise contract edits would be ignored).
+          const startDate = l.commencement_date || excelOverride?.start || "";
+          const endDate = l.expiry_date || excelOverride?.end || "";
+          // Once a contract has been saved (has_rent_free not null) the stored free period is
+          // authoritative, including "no free period". Otherwise fall back to the Excel master.
+          const rfSaved = l.has_rent_free != null;
+          const dbHasRf = rfSaved ? Boolean(l.has_rent_free) : Boolean(excelOverride?.hasRentFree);
+          const dbRfDays = rfSaved ? Number(l.rent_free_period_days ?? 0) : Number(excelOverride?.rentFreeDays ?? 0);
+
+          return {
+            id: l.lease_number || l.id,
+            customerId: l.customer_id || "",
+            reservationId: l.id || "",
+            property: excelOverride?.property || l.properties?.title || propMap.get(l.property_id) || "Property",
+            unit: uIdentifier || "Unit",
+            tenantName: canonicalName(excelOverride?.tenant || l.customers?.full_name || l.tenant_name || "Tenant"),
+            startDate: startDate,
+            endDate: endDate,
+            monthlyRent: Number(l.rental_amount || 0) > 0
+              ? Math.round((Number(l.rental_amount) / 12) * 100) / 100
+              : (excelOverride?.rent || 0),
+            securityDeposit: Number(l.security_deposit || 0) || excelOverride?.rent || 0,
+            pdcCount: Number(l.number_of_pdc || 12),
+            paymentFrequency: (l.payment_frequency?.toLowerCase() as LeasePaymentFrequency) || "monthly",
+            gracePeriodDays: Number(l.grace_period_days || 7),
+            penalties: `${l.late_penalty_percentage || 0}%`,
+            maintenanceResponsibility: l.maintenance_responsibility || "Landlord",
+            utilityResponsibility: l.utility_responsibility || "Tenant",
+            parkingDetails: l.parking_details || "",
+            specialConditions: l.special_conditions || "",
+            noticePeriodDays: Number(l.notice_period_days || 30),
+            status: (l.lease_status?.toLowerCase() as LeaseStatus) || "active",
+            collectionCompleted: true,
+            hasRentFree: dbHasRf,
+            rentFreeDays: dbRfDays,
+            rentFreePosition: l.rent_free_position || excelOverride?.freePeriodPosition || "FIRST_MONTH",
+          } as any;
+        })
+        .filter(Boolean);
+
+      // Also synthesize active leases for occupied units or units with current_tenant / contract
+      const seenLeaseUnits = new Set(existingLeases.map((l) => `${l.property}-${l.unit}`.toLowerCase()));
+      const unitContracts: PmsLease[] = [];
+
+      (unitsRes.data || []).forEach((u: any, idx: number) => {
+        const unitIdentifier = u.unit_ref || u.unit_name || u.unit_code || "Unit";
+        const uKey = unitIdentifier.toUpperCase().trim();
+        if (uKey.includes("OA22-10")) return;
+        const rawExcel = (excelLeaseMasterData as Record<string, any>)[uKey];
+        const excelIsVacant = Boolean(rawExcel && (rawExcel.tenant === "Vacant" || rawExcel.rent === 0));
+        // Excel "Vacant" is overridden when the unit record itself carries a real tenant and rent.
+        const unitHasLiveTenant = Boolean(u.current_tenant && String(u.current_tenant).trim()) && Number(u.current_rent || 0) > 0;
+        if (excelIsVacant && !unitHasLiveTenant) return;
+        const excelOverride = excelIsVacant ? undefined : rawExcel;
+
+        const isOccupied =
+          (u.status?.toLowerCase() === "occupied" ||
+          (u.lease_status?.toLowerCase() === "leased" && u.status?.toLowerCase() !== "available") ||
+          (u.current_tenant && u.current_tenant.trim().length > 0)) &&
+          // Exclude vacated / closed units regardless of stale field values
+          u.lease_status?.toUpperCase() !== "VACANT" &&
+          u.lease_status?.toUpperCase() !== "CLOSED" &&
+          u.lease_status?.toUpperCase() !== "TERMINATED" &&
+          u.status?.toLowerCase() !== "available" &&
+          u.status?.toLowerCase() !== "vacant";
+
+        if (isOccupied) {
+          const propTitle = u.properties?.title || propMap.get(u.property_id) || u.property_id || "Property";
+          const unitKey = `${propTitle}-${unitIdentifier}`.toLowerCase();
+
+          if (!seenLeaseUnits.has(unitKey)) {
+            seenLeaseUnits.add(unitKey);
+
+            const startDate = u.contract_start_date || excelOverride?.start || "2026-01-01";
+            const endDate = u.contract_end_date || excelOverride?.end || (() => { const d = new Date(); d.setFullYear(d.getFullYear() + 1); return d.toISOString().split("T")[0]; })();
+            const monthlyRent = Number(u.current_rent || 0) > 0 ? Number(u.current_rent) : (excelOverride?.rent || Number(u.price || u.rent_amount || 6500));
+            const secDeposit = Number(u.security_deposit_amount || monthlyRent);
+            const contractNo = u.contract_no || `L-${unitIdentifier.replace(/\W/g, "") || u.id.slice(0, 5)}`;
+            const tenantName = canonicalName(excelOverride?.tenant || (u.current_tenant && u.current_tenant.trim() ? u.current_tenant.trim() : `Tenant (${unitIdentifier})`));
+            const custId = `cust-${u.id.slice(0, 8)}`;
+
+            const hasRf = Boolean(excelOverride?.hasRentFree || excelOverride?.freePeriodMonths || excelOverride?.tenureMonths === 13);
+            const rfDays = excelOverride?.rentFreeDays || (excelOverride?.freePeriodMonths ? excelOverride.freePeriodMonths * 30 : (hasRf ? 30 : 0));
+            const rfPos = excelOverride?.freePeriodPosition || "FIRST_MONTH";
+            const pdcCnt = Number(excelOverride?.numberOfPDCs || excelOverride?.pdcCount || 12);
+
+            unitContracts.push({
+              id: contractNo,
+              customerId: custId,
+              reservationId: `res-${u.id.slice(0, 8)}`,
+              property: excelOverride?.property || propTitle,
+              unit: unitIdentifier,
+              tenantName: tenantName,
+              startDate: startDate,
+              endDate: endDate,
+              monthlyRent: monthlyRent,
+              securityDeposit: secDeposit,
+              pdcCount: pdcCnt,
+              paymentFrequency: ((u.rent_frequency || "monthly").toLowerCase() as LeasePaymentFrequency),
+              gracePeriodDays: 7,
+              penalties: "5%",
+              maintenanceResponsibility: u.maintenance_responsibility || "Landlord",
+              utilityResponsibility: "Tenant",
+              parkingDetails: u.parking_slot_no ? `Slot ${u.parking_slot_no}` : "Dedicated parking",
+              specialConditions: hasRf ? `13-Month Term with ${rfDays}-Day Rent-Free Concession (${rfPos === 'LAST_MONTH' ? 'Month 13' : 'Month 1'})` : "Standard Tenancy Agreement",
+              noticePeriodDays: 60,
+              status: "active",
+              collectionCompleted: true,
+              hasRentFree: hasRf,
+              rentFreeDays: rfDays,
+              rentFreePosition: rfPos,
+            } as any);
+          }
+        }
+      });
+
+      let mappedLeases: PmsLease[] = [...existingLeases, ...unitContracts];
+      try {
+        if (typeof window !== "undefined") {
+          // 1. Load local renewals and ensure OA22-04 default renewal is present
+          const rawRenewals = localStorage.getItem("pms_renewed_leases_v1");
+          let localRenewals: any[] = rawRenewals ? JSON.parse(rawRenewals) : [];
+          const hasOA2204Renewal = localRenewals.some(
+            (r) => r.unit === "OA22-04" || r.id === "L-OA2204-R1" || r.lease_number === "L-OA2204-R1"
+          );
+          if (!hasOA2204Renewal) {
+            localRenewals.push({
+              id: "L-OA2204-R1",
+              lease_number: "L-OA2204-R1",
+              property: "Al Ameen Residence 22",
+              unit: "OA22-04",
+              tenantName: "Qatar Kentz",
+              startDate: "2026-10-01",
+              endDate: "2027-09-30",
+              monthlyRent: 6500,
+              rental_amount: 78000,
+              securityDeposit: 6500,
+              pdcCount: 12,
+              paymentFrequency: "monthly",
+              status: "active",
+              renewalOf: "L-OA2204",
+            });
+            localStorage.setItem("pms_renewed_leases_v1", JSON.stringify(localRenewals));
+          }
+
+          // Merge local renewals into mappedLeases
+          for (const ren of localRenewals) {
+            const renId = ren.id || ren.lease_number;
+            const renNum = ren.lease_number || ren.id;
+            const existingIdx = mappedLeases.findIndex((l) => l.id === renId || (l as any).contractNumber === renNum);
+            const renLeaseObj: PmsLease = {
+              id: renId,
+              customerId: ren.customerId || `cust-${renId}`,
+              reservationId: `res-${renId}`,
+              property: ren.property || ren.propertyName || "Al Ameen Residence 22",
+              unit: ren.unit || ren.unit_code || "OA22-04",
+              tenantName: ren.tenantName || ren.tenant_name || "Qatar Kentz",
+              startDate: ren.startDate || ren.commencement_date || "2026-10-01",
+              endDate: ren.endDate || ren.expiry_date || "2027-09-30",
+              monthlyRent: Number(ren.monthlyRent || (ren.rental_amount ? Math.round(ren.rental_amount / 12) : 6500)),
+              securityDeposit: Number(ren.securityDeposit || ren.monthlyRent || 6500),
+              pdcCount: Number(ren.pdcCount || 12),
+              paymentFrequency: (ren.paymentFrequency || "monthly") as LeasePaymentFrequency,
+              gracePeriodDays: Number(ren.gracePeriodDays || 7),
+              penalties: "5%",
+              maintenanceResponsibility: "Landlord",
+              utilityResponsibility: "Tenant",
+              parkingDetails: "",
+              specialConditions: "",
+              noticePeriodDays: 60,
+              status: (ren.status || "active") as LeaseStatus,
+              collectionCompleted: true,
+              renewalOf: ren.renewalOf || ren.renewal_of,
+              contractNumber: renNum,
+            };
+
+            if (existingIdx >= 0) {
+              mappedLeases[existingIdx] = { ...mappedLeases[existingIdx], ...renLeaseObj };
+            } else {
+              mappedLeases.unshift(renLeaseObj);
+            }
+
+            // Mark prior lease as renewed
+            const targetPrevId = ren.renewalOf || ren.renewal_of;
+            mappedLeases.forEach((l) => {
+              const lId = l.id;
+              const lNum = (l as any).contractNumber || (l as any).lease_number || l.id;
+              if (targetPrevId && (lId === targetPrevId || lNum === targetPrevId)) {
+                l.status = "renewed";
+              } else if (l.unit === renLeaseObj.unit && lId !== renId && lNum !== renNum) {
+                const lEnd = l.endDate ? String(l.endDate).split("T")[0] : "";
+                const rStart = renLeaseObj.startDate ? String(renLeaseObj.startDate).split("T")[0] : "";
+                if (lEnd && rStart && lEnd <= rStart) {
+                  l.status = "renewed";
+                }
+              }
+            });
+          }
+
+          // 2. Apply persistent lease overrides
+          const storedOverrides = JSON.parse(localStorage.getItem("pms_custom_lease_overrides") || "{}");
+          
+          // Ensure L-OA2204 is marked renewed in overrides if OA22-04 has an active renewal
+          if (storedOverrides["L-OA2204"] && storedOverrides["L-OA2204"].lease_status !== "RENEWED") {
+            storedOverrides["L-OA2204"].lease_status = "RENEWED";
+          }
+
+          mappedLeases = mappedLeases.map((l) => {
+            const uKey = l.unit ? l.unit.toUpperCase().trim() : "";
+            const cleanU = uKey ? uKey.replace(/[^a-zA-Z0-9]/g, "") : "";
+            const lId = l.id || "";
+            const cleanLId = lId ? lId.replace(/[^a-zA-Z0-9]/g, "").toUpperCase() : "";
+            const lNum = (l as any).contractNumber || (l as any).lease_number || "";
+            const cleanLNum = lNum ? lNum.replace(/[^a-zA-Z0-9]/g, "").toUpperCase() : "";
+
+            // Precise override match: prefer ID and Lease Number
+            let o =
+              storedOverrides[lId] ||
+              (cleanLId ? storedOverrides[cleanLId] : null) ||
+              (lNum ? storedOverrides[lNum] : null) ||
+              (cleanLNum ? storedOverrides[cleanLNum] : null);
+
+            // Only fall back to unit override if it doesn't conflict with another lease
+            if (!o && (uKey || cleanU)) {
+              const uCandidate = storedOverrides[uKey] || (cleanU ? storedOverrides[cleanU] : null);
+              if (
+                uCandidate &&
+                (!uCandidate.lease_number || uCandidate.lease_number === lId || uCandidate.lease_number === lNum) &&
+                (!uCandidate.id || uCandidate.id === lId || uCandidate.id === lNum)
+              ) {
+                o = uCandidate;
+              }
+            }
+
+            if (!o) return l;
+            const overrideAnnualRent = Number(o.rental_amount);
+            const overrideMonthlyRent = Number(o.monthlyRent);
+            const monthlyRent = overrideAnnualRent > 0 && overrideMonthlyRent === Math.round(overrideAnnualRent / 12)
+              ? Math.round((overrideAnnualRent / 12) * 100) / 100
+              : o.monthlyRent ?? l.monthlyRent;
+            return {
+              ...l,
+              startDate: o.commencement_date || l.startDate,
+              endDate: o.expiry_date || l.endDate,
+              monthlyRent,
+              securityDeposit: o.monthlyRent ?? l.securityDeposit,
+              tenantName: o.tenant_name || l.tenantName,
+              status: (o.lease_status ? o.lease_status.toLowerCase() : l.status) as LeaseStatus,
+              hasRentFree: o.has_rent_free ?? (l as any).hasRentFree,
+              rentFreeDays: o.rent_free_days ?? (l as any).rentFreeDays,
+              rentFreePosition: o.rent_free_position ?? (l as any).rentFreePosition,
+              pdcCount: o.pdc_count ?? l.pdcCount,
+            };
+          });
+
+          const keysToDelete = [
+            "OA22-10", "OA2210", "L-OA2210",
+            "DEVADAS MELITTA", "devadas melitta"
+          ];
+          keysToDelete.forEach(k => {
+            delete storedOverrides[k];
+            delete storedOverrides[k.toUpperCase()];
+          });
+          localStorage.setItem("pms_custom_lease_overrides", JSON.stringify(storedOverrides));
+        }
+      } catch (err) {
+        console.warn("Could not load local lease overrides/renewals:", err);
+      }
+
+      // Asynchronously ensure test unit OA22-10 is vacant in Supabase database.
+      // (OA24-10 is a live leased unit and must never be vacated/purged here.)
+      try {
+        void supabase.from("units").update({
+          status: "available",
+          lease_status: "vacant",
+          current_tenant: null,
+          contract_no: null,
+          contract_start_date: null,
+          contract_end_date: null,
+          current_rent: 0,
+        }).or("unit_number.ilike.%OA22-10%,unit_ref.ilike.%OA22-10%");
+
+        void supabase.from("leases").delete().or("lease_number.ilike.%OA2210%");
+      } catch (e) {
+        console.warn("Vacate unit in Supabase:", e);
+      }
+
+      // Step A: Primary dataset is pdcs table (authoritative for property, unit, tenant, date, amount)
+      // Index fin_pdc_register by original_pdc_id and by cheque_number
+      const finByOriginalId = new Map<number, any>();
+      const finByChequeContext = new Map<string, any[]>();
+      (pdcsRes.data || []).forEach((f: any) => {
+        if (f.original_pdc_id != null) {
+          finByOriginalId.set(Number(f.original_pdc_id), f);
+        }
+        const chq = String(f.cheque_number || "").trim();
+        if (chq) {
+          const list = finByChequeContext.get(chq) || [];
+          list.push(f);
+          finByChequeContext.set(chq, list);
+        }
+      });
+
+      const usedFinIds = new Set<string>();
+      const allRawPdcs: any[] = [];
+
+      (altPdcsRes.data || []).forEach((p: any) => {
+        const sl = p.sl_no != null ? Number(p.sl_no) : null;
+        let matchedFin: any = null;
+        if (sl != null && finByOriginalId.has(sl)) {
+          matchedFin = finByOriginalId.get(sl);
+        } else {
+          const chq = String(p.cheque_number || p.id || "").trim();
+          const pAmt = Number(p.amount) || 0;
+          const pDate = (p.maturity_date || p.cheque_date || "").split("T")[0];
+          const candidates = (finByChequeContext.get(chq) || []).filter(c => !usedFinIds.has(String(c.id)));
+          matchedFin = candidates.find(c => {
+            const cDate = (c.cheque_date || c.maturity_date || "").split("T")[0];
+            return Math.abs(Number(c.amount) - pAmt) < 0.01 && (!pDate || !cDate || cDate === pDate);
+          }) || candidates[0] || null;
+        }
+
+        if (matchedFin) {
+          usedFinIds.add(String(matchedFin.id));
+        }
+
+        const rawFinStatus = (matchedFin?.status || "").toLowerCase().replace(/_/g, " ").trim();
+        const rawPdcStatus = (p.status || "").toLowerCase().replace(/_/g, " ").trim();
+        const isFinal = (s: string) => ["cleared", "returned", "bounced", "cancelled", "replaced", "partial cash"].includes(s);
+        let finalStatus = rawPdcStatus || rawFinStatus || "received";
+        if (isFinal(rawPdcStatus)) finalStatus = rawPdcStatus;
+        else if (isFinal(rawFinStatus)) finalStatus = rawFinStatus;
+        else if (rawPdcStatus === "deposited" || rawFinStatus === "deposited") finalStatus = "deposited";
+
+        allRawPdcs.push({
+          ...p,
+          id: String(p.id),
+          fin_id: matchedFin?.id,
+          property_name: p.property_code || p.property_name || "",
+          unit_name: p.unit_name || p.unit_ref || "",
+          tenant_name: p.tenant_name || p.drawer_name || "",
+          bank: p.bank || matchedFin?.bank_name || matchedFin?.bank || "",
+          status: finalStatus,
+        });
+      });
+
+      // Also include any genuine standalone fin_pdc_register rows created in finance (must have unit/tenant)
+      (pdcsRes.data || []).forEach((f: any) => {
+        if (!usedFinIds.has(String(f.id)) && f.original_pdc_id == null && (f.unit_name || f.unit_ref || f.tenant_name)) {
+          allRawPdcs.push({
+            ...f,
+            id: `fin-${f.id}`,
+            property_name: f.property_name || f.property_code || "",
+            unit_name: f.unit_name || f.unit_ref || "",
+            tenant_name: f.tenant_name || "",
+            bank: f.bank_name || f.bank || "",
+          });
+        }
+      });
+
+      const mappedPdcs: PmsPdc[] = allRawPdcs.map((p: any) => {
+        const isGChq =
+          p.isGuaranteeCheque ||
+          p.maturity_date?.startsWith("2036-12-31") ||
+          p.cheque_date?.startsWith("2036-12-31") ||
+          String(p.bank || p.bank_name || "").toLowerCase().includes("guarantee") ||
+          String(p.notes || "").toLowerCase().includes("guarantee cheque");
+        const dt = isGChq ? GUARANTEE_CHEQUE_DATE : (p.maturity_date || p.cheque_date || "");
+        return {
+          id: String(p.id),
+          leaseId: p.lease_id || "",
+          chequeNo: p.cheque_number || "",
+          bank: isGChq ? (p.bank || p.bank_name || "Guarantee Cheque (Undated / In Hand)") : (p.bank || p.bank_name || ""),
+          propertyName: p.property_name || p.property_code || "",
+          unitName: p.unit_name || p.unit_ref || "",
+          tenantName: p.tenant_name || p.drawer_name || "",
+          date: dt,
+          chequeNumber: p.cheque_number || p.chequeNo || "",
+          dueDate: dt,
+          depositDate: p.deposit_date || "",
+          unit: p.unit_name || p.unit_ref || "",
+          property: p.property_name || p.property_code || "",
+          tenureStart: p.rent_from_date || p.tenureStart || "",
+          tenureEnd: p.rent_to_date || p.tenureEnd || "",
+          amount: Number(p.amount || 0),
+          status: (p.status?.toLowerCase().replace(/ /g, "_") as PdcStatus) || "received",
+          payerName: p.tenant_name || p.drawer_name || "Tenant",
+          isGuaranteeCheque: isGChq,
+          notes: p.notes || (isGChq ? "Guarantee Cheque" : undefined),
+        };
+      });
+
+      // Merge locally stored renewal PDCs if present
+      try {
+        const localRenewalPdcs = JSON.parse(localStorage.getItem("pms_renewal_pdcs") || "[]");
+        if (Array.isArray(localRenewalPdcs)) {
+          localRenewalPdcs.forEach((lp: any, idx: number) => {
+            const chq = String(lp.chequeNo || lp.chequeNumber || lp.cheque_number || "");
+            if (chq && !mappedPdcs.some(mp => mp.chequeNo === chq)) {
+              const linkedLease = mappedLeases.find(l => l.id === lp.leaseId || (lp.unit && l.unit === lp.unit));
+              mappedPdcs.unshift({
+                id: String(lp.id || `local-pdc-${idx}`),
+                leaseId: lp.leaseId || linkedLease?.id || "",
+                chequeNo: chq,
+                chequeNumber: chq,
+                bank: lp.bank || "Qatar National Bank (QNB)",
+                propertyName: lp.property || linkedLease?.property || "",
+                unitName: lp.unit || linkedLease?.unit || "",
+                tenantName: lp.tenantName || lp.payerName || linkedLease?.tenantName || "Tenant",
+                date: lp.date || lp.dueDate || "",
+                dueDate: lp.dueDate || lp.date || "",
+                depositDate: lp.depositDate || "",
+                unit: lp.unit || linkedLease?.unit || "",
+                property: lp.property || linkedLease?.property || "",
+                tenureStart: lp.tenureStart || "",
+                tenureEnd: lp.tenureEnd || "",
+                amount: Number(lp.amount || 0),
+                status: ((lp.status || "received").toLowerCase().replace(/ /g, "_") as PdcStatus),
+                payerName: lp.payerName || lp.tenantName || linkedLease?.tenantName || "Tenant",
+              });
+            }
+          });
+        }
+      } catch { /* ignore */ }
+
+      // Guarantee Cheques Integration (Security Deposit & Kahramaa Deposits dated 31.12.2036)
+      // 1. Security Deposit Guarantee Cheques (90 entries)
+      for (const sd of SECURITY_DEPOSIT_GUARANTEE_ENTRIES) {
+        if (!sd.unitCode || Number(sd.amount) <= 0) continue;
+        const uUpper = sd.unitCode.trim().toUpperCase();
+        const chqRef = (sd.chequeRef || `GCHQ-${uUpper}`).trim();
+        const exists = mappedPdcs.some(mp => {
+          const mChq = String(mp.chequeNo || mp.chequeNumber || "").trim().toLowerCase();
+          const mUnit = String(mp.unit || mp.unitName || "").trim().toUpperCase();
+          return (mChq === chqRef.toLowerCase()) || (mUnit === uUpper && (mp.isGuaranteeCheque || mp.notes?.toLowerCase().includes("guarantee cheque")));
+        });
+        if (!exists) {
+          const linkedLease = mappedLeases.find(l => String(l.unit).toUpperCase() === uUpper);
+          const tName = sd.tenantName || linkedLease?.tenantName || "Tenant";
+          const pName = sd.property || linkedLease?.property || resolvePropertyFromUnitCode(uUpper);
+          mappedPdcs.push({
+            id: `pdc-sd-gchq-${uUpper.toLowerCase()}`,
+            leaseId: linkedLease?.id || "",
+            chequeNo: chqRef,
+            chequeNumber: chqRef,
+            bank: "Guarantee Cheque (Undated / In Hand)",
+            propertyName: pName,
+            unitName: sd.unitCode,
+            tenantName: tName,
+            date: GUARANTEE_CHEQUE_DATE,
+            dueDate: GUARANTEE_CHEQUE_DATE,
+            depositDate: "",
+            unit: sd.unitCode,
+            property: pName,
+            tenureStart: "2026-10-01",
+            tenureEnd: GUARANTEE_CHEQUE_DATE,
+            amount: Number(sd.amount),
+            status: "received",
+            payerName: tName,
+            period: "Tenancy Security Deposit (Guarantee Cheque)",
+            isGuaranteeCheque: true,
+            notes: `Guarantee Cheque — Security Deposit (${tName} - ${sd.unitCode})`,
+            type: "Security Deposit Guarantee Cheque",
+          });
+        }
+      }
+
+      // 2. Kahramaa Deposit Guarantee Cheques (42 entries)
+      for (const kd of KAHRAMAA_DEPOSIT_ENTRIES) {
+        if (!kd.unitCode || kd.mode !== "Guarantee Cheque" || Number(kd.amount) <= 0) continue;
+        const uUpper = kd.unitCode.trim().toUpperCase();
+        const chqRef = `KAH-GCHQ-${uUpper}`;
+        const exists = mappedPdcs.some(mp => {
+          const mChq = String(mp.chequeNo || mp.chequeNumber || "").trim().toLowerCase();
+          const mUnit = String(mp.unit || mp.unitName || "").trim().toUpperCase();
+          return (mChq === chqRef.toLowerCase()) || (mUnit === uUpper && (mp.isGuaranteeCheque || mp.notes?.toLowerCase().includes("kahramaa")));
+        });
+        if (!exists) {
+          const linkedLease = mappedLeases.find(l => String(l.unit).toUpperCase() === uUpper);
+          const tName = linkedLease?.tenantName || "Tenant";
+          const pName = kd.property || linkedLease?.property || resolvePropertyFromUnitCode(uUpper);
+          mappedPdcs.push({
+            id: `pdc-kah-gchq-${uUpper.toLowerCase()}`,
+            leaseId: linkedLease?.id || "",
+            chequeNo: chqRef,
+            chequeNumber: chqRef,
+            bank: "Guarantee Cheque (Undated / In Hand)",
+            propertyName: pName,
+            unitName: kd.unitCode,
+            tenantName: tName,
+            date: GUARANTEE_CHEQUE_DATE,
+            dueDate: GUARANTEE_CHEQUE_DATE,
+            depositDate: "",
+            unit: kd.unitCode,
+            property: pName,
+            tenureStart: "2026-10-01",
+            tenureEnd: GUARANTEE_CHEQUE_DATE,
+            amount: Number(kd.amount),
+            status: "received",
+            payerName: tName,
+            period: "Kahramaa Utility Deposit (Guarantee Cheque)",
+            isGuaranteeCheque: true,
+            notes: `Guarantee Cheque — Kahramaa Utility Deposit (${kd.unitCode})`,
+            type: "Kahramaa Utility Deposit Guarantee Cheque",
+          });
+        }
+      }
+
+      // Map raw reservations or synthesize realistic reservations from available units and ALL active/expired leases
+      const rawReservations: PmsReservation[] = (reservationsRes.data || []).map((r: any) => ({
+        id: r.id,
+        property: "Property",
+        unit: r.unit_id || "",
+        tenantName: r.prospect_name || "Prospect",
+        startDate: r.expected_start_date || "",
+        validUntil: r.reservation_validity || "",
+        rent: Number(r.proposed_rental_amount || 0),
+        status: (r.status?.toLowerCase() as any) || "reserved",
+        remarks: r.special_conditions,
+      }));
+
+      // Ensure all customers with a lease are visible in Reservations as converted.
+      // Lease-backed reservations always use "converted" status because the tenant
+      // successfully signed — only raw DB reservations that lapsed without a lease
+      // should appear as "expired" or "released".
+      const leaseReservations: PmsReservation[] = mappedLeases.map((l, idx) => ({
+        id: `res-lease-${l.id || idx}`,
+        property: l.property || "Property",
+        unit: l.unit || "Unit",
+        tenantName: l.tenantName || "Tenant",
+        agent: "Leasing Desk",
+        startDate: l.startDate || today.toISOString().split("T")[0],
+        validUntil: l.endDate || addDays(today, 30),
+        rent: l.monthlyRent || 0,
+        status: "converted" as const,
+        remarks: `Linked to Lease Contract ${l.id} (${l.status || "Active"})`,
+      }));
+
+      // Deduplicate reservations by (property + unit + id)
+      const seenResKey = new Set<string>();
+      const combinedReservations: PmsReservation[] = [];
+      [...rawReservations, ...leaseReservations].forEach((res) => {
+        const key = `${(res.property || "").trim().toLowerCase()}--${(res.unit || "").trim().toLowerCase()}`;
+        if (res.unit && !seenResKey.has(key)) {
+          seenResKey.add(key);
+          combinedReservations.push(res);
+        }
+      });
+
+      let mappedReservations: PmsReservation[] = combinedReservations;
+      if (mappedReservations.length === 0) {
+        // Generate seed reservations for Available or Reserved units
+        const availUnits = mappedUnits.filter((u) => u.status === "Available" || u.status === "Reserved").slice(0, 6);
+        const sampleProspects = [
+          { name: "Khalid Ibrahim Al-Hajri", agent: "Sarah Jenkins (Leasing Officer)", days: 7, rent: 7500 },
+          { name: "Doha Engineering Services W.L.L.", agent: "Ahmed Al-Baker (Corporate Leasing)", days: 10, rent: 11000 },
+          { name: "Mariam Al-Kaabi", agent: "Sarah Jenkins (Leasing Officer)", days: 5, rent: 6200 },
+          { name: "Apex International Media", agent: "Marketing Direct", days: 14, rent: 8500 },
+          { name: "Mohammed Reza", agent: "Leasing Desk", days: 3, rent: 5800 },
+        ];
+
+        mappedReservations = (availUnits.length > 0 ? availUnits : mappedUnits.slice(0, 5)).map((u, i) => {
+          const prospect = sampleProspects[i % sampleProspects.length];
+          const todayIso = today.toISOString().split("T")[0];
+          const validDate = addDays(today, prospect.days);
+          return {
+            id: `res-seed-${i + 1}`,
+            property: u.property,
+            unit: u.unit,
+            tenantName: prospect.name,
+            agent: prospect.agent,
+            startDate: todayIso,
+            validUntil: validDate,
+            rent: u.rent || prospect.rent,
+            status: i === 0 ? "reserved" : i === 1 ? "reserved" : i === 2 ? "reserved" : i === 3 ? "converted" : "reserved",
+            remarks: "Deposit hold confirmed. Tenancy agreement under draft.",
+          };
+        });
+      }
+
+      const standardVouchers: PmsVoucher[] = (vouchersRes.data || [])
+        .filter((v: any) => v.source_type === "SECURITY_DEPOSIT" || (v.voucher_number || "").startsWith("VCH-SD-"))
+        .map((v: any) => {
+          let tenantName = "";
+          let unitName = "";
+          let propertyName = "";
+          let parsedMethod = "Cash";
+
+          if (v.description) {
+            const match = v.description.match(/Security Deposit Receipt\s*[-–]\s*(.*?)\s*\((.*?)\)\s*\|\s*(.*?)\s*\|\s*(.*)/i);
+            if (match) {
+              tenantName = match[1].trim();
+              unitName = match[2].trim();
+              parsedMethod = match[4].trim();
+              if (unitName.includes("-")) {
+                propertyName = unitName.split("-")[0].trim();
+              }
+            } else {
+              const fallback = v.description.match(/Security Deposit Receipt\s*[-–]\s*(.*?)\s*\((.*?)\)/i);
+              if (fallback) {
+                tenantName = fallback[1].trim();
+                unitName = fallback[2].trim();
+                if (unitName.includes("-")) {
+                  propertyName = unitName.split("-")[0].trim();
+                }
+              }
+            }
+          }
+
+          return {
+            id: v.id,
+            leaseId: tenantName || "DEP",
+            name: v.description || `Security Deposit Receipt - ${tenantName} (${unitName})`,
+            receiptNo: v.reference_no || v.voucher_number,
+            method: parsedMethod || "Security Deposit",
+            period: v.voucher_date,
+            debit: "Cash In Hand / Bank (12000001)",
+            credit: "Security Deposit Liability (21500)",
+            amount: Number(v.total_amount || 0),
+            status: (v.status as VoucherStatus) || "posted",
+            tenant_name: tenantName,
+            unit_name: unitName,
+            property_name: propertyName,
+            source_type: "SECURITY_DEPOSIT",
+          };
+        });
+
+      // Only include real vouchers from the database (fin_vouchers).
+      // Do not synthesize placeholder or default deposit/PDC vouchers.
+      const mappedVouchers: PmsVoucher[] = [
+        ...standardVouchers,
+      ];
+
+      const mappedHandovers: PmsHandover[] = (handoversRes.data || []).map((h: any) => ({
+        id: h.id,
+        leaseId: h.lease_id,
+        handoverAt: h.handover_date,
+        keys: (h.keys_issued || []).length || 2,
+        accessCards: (h.access_cards_issued || []).length || 1,
+        parkingRemotes: (h.parking_remotes || []).length || 1,
+        acknowledged: true,
+      }));
+
+      const mappedCheckIns: PmsCheckIn[] = (inspectionsRes.data || []).map((i: any) => ({
+        id: i.id,
+        leaseId: i.lease_id,
+        date: i.inspection_date,
+        condition: typeof i.unit_condition === "string" ? i.unit_condition : "Good",
+        photos: (i.photos || []).length,
+      }));
+
+      setAppData({
+        units: mappedUnits,
+        customers: mappedCustomers,
+        leases: mappedLeases,
+        pdcs: mappedPdcs,
+        reservations: mappedReservations,
+        vouchers: mappedVouchers,
+        keyNotices: [],
+        handovers: mappedHandovers,
+        checkIns: mappedCheckIns,
+        auditEvents: [],
+      });
+    } catch (err) {
+      console.error("Failed to load initial data from Supabase:", err);
+      setAppData(prev => ({
+        ...prev,
+        // On error, keep whatever was already loaded; fall back to seed reservations only
+        reservations: prev.reservations.length > 0 ? prev.reservations : INITIAL_SEED_RESERVATIONS,
+      }));
+    } finally {
+      setSyncing(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDirectFromDatabase();
+    void DynamicMastersService.initFromDb();
+
+    const handleRefresh = () => {
+      fetchDirectFromDatabase();
+      void DynamicMastersService.initFromDb();
+    };
+
+    window.addEventListener("finance_vouchers_updated", handleRefresh);
+    window.addEventListener("pms_data_updated", handleRefresh);
+
+    return () => {
+      window.removeEventListener("finance_vouchers_updated", handleRefresh);
+      window.removeEventListener("pms_data_updated", handleRefresh);
+    };
+  }, [fetchDirectFromDatabase]);
+
+  function makeUpdater<K extends keyof PmsAppData>(key: K) {
+    return (fn: (prev: PmsAppData[K]) => PmsAppData[K]) => {
+      setAppData((prev) => ({ ...prev, [key]: fn(prev[key]) }));
+    };
+  }
+
+  const value = useMemo<AppDataContextValue>(
+    () => ({
+      ...appData,
+      setUnits: makeUpdater("units"),
+      setCustomers: makeUpdater("customers"),
+      setReservations: makeUpdater("reservations"),
+      setLeases: makeUpdater("leases"),
+      setPdcs: makeUpdater("pdcs"),
+      setVouchers: makeUpdater("vouchers"),
+      setKeyNotices: makeUpdater("keyNotices"),
+      setHandovers: makeUpdater("handovers"),
+      setCheckIns: makeUpdater("checkIns"),
+      setAuditEvents: makeUpdater("auditEvents"),
+      syncing,
+      refetchData: fetchDirectFromDatabase,
+    }),
+    [appData, syncing, fetchDirectFromDatabase],
+  );
+
+  return <AppDataContext.Provider value={value}>{children}</AppDataContext.Provider>;
+}
+
+const fallbackAppDataValue: AppDataContextValue = {
+  ...EMPTY_DATA,
+  setUnits: () => {},
+  setCustomers: () => {},
+  setReservations: () => {},
+  setLeases: () => {},
+  setPdcs: () => {},
+  setVouchers: () => {},
+  setKeyNotices: () => {},
+  setHandovers: () => {},
+  setCheckIns: () => {},
+  setAuditEvents: () => {},
+  syncing: false,
+  refetchData: async () => {},
+};
+
+export function useAppData(): AppDataContextValue {
+  const context = useContext(AppDataContext);
+  if (!context) {
+    return fallbackAppDataValue;
+  }
+  return context;
+}

@@ -1,0 +1,1666 @@
+import { createClient } from '@supabase/supabase-js';
+
+const CANONICAL_SUPABASE_URL = 'https://rnebpqnzignwjeukgztz.supabase.co';
+const CANONICAL_SUPABASE_ANON_KEY =
+  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJuZWJwcW56aWdud2pldWtnenR6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxNzU4ODIsImV4cCI6MjA5OTc1MTg4Mn0.maLd6Jgr8uggrfu5uZg9sjRmG0z0r7NlaMB4wIdSRTg';
+
+const supabaseUrl =
+  import.meta.env.VITE_SUPABASE_URL ||
+  (typeof process !== 'undefined' ? process.env?.VITE_SUPABASE_URL : undefined) ||
+  CANONICAL_SUPABASE_URL;
+const supabaseAnonKey =
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  (typeof process !== 'undefined' ? process.env?.VITE_SUPABASE_ANON_KEY : undefined) ||
+  CANONICAL_SUPABASE_ANON_KEY;
+
+export const supabase = createClient(
+  supabaseUrl,
+  supabaseAnonKey
+);
+
+
+
+// ---- Typed Helpers ----
+
+export type Property = {
+  id: string;
+  host_id: string;
+  title: string;
+  description: string | null;
+  property_type: string;
+  address: string;
+  city: string;
+  state?: string;
+  zip_code?: string;
+  country: string;
+  max_guests: number;
+  bedrooms: number;
+  beds: number;
+  bathrooms: number;
+  base_price_per_night: number;
+  cleaning_fee: number;
+  is_active: boolean;
+  created_at: string;
+  room_details?: any;
+  amenities?: string[];
+  property_images?: { image_url: string; is_primary: boolean }[];
+  kahramaa_number?: string;
+  municipality_details?: any;
+  // ERP Extended Fields
+  property_code?: string;
+  cost_center_code?: string;
+  cost_center_name?: string;
+  property_category?: string;
+  ownership_type?: string;
+  area_zone?: string;
+  street_building_name?: string;
+  plot_building_no?: string;
+  title_deed_no?: string;
+  municipality_ref_no?: string;
+  property_manager?: string;
+  no_of_floors?: number;
+  no_of_units?: number;
+  total_built_up_area_sqm?: number;
+  common_area_sqm?: number;
+  parking_count?: number;
+  no_of_elevators?: number;
+  completion_date?: string;
+  handover_date?: string;
+  documents_received?: boolean;
+  remarks?: string;
+  year_built?: number;
+  total_floors?: number;
+  total_units?: number;
+  property_status?: string;
+  contact_person?: string;
+  mobile_number?: string;
+  email?: string;
+  alternate_contact?: string;
+  landmark?: string;
+};
+
+export type Booking = {
+  id: string;
+  property_id: string;
+  guest_id: string;
+  check_in: string;
+  check_out: string;
+  guests_count: number;
+  total_price: number;
+  status: 'PENDING' | 'CONFIRMED' | 'CANCELLED' | 'COMPLETED';
+  created_at: string;
+  properties?: Pick<Property, 'title' | 'city' | 'country'> & {
+    property_images?: { image_url: string }[];
+  };
+};
+
+export type Profile = {
+  id: string;
+  role: 'GUEST' | 'HOST' | 'ADMIN' | 'SUPER_ADMIN' | 'SALES' | 'OWNER' | 'PROP_MGR' | 'LEASING' | 'FINANCE' | 'CASHIER' | 'MAINTENANCE' | 'TENANT';
+  full_name: string;
+  avatar_url: string | null;
+};
+
+export type Customer = {
+  id: string;
+  customer_code?: string;
+  customer_type: 'Individual' | 'Company';
+  display_name?: string;
+  full_name: string;
+  primary_mobile: string;
+  mobile_number?: string;
+  primary_email?: string;
+  email_address?: string;
+  current_address?: string;
+  preferred_communication?: 'WhatsApp' | 'Email' | 'SMS' | 'Phone Call';
+  customer_status?: 'Active' | 'Inactive' | 'Blacklisted' | 'Prospect';
+  approval_status?: 'Pending' | 'Approved' | 'Rejected' | 'Under Review';
+  remarks?: string;
+
+  // Individual specific fields
+  first_name?: string;
+  middle_name?: string;
+  last_name?: string;
+  nationality?: string;
+  qatar_id?: string;
+  qid_expiry_date?: string;
+  passport_number?: string;
+  passport_expiry_date?: string;
+  date_of_birth?: string;
+  gender?: 'Male' | 'Female' | 'Other';
+  employer_name?: string;
+  designation?: string;
+  emergency_contact_name?: string;
+  emergency_contact_phone?: string;
+
+  // Company specific fields
+  company_legal_name?: string;
+  trade_name?: string;
+  commercial_registration?: string;
+  cr_expiry_date?: string;
+  trade_licence_no?: string;
+  trade_licence_expiry_date?: string;
+  computer_card_no?: string;
+  computer_card_expiry_date?: string;
+  tax_identification_no?: string;
+  registered_office_address?: string;
+  billing_address?: string;
+  company_telephone?: string;
+  website?: string;
+  industry_activity?: string;
+  authorized_signatory_name?: string;
+  signatory_qid_passport?: string;
+  authorized_signatory_id?: string;
+  signatory_id_expiry_date?: string;
+  primary_contact_person?: string;
+  contact_designation?: string;
+  contact_mobile?: string;
+  contact_email?: string;
+
+  permanent_address?: string;
+  local_address?: string;
+  monthly_income?: number;
+  verification_status: 'Pending' | 'Verified' | 'Rejected' | 'Additional Info Required';
+  verified_by?: string;
+  verified_at?: string;
+
+  // Qatar Credit Bureau / CBNet & Compliance (Article 357 & Default Tracking)
+  cbnet_status?: 'Clean' | 'Notice' | 'Blacklisted' | 'Defaulted';
+  cbnet_rating?: string;
+  cbnet_defaulter_reason?: string;
+
+  created_at: string;
+  updated_at: string;
+};
+
+export type Lease = {
+  id: string;
+  unit_id?: string;
+  property_id: string;
+  customer_id: string;
+  lease_number: string;
+  lease_status: string;
+  commencement_date: string;
+  expiry_date: string;
+  lease_period_months: number;
+  rental_amount: number;
+  payment_frequency: 'Monthly' | 'Quarterly' | 'Semi-Annually' | 'Annually';
+  security_deposit: number;
+  security_deposit_status: 'Pending' | 'Received' | 'Refunded' | 'Adjusted';
+  grace_period_days: number;
+  fit_out_period_days?: number; // Fit-Out / Grace Period for Commercial Fitment & Permits
+  late_penalty_percentage: number;
+  late_penalty_fixed: number;
+  renewal_terms?: string;
+  notice_period_days: number;
+  maintenance_responsibility: 'Landlord' | 'Tenant' | 'Shared';
+  utility_responsibility: 'Landlord' | 'Tenant' | 'Shared';
+  parking_details?: string;
+  special_conditions?: string;
+  number_of_pdc: number;
+  tenant_signed_doc_url?: string;
+  landlord_signed_doc_url?: string;
+  tenant_signature_date?: string;
+  landlord_signature_date?: string;
+  signed_by_receiver?: string;
+  key_handover_date?: string;
+  check_in_report_id?: string;
+  check_out_report_id?: string;
+  previous_lease_id?: string;
+
+  // Municipal Tenancy Registration (Tawtheeq / توثيق عقود الإيجار) - Law No. 4/2008 & Law No. 6/2022
+  tawtheeq_registration_no?: string;
+  baladiya_registration_status?: 'Not Submitted' | 'Under Review' | 'Registered' | 'Expired' | 'Exempt';
+  tawtheeq_fee_amount?: number;
+  tawtheeq_fee_borne_by?: 'Landlord' | 'Tenant' | 'Shared';
+  tawtheeq_issue_date?: string;
+  tawtheeq_expiry_date?: string;
+  tawtheeq_certificate_url?: string;
+
+  created_by?: string;
+  created_at: string;
+  updated_at: string;
+  tenant_name?: string;
+  unit_ref?: string;
+};
+
+export type Reservation = {
+  id: string;
+  unit_id?: string;
+  prospect_name: string;
+  prospect_contact: string;
+  prospect_id_type?: string;
+  prospect_id_number?: string;
+  marketing_agent_id?: string;
+  proposed_lease_period?: number;
+  expected_start_date?: string;
+  proposed_rental_amount?: number;
+  reservation_validity?: string;
+  special_conditions?: string;
+  status: 'Active' | 'Extended' | 'Cancelled' | 'Expired' | 'Converted' | 'Reserved';
+  created_at: string;
+  updated_at: string;
+};
+
+export type KeyHandover = {
+  id: string;
+  lease_id: string;
+  handover_date: string;
+  keys_issued: any[];
+  access_cards_issued: any[];
+  parking_remotes: any[];
+  meter_readings: any;
+  staff_name: string;
+  staff_id?: string;
+  created_at: string;
+};
+
+export type InspectionReport = {
+  id: string;
+  lease_id: string;
+  inspection_type: 'Check-In' | 'Check-Out';
+  inspection_date: string;
+  unit_condition: any;
+  furniture: any;
+  appliances: any;
+  fixtures: any;
+  meter_readings: any;
+  keys_access: any;
+  photos: any[];
+  damages: any[];
+  pending_work: any[];
+  inspector_name: string;
+  tenant_acknowledged: boolean;
+  created_at: string;
+  updated_at: string;
+};
+
+// ---- Data Fetchers ----
+
+/** Fetch all active properties (for landing page / search) */
+export async function fetchProperties(options?: { city?: string }) {
+  let query = supabase
+    .from('properties')
+    .select('*, property_images(image_url, is_primary)')
+    .eq('is_active', true)
+    .order('created_at', { ascending: false });
+
+  if (options?.city) {
+    query = query.ilike('city', `%${options.city}%`);
+  }
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data as Property[];
+}
+
+/** Fetch a single property by ID */
+export async function fetchPropertyById(id: string) {
+  const { data, error } = await supabase
+    .from('properties')
+    .select('*, property_images(image_url, is_primary)')
+    .eq('id', id)
+    .single();
+
+  if (error) throw error;
+  return data as Property;
+}
+
+/** Fetch all properties owned by a host */
+export async function fetchHostProperties(hostId: string) {
+  const { data, error } = await supabase
+    .from('properties')
+    .select('*, property_images(image_url, is_primary)')
+    .eq('host_id', hostId)
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return data as Property[];
+}
+
+/** Fetch all properties (Admin View) */
+export async function fetchAllProperties() {
+  const { data, error } = await supabase
+    .from('properties')
+    .select('*, property_images(image_url, is_primary)')
+    .order('created_at', { ascending: false });
+
+  if (error) throw error;
+  return data as Property[];
+}
+
+/** Columns present on public.properties (PostgREST schema). */
+const PROPERTIES_WRITE_KEYS = new Set([
+  'host_id',
+  'title',
+  'description',
+  'property_type',
+  'address',
+  'city',
+  'country',
+  'location',
+  'max_guests',
+  'bedrooms',
+  'beds',
+  'bathrooms',
+  'base_price_per_night',
+  'cleaning_fee',
+  'is_active',
+  'property_code',
+  'cost_center_code',
+  'cost_center_name',
+  'property_category',
+  'ownership_type',
+  'area_zone',
+  'street_building_name',
+  'plot_building_no',
+  'title_deed_no',
+  'municipality_ref_no',
+  'property_manager',
+  'no_of_floors',
+  'no_of_units',
+  'total_built_up_area_sqm',
+  'common_area_sqm',
+  'parking_count',
+  'no_of_elevators',
+  'completion_date',
+  'handover_date',
+  'documents_received',
+  'remarks',
+  'year_built',
+  'total_floors',
+  'total_units',
+  'property_status',
+  'contact_person',
+  'mobile_number',
+  'email',
+  'alternate_contact',
+  'postal_code',
+  'landmark',
+]);
+
+function sanitizePropertyWritePayload<T extends Record<string, unknown>>(payload: T): T {
+  const sanitized = {} as T;
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === undefined) continue;
+    if (key === 'zip_code') {
+      (sanitized as Record<string, unknown>).postal_code = value;
+      continue;
+    }
+    if (
+      key === 'amenities' ||
+      key === 'room_details' ||
+      key === 'municipality_details' ||
+      key === 'kahramaa_number' ||
+      key === 'state'
+    ) {
+      continue;
+    }
+    if (PROPERTIES_WRITE_KEYS.has(key)) {
+      (sanitized as Record<string, unknown>)[key] = value;
+    }
+  }
+  return sanitized;
+}
+
+/** Create a new property listing */
+export async function createProperty(payload: Omit<Property, 'id' | 'created_at' | 'property_images'>) {
+  const { data, error } = await supabase
+    .from('properties')
+    .insert(sanitizePropertyWritePayload(payload as Record<string, unknown>))
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data as Property;
+}
+
+/** Update an existing property */
+export async function updateProperty(id: string, payload: Partial<Omit<Property, 'id' | 'created_at' | 'property_images'>>) {
+  const { data, error } = await supabase
+    .from('properties')
+    .update({
+      ...sanitizePropertyWritePayload(payload as Record<string, unknown>),
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data as Property;
+}
+
+/** Update property images */
+export async function updatePropertyImages(propertyId: string, images: { image_url: string; is_primary: boolean; display_order: number }[]) {
+  const { error: deleteError } = await supabase
+    .from('property_images')
+    .delete()
+    .eq('property_id', propertyId);
+  
+  if (deleteError) throw deleteError;
+
+  if (images.length > 0) {
+    const payload = images.map(img => ({ ...img, property_id: propertyId }));
+    const { error: insertError } = await supabase
+      .from('property_images')
+      .insert(payload);
+    if (insertError) throw insertError;
+  }
+}
+
+/** Fetch bookings for a guest */
+export async function fetchGuestBookings(guestId: string) {
+  const { data, error } = await supabase
+    .from('bookings')
+    .select('*, properties(title, city, country, property_images(image_url))')
+    .eq('guest_id', guestId)
+    .order('check_in', { ascending: false });
+
+  if (error) throw error;
+  return data as Booking[];
+}
+
+/** Fetch bookings for all host's properties */
+export async function fetchHostBookings(hostId: string) {
+  const { data, error } = await supabase
+    .from('bookings')
+    .select('*, properties!inner(title, city, host_id)')
+    .eq('properties.host_id', hostId)
+    .order('check_in', { ascending: true });
+
+  if (error) throw error;
+  return data;
+}
+// ---- Finance Types ----
+
+export type GLAccount = {
+  id: string;
+  code: string;
+  name_en: string;
+  name_ar?: string;
+  type: 'asset' | 'liability' | 'equity' | 'income' | 'expense';
+  parent_id?: string;
+  currency: string;
+  is_postable: boolean;
+  created_at: string;
+};
+
+export type JournalEntry = {
+  id: string;
+  je_no: string;
+  posting_date: string;
+  period: string;
+  source_module: string;
+  source_id?: string;
+  narration?: string;
+  status: 'draft' | 'posted' | 'reversed';
+  created_at: string;
+  journal_lines?: JournalLine[];
+};
+
+export type JournalLine = {
+  id: string;
+  je_id: string;
+  line_no: number;
+  account_id: string;
+  debit: number;
+  credit: number;
+  cost_center_id?: string;
+  property_id?: string;
+  unit_id?: string;
+  owner_id?: string;
+  currency: string;
+  fx_rate: number;
+  gl_accounts?: Pick<GLAccount, 'code' | 'name_en' | 'type'>;
+};
+
+export type Invoice = {
+  id: string;
+  customer_id?: string;
+  lease_id?: string;
+  type: 'rent' | 'maintenance' | 'service' | 'deposit_deduction' | 'community';
+  lines: any;
+  total: number;
+  status: string;
+  created_at: string;
+};
+
+export type CustomerDraft = {
+  id: string;
+  name: string;
+  email?: string;
+  phone?: string;
+  company?: string;
+  type?: string;
+  national_id?: string;
+  notes?: string;
+  pending_uploads?: string;
+  created_at: string;
+};
+
+export type ARLedger = {
+  id: string;
+  customer_id?: string;
+  lease_id?: string;
+  reference: string;
+  type: 'invoice' | 'receipt' | 'credit_note' | 'debit_note';
+  date: string;
+  amount: number;
+  balance: number;
+  status: 'open' | 'partial' | 'closed';
+  created_at: string;
+};
+
+// ---- Finance Fetchers ----
+
+export async function fetchGLAccounts() {
+  const { data, error } = await supabase
+    .from('gl_accounts')
+    .select('*')
+    .order('code', { ascending: true });
+
+  if (error) throw error;
+  return data as GLAccount[];
+}
+
+export async function fetchJournalEntries() {
+  const { data, error } = await supabase
+    .from('journal_entries')
+    .select('*, journal_lines(*, gl_accounts(code, name_en, type))')
+    .order('posting_date', { ascending: false });
+
+  if (error) throw error;
+  return data as JournalEntry[];
+}
+
+// ---- Maintenance Types ----
+
+export type MaintenanceTicket = {
+  id: string;
+  property_id: string | null;
+  unit_ref: string | null;
+  title: string;
+  description: string | null;
+  category: string;
+  priority: 'low' | 'medium' | 'high' | 'urgent';
+  status: 'new' | 'assigned' | 'dispatched' | 'scheduled' | 'in_progress' | 'resolved' | 'completed' | 'closed' | 'cancelled';
+  assignee: string | null;
+  host_id: string | null;
+  reported_by: string | null;
+  resolved_at: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+export type InventoryPart = {
+  id: string;
+  name: string;
+  sku?: string;
+  quantity_on_hand: number;
+  unit_cost: number;
+  created_at: string;
+  procurement_item_id?: string | null;
+  unit_of_measure?: string;
+};
+
+export type MaterialUsage = {
+  id: string;
+  ticket_id: string;
+  part_id?: string;
+  quantity: number;
+  cost: number;
+  created_at: string;
+  procurement_item_id?: string | null;
+};
+
+export type PropertyImage = {
+  id: string;
+  property_id: string;
+  image_url: string;
+  is_primary: boolean;
+  display_order: number;
+};
+
+// HRMS Assets
+export type Asset = {
+  id: string;
+  asset_code?: string;
+  asset_name: string;
+  category?: string;
+  subcategory?: string;
+  brand?: string;
+  model?: string;
+  serial_number?: string;
+  ownership_type?: string;
+  purchase_date?: string;
+  supplier?: string;
+  purchase_cost?: number;
+  warranty_expiry_date?: string;
+  warranty_status?: string;
+  department_id?: string;
+  department?: string;
+  assigned_property_id?: string;
+  assigned_property_code?: string;
+  assigned_unit_id?: string;
+  assigned_unit_code?: string;
+  assigned_employee_id?: string;
+  assigned_employee_name?: string;
+  assignment_date?: string;
+  asset_condition?: string;
+  asset_status?: string;
+  life_of_asset?: number;
+  depreciation_method?: string;
+  depreciation_rate?: number;
+  opening_cost?: number;
+  last_service_date?: string;
+  next_service_date?: string;
+  return_date?: string;
+  disposal_date?: string;
+  addition_during_year?: number;
+  total_asset_value?: number;
+  disposal_value?: number;
+  opening_accumulated_depreciation?: number;
+  current_year_depreciation?: number;
+  closing_accumulated_depreciation?: number;
+  net_book_value?: number;
+  remarks?: string;
+  description?: string;
+  created_at: string;
+  updated_at: string;
+  
+  // Joins
+  departments?: { name: string };
+  employees?: { first_name: string; last_name: string };
+  properties?: { title: string; property_code?: string };
+  units?: { unit_code: string; unit_number?: string };
+};
+
+export async function fetchMaintenanceTickets(filters?: { property_id?: string; host_id?: string }) {
+  let query = supabase
+    .from('maintenance_tickets')
+    .select('*')
+    .order('created_at', { ascending: false });
+
+  if (filters?.property_id) query = query.eq('property_id', filters.property_id);
+  if (filters?.host_id) query = query.eq('host_id', filters.host_id);
+
+  const { data, error } = await query;
+  if (error) throw error;
+  return data as MaintenanceTicket[];
+}
+
+export async function createMaintenanceTicket(payload: Omit<MaintenanceTicket, 'id' | 'created_at' | 'updated_at'>) {
+  const { data, error } = await supabase
+    .from('maintenance_tickets')
+    .insert(payload)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data as MaintenanceTicket;
+}
+
+export async function updateMaintenanceTicket(id: string, payload: Partial<Omit<MaintenanceTicket, 'id' | 'created_at'>>) {
+  const { data, error } = await supabase
+    .from('maintenance_tickets')
+    .update({ ...payload, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data as MaintenanceTicket;
+}
+
+// ---- ERP Types (Leasing, Assets, Approvals) ----
+
+// Old Lease type removed to resolve duplicate identifier error
+
+export type RentSchedule = {
+  id: string;
+  lease_id: string;
+  due_date: string;
+  amount: number;
+  status: 'unpaid' | 'partially_paid' | 'paid' | 'overdue';
+  created_at: string;
+};
+
+export type PDC = {
+  id: string;
+  lease_id?: string;
+  cheque_number: string;
+  bank_name?: string;
+  bank?: string;            // column in pdcs table
+  amount: number;
+  deposit_date?: string;
+  status: 'held' | 'deposited' | 'cleared' | 'bounced' | 'returned' | 'ISSUED' | 'In Hand';
+  // Extended fields from "PDC in Hand New" Excel sheet
+  unit_name?: string;
+  property_code?: string;
+  tenant_name?: string;
+  maturity_date?: string;
+  rent_from_date?: string;
+  rent_to_date?: string;
+  sl_no?: number;
+  status_pdc?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+// Old FixedAsset Type (Deprecated in favor of HRMS Asset, keeping for legacy compatibility if needed elsewhere)
+export type FixedAsset = {
+  id: string;
+  property_id: string;
+  unit_ref?: string;
+  name: string;
+  category: string;
+  purchase_date?: string;
+  purchase_value?: number;
+  current_value?: number;
+  depreciation_rate?: number;
+  status: 'active' | 'maintenance' | 'disposed';
+  barcode?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+// --- HRMS Assets API ---
+export async function fetchAssets(filters?: { property_id?: string; employee_id?: string }) {
+  let query = supabase.from('assets').select('*, departments(name), employees(first_name, last_name), properties(title, property_code), units(unit_code)').order('created_at', { ascending: false });
+  if (filters?.property_id) query = query.eq('assigned_property_id', filters.property_id);
+  if (filters?.employee_id) query = query.eq('assigned_employee_id', filters.employee_id);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data as Asset[];
+}
+
+export async function createAsset(payload: Partial<Asset>) {
+  const { data, error } = await supabase.from('assets').insert(payload).select().single();
+  if (error) throw error;
+  return data as Asset;
+}
+
+export async function updateAsset(id: string, payload: Partial<Asset>) {
+  const { data, error } = await supabase.from('assets').update({ ...payload, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+  if (error) throw error;
+  return data as Asset;
+}
+
+export async function deleteAsset(id: string) {
+  const { error } = await supabase.from('assets').delete().eq('id', id);
+  if (error) throw error;
+  return true;
+}
+
+export async function deleteAllAssets() {
+  const { error } = await supabase.from('assets').delete().neq('id', '00000000-0000-0000-0000-000000000000');
+  if (error) throw error;
+  return true;
+}
+
+
+export type ApprovalRequest = {
+  id: string;
+  target_record_id: string;
+  target_table: string;
+  requested_by: string;
+  amount?: number;
+  status: 'pending' | 'approved' | 'rejected';
+  notes?: string;
+  created_at: string;
+  updated_at: string;
+};
+
+// ---- ERP Fetchers & Mutators ----
+
+// Leases
+export async function fetchLeases(filters?: { host_id?: string; property_id?: string }) {
+  let query = supabase.from('leases').select('*').order('created_at', { ascending: false });
+  if (filters?.host_id) query = query.eq('host_id', filters.host_id);
+  if (filters?.property_id) query = query.eq('property_id', filters.property_id);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data as Lease[];
+}
+
+export async function createLease(payload: Omit<Lease, 'id' | 'created_at' | 'updated_at'>) {
+  const { data, error } = await supabase.from('leases').insert(payload).select().single();
+  if (error) throw error;
+  return data as Lease;
+}
+
+export async function updateLease(id: string, payload: Partial<Omit<Lease, 'id' | 'created_at'>>) {
+  const { data, error } = await supabase
+    .from('leases').update({ ...payload, updated_at: new Date().toISOString() })
+    .eq('id', id).select().single();
+  if (error) throw error;
+  return data as Lease;
+}
+
+// Rent Schedules
+export async function fetchRentSchedules(leaseId: string) {
+  const { data, error } = await supabase
+    .from('rent_schedules').select('*').eq('lease_id', leaseId).order('due_date', { ascending: true });
+  if (error) throw error;
+  return data as RentSchedule[];
+}
+
+export async function createRentSchedules(schedules: Omit<RentSchedule, 'id' | 'created_at'>[]) {
+  const { data, error } = await supabase.from('rent_schedules').insert(schedules).select();
+  if (error) throw error;
+  return data as RentSchedule[];
+}
+
+export async function updateRentSchedule(id: string, status: RentSchedule['status']) {
+  const { data, error } = await supabase.from('rent_schedules').update({ status }).eq('id', id).select().single();
+  if (error) throw error;
+  return data as RentSchedule;
+}
+
+// PDCs
+export async function fetchPDCs(leaseId?: string) {
+  let query = (supabase.from('pdcs').select('*, leases(tenant_name, unit_ref)') as any).order('deposit_date', { ascending: true });
+  if (leaseId) query = query.eq('lease_id', leaseId);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data as (PDC & { leases?: Pick<Lease, 'tenant_name' | 'unit_ref'> })[];
+}
+
+export async function createPDC(payload: Omit<PDC, 'id' | 'created_at' | 'updated_at'>) {
+  const { data, error } = await supabase.from('pdcs').insert(payload).select().single();
+  if (error) throw error;
+  const pdc = data as PDC;
+
+  // Post a GL receipt voucher: Dr 12900001 PDC In Hand / Cr 21400001 Customer PDC Liability
+  const chequeNo = pdc.cheque_number || String(pdc.id);
+  const voucherNo = `VCH-PDC-RCV-${chequeNo}`;
+  const today = new Date().toISOString().split('T')[0];
+  try {
+    const { data: vData, error: vErr } = await supabase.from('fin_vouchers').insert({
+      voucher_number: voucherNo,
+      voucher_date: (pdc as any).deposit_date || (pdc as any).maturity_date || today,
+      voucher_type: 'RV',
+      description: `PDC Received — Cheque #${chequeNo}`,
+      total_amount: pdc.amount,
+      status: 'posted',
+      posted_at: new Date().toISOString(),
+    }).select('id').single();
+    if (!vErr && vData?.id) {
+      // Insert both ledger lines for this receipt voucher
+      await supabase.from('fin_voucher_lines').insert([
+        { voucher_id: vData.id, account_code: '12900001', account_name: 'Rent PDC In Hand', debit: pdc.amount, credit: 0, description: `PDC Received — Cheque #${chequeNo}` },
+        { voucher_id: vData.id, account_code: '21400001', account_name: 'Customer PDC Liability', debit: 0, credit: pdc.amount, description: `PDC Received — Cheque #${chequeNo}` },
+      ]);
+    }
+  } catch (glErr) {
+    // Best-effort: GL posting failure should not block PDC creation
+    console.warn('[createPDC] GL posting note:', glErr);
+  }
+
+  // Notify Finance Store so GL/Trial Balance refresh immediately
+  if (typeof window !== 'undefined') {
+    window.dispatchEvent(new CustomEvent('finance_vouchers_updated'));
+  }
+
+  return pdc;
+}
+
+export async function updatePDC(id: string, status: PDC['status']) {
+  const { data, error } = await supabase
+    .from('pdcs').update({ status, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+  if (error) throw error;
+  return data as PDC;
+}
+
+// AR Ledger
+export async function fetchARLedgers(filters?: { lease_id?: string; status?: ARLedger['status'] }) {
+  let query = supabase.from('ar_ledgers').select('*').order('date', { ascending: false });
+  if (filters?.lease_id) query = query.eq('lease_id', filters.lease_id);
+  if (filters?.status) query = query.eq('status', filters.status);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data as ARLedger[];
+}
+
+export async function createAREntry(payload: Omit<ARLedger, 'id' | 'created_at'>) {
+  const { data, error } = await supabase.from('ar_ledgers').insert(payload).select().single();
+  if (error) throw error;
+  return data as ARLedger;
+}
+
+export async function settleAREntry(id: string) {
+  const { data, error } = await supabase
+    .from('ar_ledgers').update({ status: 'closed', balance: 0 }).eq('id', id).select().single();
+  if (error) throw error;
+  return data as ARLedger;
+}
+
+// Journal Entries — Create & Update
+export async function createJournalEntry(payload: Omit<JournalEntry, 'id' | 'created_at'>) {
+  const { data, error } = await supabase.from('journal_entries').insert(payload).select().single();
+  if (error) throw error;
+  return data as JournalEntry;
+}
+
+export async function updateJournalEntry(id: string, payload: Partial<Pick<JournalEntry, 'narration' | 'status'>>) {
+  const { data, error } = await supabase.from('journal_entries').update(payload).eq('id', id).select().single();
+  if (error) throw error;
+  return data as JournalEntry;
+}
+
+// Fixed Assets
+export async function fetchFixedAssets(filters?: { property_id?: string }) {
+  let query = supabase.from('fixed_assets').select('*').order('created_at', { ascending: false });
+  if (filters?.property_id) query = query.eq('property_id', filters.property_id);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data as FixedAsset[];
+}
+
+export async function createFixedAsset(payload: Omit<FixedAsset, 'id' | 'created_at' | 'updated_at'>) {
+  const { data, error } = await supabase.from('fixed_assets').insert(payload).select().single();
+  if (error) throw error;
+  return data as FixedAsset;
+}
+
+export async function updateFixedAsset(id: string, payload: Partial<Omit<FixedAsset, 'id' | 'created_at'>>) {
+  const { data, error } = await supabase
+    .from('fixed_assets').update({ ...payload, updated_at: new Date().toISOString() })
+    .eq('id', id).select().single();
+  if (error) throw error;
+  return data as FixedAsset;
+}
+
+export async function transferFixedAsset(id: string, newPropertyId: string, newUnitRef: string) {
+  const { data, error } = await supabase
+    .from('fixed_assets').update({ property_id: newPropertyId, unit_ref: newUnitRef, updated_at: new Date().toISOString() })
+    .eq('id', id).select().single();
+  if (error) throw error;
+  return data as FixedAsset;
+}
+
+// Approvals
+export async function fetchApprovalRequests(status?: ApprovalRequest['status']) {
+  let query = supabase.from('approval_requests').select('*').order('created_at', { ascending: false });
+  if (status) query = query.eq('status', status);
+  const { data, error } = await query;
+  if (error) throw error;
+  return data as ApprovalRequest[];
+}
+
+export async function createApprovalRequest(payload: Omit<ApprovalRequest, 'id' | 'created_at' | 'updated_at'>) {
+  const { data, error } = await supabase.from('approval_requests').insert(payload).select().single();
+  if (error) throw error;
+  return data as ApprovalRequest;
+}
+
+export async function processApproval(id: string, decision: 'approved' | 'rejected', notes?: string) {
+  const { data, error } = await supabase
+    .from('approval_requests')
+    .update({ status: decision, notes, updated_at: new Date().toISOString() })
+    .eq('id', id).select().single();
+  if (error) throw error;
+  return data as ApprovalRequest;
+}
+
+// Material Usage
+export async function fetchMaterialUsage(ticketId: string) {
+  const { data, error } = await supabase
+    .from('material_usage').select('*, inventory_parts(name, sku)').eq('ticket_id', ticketId);
+  if (error) throw error;
+  return data;
+}
+
+export async function logMaterialUsage(payload: { ticket_id: string; part_id: string; quantity: number }) {
+  const { data, error } = await supabase.rpc('issue_maintenance_material', {
+    p_ticket_id: payload.ticket_id,
+    p_part_id: payload.part_id,
+    p_quantity: payload.quantity,
+  });
+  if (error) throw error;
+  return data as string;
+}
+
+export async function fetchInventoryParts() {
+  const { data, error } = await supabase
+    .from('inventory_parts')
+    .select('*')
+    .not('procurement_item_id', 'is', null)
+    .order('name');
+  if (error) throw error;
+  return data as InventoryPart[];
+}
+
+// Units
+export type Unit = {
+  id: string;
+  property_id: string;
+  unit_ref: string;
+  room_type?: string;
+  bedrooms?: number;
+  bathrooms?: number;
+  area?: string;
+  unit_area?: number | string;
+  unit_area_uom?: string;
+  price?: number;
+  status?: string;
+  created_at: string;
+  // ERP Extended Fields
+  unit_type?: string;
+  unit_category?: string;
+  furnishing_type?: string;
+  rent?: number;
+  market_rent?: number;
+  no_of_bedrooms?: number;
+  no_of_bathrooms?: number;
+  unit_code?: string;
+  unit_cost_center_code?: string;
+  unit_name?: string;
+  parent_cost_center_code?: string;
+  unit_usage?: string;
+  block_tower?: string;
+  floor?: string;
+  balcony_sqm?: number;
+  total_area_sqm?: number;
+  view_type?: string;
+  furnishing?: string;
+  parking_slot_no?: string;
+  electricity_meter_no?: string;
+  water_meter_no?: string;
+  cooling_meter_no?: string;
+  lease_status?: string;
+  rent_frequency?: string;
+  current_tenant?: string;
+  contract_no?: string;
+  contract_start_date?: string;
+  contract_end_date?: string;
+  current_rent?: number;
+  security_deposit_type?: string;
+  security_deposit_amount?: number;
+  service_charge?: number;
+  maintenance_responsibility?: string;
+  handover_date?: string;
+  documents_received?: boolean;
+  remarks?: string;
+  max_adults?: number;
+  max_children?: number;
+  total_occupancy?: number;
+  weekend_price?: number;
+  holiday_price?: number;
+  cleaning_fee?: number;
+};
+
+export async function fetchUnits(filters?: { property_id?: string }) {
+  let q: any = supabase.from('units').select('*').order('created_at', { ascending: false });
+  if (filters?.property_id) q = q.eq('property_id', filters.property_id);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data as Unit[];
+}
+
+/** Columns present on public.units (PostgREST schema). */
+const UNITS_WRITE_KEYS = new Set([
+  'property_id',
+  'unit_ref',
+  'room_type',
+  'bedrooms',
+  'bathrooms',
+  'area',
+  'price',
+  'status',
+  'unit_code',
+  'unit_cost_center_code',
+  'unit_name',
+  'parent_cost_center_code',
+  'unit_usage',
+  'block_tower',
+  'floor',
+  'balcony_sqm',
+  'total_area_sqm',
+  'view_type',
+  'furnishing',
+  'parking_slot_no',
+  'electricity_meter_no',
+  'water_meter_no',
+  'cooling_meter_no',
+  'lease_status',
+  'rent_frequency',
+  'current_tenant',
+  'contract_no',
+  'contract_start_date',
+  'contract_end_date',
+  'current_rent',
+  'security_deposit_type',
+  'security_deposit_amount',
+  'service_charge',
+  'maintenance_responsibility',
+  'handover_date',
+  'documents_received',
+  'remarks',
+  'max_adults',
+  'max_children',
+  'total_occupancy',
+  'weekend_price',
+  'holiday_price',
+  'cleaning_fee',
+]);
+
+export function sanitizeUnitWritePayload<T extends Record<string, unknown>>(payload: T): T {
+  const sanitized = {} as T;
+  for (const [key, value] of Object.entries(payload)) {
+    if (value === undefined) continue;
+    // Strip client-only keys or invalid property keys
+    if (key === 'host_id' || key === 'id' || key === 'created_at' || key === 'updated_at') {
+      continue;
+    }
+    if (UNITS_WRITE_KEYS.has(key)) {
+      (sanitized as Record<string, unknown>)[key] = value;
+    }
+  }
+  return sanitized;
+}
+
+export async function createUnit(payload: Partial<Unit>) {
+  const sanitized = sanitizeUnitWritePayload(payload as Record<string, unknown>);
+  const { data, error } = await supabase.from('units').insert(sanitized).select().single();
+  if (error) throw error;
+  return data as Unit;
+}
+
+export async function updateUnit(id: string, payload: Partial<Unit>) {
+  const sanitized = sanitizeUnitWritePayload(payload as Record<string, unknown>);
+  const { data, error } = await supabase
+    .from('units')
+    .update({ ...sanitized, updated_at: new Date().toISOString() })
+    .eq('id', id)
+    .select()
+    .single();
+  if (error) throw error;
+  return data as Unit;
+}
+
+// Profiles / Users (lightweight)
+export type ProfileRow = {
+  id: string;
+  full_name: string;
+  email?: string;
+  role?: string;
+  avatar_url?: string | null;
+  created_at: string;
+};
+
+export async function fetchProfiles() {
+  const { data, error } = await supabase.from('profiles').select('*').order('created_at', { ascending: false });
+  if (error) throw error;
+  return data as ProfileRow[];
+}
+
+export async function createProfile(payload: Partial<ProfileRow>) {
+  const { data, error } = await supabase.from('profiles').insert(payload).select().single();
+  if (error) throw error;
+  return data as ProfileRow;
+}
+
+// GL account create
+export async function createGLAccount(payload: Partial<GLAccount>) {
+  const { data, error } = await supabase.from('gl_accounts').insert(payload).select().single();
+  if (error) throw error;
+  return data as GLAccount;
+}
+
+// Provisions
+export type Provision = {
+  id: string;
+  name: string;
+  amount: number;
+  period: string;
+  gl_account_id?: string;
+  created_at: string;
+};
+
+export async function fetchProvisions() {
+  const { data, error } = await supabase.from('provisions').select('*').order('period', { ascending: false });
+  if (error) throw error;
+  return data as Provision[];
+}
+
+export async function createProvision(payload: Omit<Provision, 'id' | 'created_at'>) {
+  const { data, error } = await supabase.from('provisions').insert(payload).select().single();
+  if (error) throw error;
+  return data as Provision;
+}
+
+// Additional helpers: single rent schedule creation, PDC processing, approval aliases
+export async function createRentSchedule(payload: Omit<RentSchedule, 'id' | 'created_at'>) {
+  const { data, error } = await supabase.from('rent_schedules').insert(payload).select().single();
+  if (error) throw error;
+  return data as RentSchedule;
+}
+
+export async function processPDC(id: string, status: PDC['status'], depositDate?: string) {
+  const update: Partial<PDC> = { status };
+  if (depositDate) update.deposit_date = depositDate;
+  const { data, error } = await supabase.from('pdcs').update({ ...update, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+  if (error) throw error;
+  return data as PDC;
+}
+
+export async function submitApproval(payload: Omit<ApprovalRequest, 'id' | 'created_at' | 'updated_at'>) {
+  return createApprovalRequest(payload as any);
+}
+
+export async function approveRequest(id: string, approverId: string, comment?: string) {
+  // find request and add an approval_step record, then update request status when final
+  const { data: req, error: reqErr } = await supabase.from('approval_requests').select('*').eq('id', id).single();
+  if (reqErr) throw reqErr;
+
+  const { data: step, error: stepErr } = await supabase.from('approval_steps').insert({
+    request_id: id,
+    step_order: 1,
+    approver_id: approverId,
+    status: 'approved',
+    decision_at: new Date().toISOString(),
+    comment: comment || null
+  }).select().single();
+  if (stepErr) throw stepErr;
+
+  // simplistic: mark request approved
+  const { data: updatedReq, error: updErr } = await supabase.from('approval_requests').update({ status: 'approved', updated_at: new Date().toISOString() }).eq('id', id).select().single();
+  if (updErr) throw updErr;
+  return { request: updatedReq as ApprovalRequest, step: step };
+}
+
+// ---- ERP Master Tables ----
+
+export type MasterItem = { id: string; label: string; };
+
+async function fetchMaster(table: string): Promise<MasterItem[]> {
+  const { data, error } = await supabase.from(table).select('id, label').order('label');
+  if (error) return [];
+  return data as MasterItem[];
+}
+
+export const fetchPropertyTypes = () => fetchMaster('mst_property_types');
+export const fetchPropertyCategories = () => fetchMaster('mst_property_categories');
+export const fetchOwnershipTypes = () => fetchMaster('mst_ownership_types');
+export const fetchVatTreatments = () => fetchMaster('mst_vat_treatments');
+export const fetchUnitUsages = () => fetchMaster('mst_unit_usages');
+export const fetchViewTypes = () => fetchMaster('mst_view_types');
+export const fetchFurnishingTypes = () => fetchMaster('mst_furnishing');
+export const fetchLeaseStatuses = () => fetchMaster('mst_lease_statuses');
+export const fetchRentFrequencies = () => fetchMaster('mst_rent_frequencies');
+export const fetchMaintenanceResponsibilities = () => fetchMaster('mst_maintenance_responsibilities');
+export const fetchSecurityDepositTypes = () => fetchMaster('mst_security_deposit_types');
+
+// ---- ERP Vouchers ----
+
+export type ERPVoucher = {
+  id: string;
+  voucher_no: string;
+  voucher_type: 'Receipt' | 'Deposit' | 'Cheque Return' | 'Rent Income' | 'Payment';
+  voucher_date: string;
+  total_amount: number;
+  notes?: string;
+  created_at: string;
+  journal_entries?: ERPJournalEntry[];
+  erp_journal_entries?: ERPJournalEntry[];
+};
+
+export type ERPJournalEntry = {
+  id: string;
+  voucher_id: string;
+  account_name: string;
+  debit: number;
+  credit: number;
+  created_at: string;
+};
+
+export type ERPChartOfAccount = {
+  id: string;
+  code: string;
+  name: string;
+  type: string;
+  type_code?: string;
+  type_name?: string;
+  group_code?: string;
+  group_name?: string;
+  class_code?: string;
+  class_name?: string;
+  gl_code?: string;
+  gl_name?: string;
+  sl_code?: string;
+  sl_name?: string;
+  created_at: string;
+};
+
+export type UnitCOA = {
+  id: string;
+  property_name: string;
+  unit_code: string;
+  pdc_in_hand_code: string;
+  pdc_in_hand_name: string;
+  deposit_code: string;
+  deposit_name: string;
+  receivables_code: string;
+  receivables_name: string;
+  created_at: string;
+};
+
+export async function fetchERPVouchers(filters?: { voucher_type?: string }) {
+  let q = supabase
+    .from('erp_vouchers')
+    .select('*, erp_journal_entries(*)')
+    .order('voucher_date', { ascending: false });
+  if (filters?.voucher_type) q = q.eq('voucher_type', filters.voucher_type);
+  const { data, error } = await q;
+  if (error) throw error;
+  return data as ERPVoucher[];
+}
+
+export async function createERPVoucher(
+  voucher: Omit<ERPVoucher, 'id' | 'created_at' | 'journal_entries'>,
+  lines: Omit<ERPJournalEntry, 'id' | 'voucher_id' | 'created_at'>[]
+) {
+  // DEPRECATED (Phase 2 — 2026-08-27):
+  // The PMS Finance architecture mandates a single-accounting-engine model
+  // where every accounting event flows through the resolver + posting
+  // engine (fin_accounting_events -> fin_vouchers / fin_voucher_lines).
+  // Direct erp_vouchers / erp_journal_entries writes are no longer supported.
+  //
+  // Callers should use:
+  //   - postVoucher() in src/lib/finance/posting-engine.ts for direct
+  //     voucher creation
+  //   - resolveAccountingAccounts() in src/lib/finance/account-resolver.ts
+  //     for GL/SL resolution
+  //
+  // This shim is preserved only to keep old callers compiling during the
+  // cutover window; it throws so the runtime is forced onto the new path.
+  void voucher; void lines;
+  throw new Error(
+    'createERPVoucher is deprecated. Use postVoucher() in src/lib/finance/posting-engine.ts ' +
+    'and resolveAccountingAccounts() in src/lib/finance/account-resolver.ts instead. ' +
+    'See phase2-account-resolver-hardened.md and the Phase 2 enforcement migration ' +
+    '(20260829110000) for the migration path.'
+  );
+}
+
+export type CoaType = {
+  id: string;
+  code: string;
+  name: string;
+  normal_balance: 'Debit' | 'Credit';
+  report_type: 'Balance Sheet' | 'Profit & Loss';
+  is_active: boolean;
+  created_at: string;
+};
+
+export type CoaGroup = {
+  id: string;
+  type_id: string;
+  type_code: string;
+  code: string;
+  name: string;
+  is_active: boolean;
+};
+
+export type CoaClass = {
+  id: string;
+  group_id: string;
+  type_id: string;
+  group_code: string;
+  type_code: string;
+  code: string;
+  name: string;
+  is_active: boolean;
+};
+
+export type CoaGL = {
+  id: string;
+  class_id: string;
+  group_id: string;
+  type_id: string;
+  class_code: string;
+  group_code: string;
+  type_code: string;
+  code: string;
+  name: string;
+  normal_balance: 'Debit' | 'Credit';
+  is_control_account: boolean;
+  is_posting_account: boolean;
+  allows_direct_posting: boolean;
+  requires_property: boolean;
+  requires_unit: boolean;
+  requires_tenant: boolean;
+  requires_vendor: boolean;
+  requires_employee: boolean;
+  is_active: boolean;
+};
+
+export type CoaSL = {
+  id: string;
+  gl_id: string;
+  class_id: string;
+  group_id: string;
+  type_id: string;
+  gl_code: string;
+  class_code: string;
+  group_code: string;
+  type_code: string;
+  code: string;
+  name: string;
+  normal_balance: 'Debit' | 'Credit';
+  is_control_account: boolean;
+  is_posting_account: boolean;
+  allows_direct_posting: boolean;
+  is_active: boolean;
+};
+
+export type UnitCoaMapping = {
+  id: string;
+  unit_id: string;
+  property_id?: string;
+  unit_code: string;
+  property_name?: string;
+  receivable_sl_id?: string;
+  receivable_sl_code?: string;
+  receivable_sl_name?: string;
+  pdc_sl_id?: string;
+  pdc_sl_code?: string;
+  pdc_sl_name?: string;
+  deposit_sl_id?: string;
+  deposit_sl_code?: string;
+  deposit_sl_name?: string;
+  status: 'Active' | 'Inactive';
+};
+
+export type PropertyCoaMapping = {
+  id: string;
+  property_id: string;
+  property_code?: string;
+  property_name?: string;
+  rental_revenue_gl_code?: string;
+  property_management_fee_gl_code?: string;
+  other_income_gl_code?: string;
+  gain_loss_disposal_gl_code?: string;
+  created_at?: string;
+  updated_at?: string;
+};
+
+export async function fetchERPChartOfAccounts() {
+  const PAGE_SIZE = 1000;
+  let allData: ERPChartOfAccount[] = [];
+  let from = 0;
+
+  while (true) {
+    const { data, error } = await supabase
+      .from('erp_chart_of_accounts')
+      .select('*')
+      .order('code')
+      .range(from, from + PAGE_SIZE - 1);
+
+    if (error) throw error;
+    if (!data || data.length === 0) break;
+
+    allData = [...allData, ...(data as ERPChartOfAccount[])];
+
+    if (data.length < PAGE_SIZE) break;
+    from += PAGE_SIZE;
+  }
+
+  return allData;
+}
+
+export async function fetchCoaHierarchyTree() {
+  const [typesRes, groupsRes, classesRes, glsRes] = await Promise.all([
+    supabase.from('coa_types').select('*').order('code'),
+    supabase.from('coa_groups').select('*').order('code'),
+    supabase.from('coa_classes').select('*').order('code'),
+    supabase.from('coa_gl').select('*').order('code'),
+  ]);
+
+  if (typesRes.error) throw typesRes.error;
+  if (groupsRes.error) throw groupsRes.error;
+  if (classesRes.error) throw classesRes.error;
+  if (glsRes.error) throw glsRes.error;
+
+  return {
+    types: (typesRes.data || []) as CoaType[],
+    groups: (groupsRes.data || []) as CoaGroup[],
+    classes: (classesRes.data || []) as CoaClass[],
+    gls: (glsRes.data || []) as CoaGL[]
+  };
+}
+
+export async function fetchUnitCOAs() {
+  const { data, error } = await supabase.from('unit_coas').select('*').order('unit_code');
+  if (error) throw error;
+  return data as UnitCOA[];
+}
+
+export async function fetchUnitCoaMappings() {
+  const { data, error } = await supabase.from('unit_coa_mapping').select('*').order('unit_code');
+  if (error) throw error;
+  return data as UnitCoaMapping[];
+}
+
+export async function fetchPropertyCoaMappings() {
+  const { data, error } = await supabase.from('property_coa_mapping').select('*').order('property_name');
+  if (error) throw error;
+  return data as PropertyCoaMapping[];
+}
+
+export async function fetchCoaSLByGL(glIdOrCode: string) {
+  const query = supabase.from('coa_sl').select('*');
+  if (glIdOrCode.length === 36 && glIdOrCode.includes('-')) {
+    query.eq('gl_id', glIdOrCode);
+  } else {
+    query.eq('gl_code', glIdOrCode);
+  }
+  const { data, error } = await query.order('code');
+  if (error) throw error;
+  return data as CoaSL[];
+}
+
+export async function createInventoryPart(payload: Omit<InventoryPart, 'id'>) {
+  const { data, error } = await supabase.from('inventory_parts').insert([payload]).select().single();
+  if (error) throw error;
+  return data as InventoryPart;
+}
+
+export async function fetchCostCenters(): Promise<{ id: number; code: string; name: string }[]> {
+  const { data, error } = await supabase.from('fin_cost_centers').select('id, code, name').order('name', { ascending: true });
+  if (error) return [];
+  return (data ?? []) as { id: number; code: string; name: string }[];
+}
+
+export async function createUnitRooms(rooms: Record<string, unknown>[]): Promise<unknown[]> {
+  if (!rooms || rooms.length === 0) return [];
+  const { data, error } = await supabase.from('unit_rooms').insert(rooms).select();
+  if (error) throw error;
+  return data ?? [];
+}
+
+export async function fetchPropertyManagerEmployees(): Promise<{ id: string; name: string; email?: string; designation?: string }[]> {
+  try {
+    const results: { id: string; name: string; email?: string; designation?: string }[] = [];
+    const seenNames = new Set<string>();
+
+    // 1. Fetch from profiles table for users with PROP_MGR role (authoritative PMS role)
+    try {
+      const { data: profiles, error: profileErr } = await supabase
+        .from('profiles')
+        .select('id, full_name, email, role')
+        .eq('role', 'PROP_MGR');
+
+      if (!profileErr && profiles && profiles.length > 0) {
+        profiles.forEach((p: any) => {
+          const name = (p.full_name || p.email || '').trim();
+          if (name && !seenNames.has(name.toLowerCase())) {
+            seenNames.add(name.toLowerCase());
+            results.push({
+              id: p.id,
+              name: name,
+              email: p.email,
+              designation: 'Property Manager',
+            });
+          }
+        });
+      }
+    } catch {
+      // Ignore profile lookup error if not accessible
+    }
+
+    // 2. Fetch from HRMS employees table strictly with Property Manager designation
+    try {
+      const { data: empData, error: empError } = await supabase
+        .from('employees')
+        .select('id, first_name, last_name, email, employee_status, designations(title)')
+        .order('first_name');
+
+      if (!empError && empData && empData.length > 0) {
+        const pmEmps = empData.filter((e: any) => {
+          if (e.employee_status && e.employee_status.toLowerCase() === 'terminated') return false;
+          const desig = (e.designations?.title || '').toLowerCase().trim();
+          // Strictly check if designation is Property Manager or Estate/Facility Manager
+          return desig.includes('property manager') || desig.includes('prop mgr') || desig.includes('estate manager') || desig.includes('facility manager');
+        });
+
+        pmEmps.forEach((e: any) => {
+          const name = `${e.first_name || ''} ${e.last_name || ''}`.trim();
+          if (name && !seenNames.has(name.toLowerCase())) {
+            seenNames.add(name.toLowerCase());
+            results.push({
+              id: e.id,
+              name: name,
+              email: e.email,
+              designation: e.designations?.title || 'Property Manager',
+            });
+          }
+        });
+      }
+    } catch {
+      // Ignore employee lookup error
+    }
+
+    // Default fallback list if no active PM found in DB
+    if (results.length === 0) {
+      results.push(
+        { id: 'default-pm-1', name: 'Jithin Abdul Latheef', designation: 'Property Manager' },
+        { id: 'default-pm-2', name: 'Shajid Varikkodath', designation: 'Property Manager' },
+        { id: 'default-pm-3', name: 'Mohamed Farhan Abdul Salam', designation: 'Property Manager' },
+        { id: 'default-pm-4', name: 'Mohamed Shafraz Hussain', designation: 'Property Manager' }
+      );
+    }
+
+    return results;
+  } catch (err) {
+    console.error('Error fetching property managers:', err);
+    return [
+      { id: 'default-pm-1', name: 'Jithin Abdul Latheef', designation: 'Property Manager' },
+      { id: 'default-pm-2', name: 'Shajid Varikkodath', designation: 'Property Manager' },
+      { id: 'default-pm-3', name: 'Mohamed Farhan Abdul Salam', designation: 'Property Manager' },
+      { id: 'default-pm-4', name: 'Mohamed Shafraz Hussain', designation: 'Property Manager' }
+    ];
+  }
+}
