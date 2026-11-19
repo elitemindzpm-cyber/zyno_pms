@@ -26,6 +26,7 @@ import hrmsRouter         from './routes/hrms';
 import procurementRouter  from './routes/procurement';
 import mastersRouter      from './routes/masters';
 import authRouter         from './routes/auth';
+import dbRouter           from './routes/db';
 
 // ─── API Routes ──────────────────────────────────────────────────────────────
 app.use('/api/properties',   propertiesRouter);
@@ -39,6 +40,7 @@ app.use('/api/hrms',         hrmsRouter);
 app.use('/api/procurement',  procurementRouter);
 app.use('/api/masters',      mastersRouter);
 app.use('/api/auth',         authRouter);
+app.use('/api/db',           dbRouter);
 
 // ─── Health check ────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => {

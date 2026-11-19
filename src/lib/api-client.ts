@@ -4,21 +4,44 @@
 
 const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
 
-function getTenantId(): string {
-  // Pull tenant id from localStorage or env (populated at login)
+export function getToken(): string {
+  if (typeof window === 'undefined') return '';
+  return localStorage.getItem('pms_jwt_token') || '';
+}
+
+export function setToken(token: string): void {
+  if (typeof window !== 'undefined') {
+    if (token) localStorage.setItem('pms_jwt_token', token);
+    else localStorage.removeItem('pms_jwt_token');
+  }
+}
+
+export function getTenantId(): string {
+  if (typeof window === 'undefined') return '';
   return localStorage.getItem('pms_tenant_id') || import.meta.env.VITE_TENANT_ID || '';
 }
 
-async function request<T = any>(
+export function setTenantId(tenantId: string): void {
+  if (typeof window !== 'undefined') {
+    if (tenantId) localStorage.setItem('pms_tenant_id', tenantId);
+    else localStorage.removeItem('pms_tenant_id');
+  }
+}
+
+export async function request<T = any>(
   path: string,
   options: RequestInit = {}
 ): Promise<T> {
   const tenantId = getTenantId();
+  const token = getToken();
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(tenantId ? { 'x-tenant-id': tenantId } : {}),
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers as Record<string, string>),
   };
+
   const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
@@ -66,7 +89,63 @@ export async function deleteRecord(resource: string, id: string) {
   });
 }
 
-// ── Domain helpers (mirror the shape callers expect) ─────────────────────────
+// ── Universal Database Query API (Direct MariaDB Prisma Proxy) ───────────────
+export const dbApi = {
+  query: <T = any>(table: string, options: any) =>
+    request<{ data: T; error: string | null; count?: number }>(`/api/db/${table}/query`, {
+      method: 'POST',
+      body: JSON.stringify(options),
+    }),
+  insert: <T = any>(table: string, data: any) =>
+    request<{ data: T; error: string | null }>(`/api/db/${table}/insert`, {
+      method: 'POST',
+      body: JSON.stringify({ data }),
+    }),
+  update: <T = any>(table: string, where: any, data: any) =>
+    request<{ data: T; error: string | null }>(`/api/db/${table}/update`, {
+      method: 'POST',
+      body: JSON.stringify({ where, data }),
+    }),
+  delete: <T = any>(table: string, where: any) =>
+    request<{ data: T; error: string | null }>(`/api/db/${table}/delete`, {
+      method: 'POST',
+      body: JSON.stringify({ where }),
+    }),
+};
+
+// ── Auth API ─────────────────────────────────────────────────────────────────
+export const authApi = {
+  login: async (email: string, password: string) => {
+    const res = await request<{ token: string; user: any; profile: any }>('/api/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    });
+    if (res?.token) {
+      setToken(res.token);
+      if (res.user?.tenant_id) {
+        setTenantId(res.user.tenant_id);
+      }
+    }
+    return res;
+  },
+  getSession: async () => {
+    const token = getToken();
+    if (!token) return { user: null, profile: null };
+    return request<{ user: any; profile: any }>('/api/auth/session').catch(() => ({ user: null, profile: null }));
+  },
+  logout: async () => {
+    try {
+      await request('/api/auth/logout', { method: 'POST' }).catch(() => {});
+    } finally {
+      setToken('');
+      setTenantId('');
+    }
+  },
+  getToken,
+  setToken,
+};
+
+// ── Domain helpers ───────────────────────────────────────────────────────────
 
 // Properties
 export const propertiesApi = {

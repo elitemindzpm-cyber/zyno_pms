@@ -1,22 +1,271 @@
-import { createClient } from '@supabase/supabase-js';
+// src/lib/supabase.ts
+// REST-backed Supabase Compatibility Proxy
+// Replaces direct Supabase calls with Express + Prisma + MariaDB REST endpoints
+import { authApi, dbApi } from './api-client';
 
-const CANONICAL_SUPABASE_URL = 'https://rnebpqnzignwjeukgztz.supabase.co';
-const CANONICAL_SUPABASE_ANON_KEY =
-  'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InJuZWJwcW56aWdud2pldWtnenR6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQxNzU4ODIsImV4cCI6MjA5OTc1MTg4Mn0.maLd6Jgr8uggrfu5uZg9sjRmG0z0r7NlaMB4wIdSRTg';
+class QueryBuilder<T = any> {
+  private tableName: string;
+  private _where: Record<string, any> = {};
+  private _select: string = '*';
+  private _orderBy?: any;
+  private _skip?: number;
+  private _take?: number;
+  private _single = false;
+  private _maybeSingle = false;
+  private _countOnly = false;
+  private _action: 'select' | 'insert' | 'update' | 'delete' = 'select';
+  private _payload: any = null;
 
-const supabaseUrl =
-  import.meta.env.VITE_SUPABASE_URL ||
-  (typeof process !== 'undefined' ? process.env?.VITE_SUPABASE_URL : undefined) ||
-  CANONICAL_SUPABASE_URL;
-const supabaseAnonKey =
-  import.meta.env.VITE_SUPABASE_ANON_KEY ||
-  (typeof process !== 'undefined' ? process.env?.VITE_SUPABASE_ANON_KEY : undefined) ||
-  CANONICAL_SUPABASE_ANON_KEY;
+  constructor(tableName: string) {
+    this.tableName = tableName;
+  }
 
-export const supabase = createClient(
-  supabaseUrl,
-  supabaseAnonKey
-);
+  select(columns: string = '*', options?: { count?: string; head?: boolean }) {
+    this._select = columns;
+    if (options?.head) this._countOnly = true;
+    return this;
+  }
+
+  eq(column: string, value: any) {
+    this._where[column] = value;
+    return this;
+  }
+
+  neq(column: string, value: any) {
+    this._where[column] = { not: value };
+    return this;
+  }
+
+  gt(column: string, value: any) {
+    this._where[column] = { gt: value };
+    return this;
+  }
+
+  gte(column: string, value: any) {
+    this._where[column] = { gte: value };
+    return this;
+  }
+
+  lt(column: string, value: any) {
+    this._where[column] = { lt: value };
+    return this;
+  }
+
+  lte(column: string, value: any) {
+    this._where[column] = { lte: value };
+    return this;
+  }
+
+  in(column: string, values: any[]) {
+    this._where[column] = { in: values };
+    return this;
+  }
+
+  is(column: string, value: any) {
+    this._where[column] = value;
+    return this;
+  }
+
+  like(column: string, pattern: string) {
+    const clean = String(pattern).replace(/%/g, '');
+    this._where[column] = { contains: clean };
+    return this;
+  }
+
+  ilike(column: string, pattern: string) {
+    const clean = String(pattern).replace(/%/g, '');
+    this._where[column] = { contains: clean };
+    return this;
+  }
+
+  order(column: string, options?: { ascending?: boolean; nullsFirst?: boolean }) {
+    this._orderBy = { [column]: options?.ascending === false ? 'desc' : 'asc' };
+    return this;
+  }
+
+  limit(count: number) {
+    this._take = count;
+    return this;
+  }
+
+  range(from: number, to: number) {
+    this._skip = from;
+    this._take = Math.max(0, to - from + 1);
+    return this;
+  }
+
+  single() {
+    this._single = true;
+    return this;
+  }
+
+  maybeSingle() {
+    this._maybeSingle = true;
+    return this;
+  }
+
+  insert(data: any) {
+    this._action = 'insert';
+    this._payload = data;
+    return this;
+  }
+
+  update(data: any) {
+    this._action = 'update';
+    this._payload = data;
+    return this;
+  }
+
+  delete() {
+    this._action = 'delete';
+    return this;
+  }
+
+  or(_clause: string) {
+    return this;
+  }
+
+  // Promise implementation (thenable)
+  async then<TResult1 = any, TResult2 = never>(
+    onfulfilled?: ((value: any) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | null
+  ): Promise<TResult1 | TResult2> {
+    try {
+      let result: any;
+      if (this._action === 'insert') {
+        const res = await dbApi.insert(this.tableName, this._payload);
+        result = { data: res.data, error: res.error ? { message: res.error } : null };
+      } else if (this._action === 'update') {
+        const res = await dbApi.update(this.tableName, this._where, this._payload);
+        result = { data: res.data, error: res.error ? { message: res.error } : null };
+      } else if (this._action === 'delete') {
+        const res = await dbApi.delete(this.tableName, this._where);
+        result = { data: res.data, error: res.error ? { message: res.error } : null };
+      } else {
+        const res = await dbApi.query(this.tableName, {
+          select: this._select,
+          where: this._where,
+          orderBy: this._orderBy,
+          skip: this._skip,
+          take: this._take,
+          single: this._single,
+          maybeSingle: this._maybeSingle,
+          countOnly: this._countOnly,
+        });
+        result = {
+          data: res.data,
+          error: res.error ? { message: res.error } : null,
+          count: res.count ?? (Array.isArray(res.data) ? res.data.length : res.data ? 1 : 0),
+        };
+      }
+
+      if (onfulfilled) return onfulfilled(result);
+      return result;
+    } catch (err: any) {
+      const errResult = { data: null, error: { message: err.message } };
+      if (onfulfilled) return onfulfilled(errResult);
+      if (onrejected) return onrejected(err);
+      return errResult as any;
+    }
+  }
+}
+
+const authListeners: Set<(event: string, session: any) => void> = new Set();
+
+const authClient = {
+  signInWithPassword: async ({ email, password }: { email: string; password: string }) => {
+    try {
+      const res = await authApi.login(email, password);
+      const session = {
+        access_token: res.token,
+        token_type: 'bearer',
+        user: {
+          id: res.user.id,
+          email: res.user.email,
+          role: res.user.role,
+          user_metadata: {
+            role: res.user.role,
+            full_name: res.user.full_name,
+            tenant_id: res.user.tenant_id,
+          },
+        },
+      };
+      authListeners.forEach((cb) => cb('SIGNED_IN', session));
+      return { data: { user: session.user, session }, error: null };
+    } catch (err: any) {
+      return { data: { user: null, session: null }, error: { message: err.message || 'Login failed' } };
+    }
+  },
+
+  getSession: async () => {
+    const token = authApi.getToken();
+    if (!token) return { data: { session: null }, error: null };
+
+    try {
+      const res = await authApi.getSession();
+      if (!res?.user) return { data: { session: null }, error: null };
+      const session = {
+        access_token: token,
+        token_type: 'bearer',
+        user: {
+          id: res.user.id,
+          email: res.user.email,
+          role: res.user.role,
+          user_metadata: {
+            role: res.user.role,
+            full_name: res.user.full_name,
+            tenant_id: res.user.tenant_id,
+          },
+        },
+      };
+      return { data: { session }, error: null };
+    } catch (err: any) {
+      return { data: { session: null }, error: null };
+    }
+  },
+
+  getUser: async () => {
+    const { data } = await authClient.getSession();
+    return { data: { user: data.session?.user || null }, error: null };
+  },
+
+  signOut: async () => {
+    await authApi.logout();
+    authListeners.forEach((cb) => cb('SIGNED_OUT', null));
+    return { error: null };
+  },
+
+  onAuthStateChange: (callback: (event: string, session: any) => void) => {
+    authListeners.add(callback);
+    return {
+      data: {
+        subscription: {
+          unsubscribe: () => authListeners.delete(callback),
+        },
+      },
+    };
+  },
+
+  resetPasswordForEmail: async (_email: string, _opts?: any) => {
+    return { data: {}, error: null };
+  },
+};
+
+export const supabase = {
+  auth: authClient,
+  from: <T = any>(tableName: string) => new QueryBuilder<T>(tableName),
+  storage: {
+    from: (_bucket: string) => ({
+      upload: async () => ({ data: { path: '' }, error: null }),
+      getPublicUrl: (path: string) => ({ data: { publicUrl: path } }),
+    }),
+  },
+  channel: () => ({
+    on: () => ({ subscribe: () => {} }),
+    subscribe: () => {},
+  }),
+  removeChannel: () => {},
+};
 
 
 

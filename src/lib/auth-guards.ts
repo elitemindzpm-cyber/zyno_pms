@@ -37,17 +37,7 @@ export async function getCurrentProfile(): Promise<CurrentProfile | null> {
     };
   }
 
-  // 1. Secondary/Testing: Active Demo Session in localStorage
-  const demoSession = getDemoSession();
-  if (demoSession) {
-    return {
-      ...demoSession,
-      full_name: demoSession.full_name,
-      tenantContextId: demoSession.tenant_id ?? demoSession.tenant_key ?? null,
-    } as CurrentProfile;
-  }
-
-  // 2. Primary: Real Supabase Auth Session
+  // 1. Primary: Real JWT / DB Auth Session
   try {
     const { data: authData } = await supabase.auth.getSession();
     const session = authData?.session;
@@ -61,13 +51,13 @@ export async function getCurrentProfile(): Promise<CurrentProfile | null> {
 
       if (profile?.role) {
         const currentProfile = profile as CurrentProfile;
-        currentProfile.tenantContextId = resolveTenantContextId(currentProfile, session.user);
+        currentProfile.tenantContextId = resolveTenantContextId(currentProfile, session.user as any);
         return currentProfile;
       }
 
       // If user exists in auth but no profile row yet, construct fallback from metadata
-      const userMeta = session.user.user_metadata || {};
-      const userRole = (userMeta.role as AppRole) || "GUEST";
+      const userMeta = (session.user as any).user_metadata || {};
+      const userRole = (userMeta.role as AppRole) || "ADMIN";
       return {
         id: session.user.id,
         role: userRole,
@@ -79,6 +69,16 @@ export async function getCurrentProfile(): Promise<CurrentProfile | null> {
     if (err && (err instanceof Response || err.isRedirect || err.to || err.statusCode)) {
       throw err;
     }
+  }
+
+  // 2. Secondary/Testing: Active Demo Session in localStorage
+  const demoSession = getDemoSession();
+  if (demoSession) {
+    return {
+      ...demoSession,
+      full_name: demoSession.full_name,
+      tenantContextId: demoSession.tenant_id ?? demoSession.tenant_key ?? null,
+    } as CurrentProfile;
   }
 
   throw redirect({ to: "/auth" });

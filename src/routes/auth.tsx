@@ -396,7 +396,7 @@ function AuthPage() {
                     <div className="pt-3 border-t border-slate-800/80 text-center">
                       <p className="text-[11px] text-slate-500 flex items-center justify-center gap-1.5">
                         <Shield className="h-3 w-3 text-emerald-400" />
-                        Enterprise Access Protected by Supabase Auth & RBAC
+                        Enterprise Access Protected by Enterprise DB & RBAC
                       </p>
                     </div>
                   </form>
