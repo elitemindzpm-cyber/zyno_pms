@@ -2,6 +2,8 @@ import { createContext, useContext, useEffect, useMemo, useState, useRef, useCal
 import { supabase } from "@/lib/supabase";
 import { DynamicMastersService } from "@/lib/dynamic-masters-service";
 
+export const GUARANTEE_CHEQUE_DATE = "2036-12-31";
+
 
 const today = new Date();
 
@@ -585,16 +587,6 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         .filter(Boolean);
 
       const unitContracts: PmsLease[] = [];
-              status: "active",
-              collectionCompleted: true,
-              hasRentFree: hasRf,
-              rentFreeDays: rfDays,
-              rentFreePosition: rfPos,
-            } as any);
-          }
-        }
-      });
-
       let mappedLeases: PmsLease[] = [...existingLeases, ...unitContracts];
       try {
         if (typeof window !== "undefined") {

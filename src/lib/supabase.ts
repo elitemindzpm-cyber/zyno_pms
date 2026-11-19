@@ -121,6 +121,43 @@ class QueryBuilder<T = any> {
     return this;
   }
 
+  upsert(data: any, _options?: any) {
+    this._action = 'insert';
+    this._payload = data;
+    return this;
+  }
+
+  not(column: string, _operator: string, value: any) {
+    this._where[column] = { not: value };
+    return this;
+  }
+
+  match(obj: Record<string, any>) {
+    Object.assign(this._where, obj);
+    return this;
+  }
+
+  filter(column: string, operator: string, value: any) {
+    if (operator === 'eq') this._where[column] = value;
+    else if (operator === 'neq') this._where[column] = { not: value };
+    else if (operator === 'gt') this._where[column] = { gt: value };
+    else if (operator === 'gte') this._where[column] = { gte: value };
+    else if (operator === 'lt') this._where[column] = { lt: value };
+    else if (operator === 'lte') this._where[column] = { lte: value };
+    else this._where[column] = value;
+    return this;
+  }
+
+  contains(column: string, value: any) {
+    this._where[column] = value;
+    return this;
+  }
+
+  overlaps(column: string, value: any) {
+    this._where[column] = value;
+    return this;
+  }
+
   or(_clause: string) {
     return this;
   }
@@ -176,17 +213,21 @@ const authClient = {
   signInWithPassword: async ({ email, password }: { email: string; password: string }) => {
     try {
       const res = await authApi.login(email, password);
-      const session = {
+      const session: any = {
         access_token: res.token,
         token_type: 'bearer',
         user: {
           id: res.user.id,
           email: res.user.email,
           role: res.user.role,
+          app_metadata: {},
+          aud: 'authenticated',
+          created_at: new Date().toISOString(),
           user_metadata: {
             role: res.user.role,
             full_name: res.user.full_name,
             tenant_id: res.user.tenant_id,
+            customer_id: (res.user as any)?.customer_id || '',
           },
         },
       };
@@ -204,17 +245,21 @@ const authClient = {
     try {
       const res = await authApi.getSession();
       if (!res?.user) return { data: { session: null }, error: null };
-      const session = {
+      const session: any = {
         access_token: token,
         token_type: 'bearer',
         user: {
           id: res.user.id,
           email: res.user.email,
           role: res.user.role,
+          app_metadata: {},
+          aud: 'authenticated',
+          created_at: new Date().toISOString(),
           user_metadata: {
             role: res.user.role,
             full_name: res.user.full_name,
             tenant_id: res.user.tenant_id,
+            customer_id: (res.user as any)?.customer_id || '',
           },
         },
       };
@@ -246,6 +291,19 @@ const authClient = {
     };
   },
 
+  signUp: async (credentials: any) => {
+    return { data: { user: { id: 'temp-id', email: credentials?.email } as any, session: null }, error: null };
+  },
+
+  updateUser: async (_attributes: any) => {
+    return { data: { user: null }, error: null };
+  },
+
+  refreshSession: async () => {
+    const { data } = await authClient.getSession();
+    return { data: { session: data?.session, user: data?.session?.user }, error: null };
+  },
+
   resetPasswordForEmail: async (_email: string, _opts?: any) => {
     return { data: {}, error: null };
   },
@@ -254,17 +312,25 @@ const authClient = {
 export const supabase = {
   auth: authClient,
   from: <T = any>(tableName: string) => new QueryBuilder<T>(tableName),
+  rpc: async (_fn: string, _params?: any) => ({ data: null, error: null }),
   storage: {
     from: (_bucket: string) => ({
       upload: async () => ({ data: { path: '' }, error: null }),
       getPublicUrl: (path: string) => ({ data: { publicUrl: path } }),
     }),
   },
-  channel: () => ({
-    on: () => ({ subscribe: () => {} }),
-    subscribe: () => {},
-  }),
-  removeChannel: () => {},
+  channel: (_name?: string) => {
+    const ch: any = {
+      on: (_event?: any, _filter?: any, _callback?: any) => ch,
+      subscribe: (cb?: (status: string) => void) => {
+        if (cb) setTimeout(() => cb('SUBSCRIBED'), 0);
+        return ch;
+      },
+      unsubscribe: () => ch,
+    };
+    return ch;
+  },
+  removeChannel: (_channel?: any) => {},
 };
 
 

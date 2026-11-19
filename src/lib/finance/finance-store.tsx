@@ -8,6 +8,11 @@ import {
   resolvePropertyFromUnitCode,
 } from "./kahramaa-deposits-data";
 
+const SECURITY_DEPOSIT_GUARANTEE_BY_UNIT: Record<string, any> = {};
+const SECURITY_DEPOSIT_GUARANTEE_BY_RECEIPT: Record<string, any> = {};
+const KAHRAMAA_DEPOSIT_BY_UNIT: Record<string, any> = {};
+
+
 export function isPostingPeriodClosed(dateStr?: string): { closed: boolean; periodName?: string } {
   if (!dateStr || typeof window === "undefined") return { closed: false };
   try {
