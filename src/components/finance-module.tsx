@@ -378,15 +378,9 @@ function FinancialYearSubModule() {
     setLoading(true);
     try {
       const res = await FinFinancialYearsApi.fetchAll();
-      setData(res.length > 0 ? res : [
-        { id: "1", name: "FY 2026-2027", start_date: "2026-01-01", end_date: "2026-12-31", status: "Active" as const },
-        { id: "2", name: "FY 2025-2026", start_date: "2025-01-01", end_date: "2025-12-31", status: "Closed" as const }
-      ]);
+      setData(res || []);
     } catch {
-      setData([
-        { id: "1", name: "FY 2026-2027", start_date: "2026-01-01", end_date: "2026-12-31", status: "Active" as const },
-        { id: "2", name: "FY 2025-2026", start_date: "2025-01-01", end_date: "2025-12-31", status: "Closed" as const }
-      ]);
+      setData([]);
     } finally { setLoading(false); }
   }
   async function handleAdd() {
@@ -463,16 +457,9 @@ function RegionSubModule() {
   async function load() {
     try {
       const res = await FinRegionsApi.fetchAll();
-      setData(res.length > 0 ? res : [
-        { id: "1", code: "REG-DOH", name: "Doha & West Bay", country: "Qatar", currency: "QAR", status: "Active" },
-        { id: "2", code: "REG-WAK", name: "Al Wakra & Mesaieed", country: "Qatar", currency: "QAR", status: "Active" },
-        { id: "3", code: "REG-LUS", name: "Lusail Marina District", country: "Qatar", currency: "QAR", status: "Active" }
-      ]);
+      setData(res || []);
     } catch {
-      setData([
-        { id: "1", code: "REG-DOH", name: "Doha & West Bay", country: "Qatar", currency: "QAR", status: "Active" },
-        { id: "2", code: "REG-WAK", name: "Al Wakra & Mesaieed", country: "Qatar", currency: "QAR", status: "Active" }
-      ]);
+      setData([]);
     }
   }
   async function handleAdd() {
@@ -730,19 +717,7 @@ export interface CompanyVehicleCostCenter {
   manager: string;
 }
 
-export const COMPANY_VEHICLE_COST_CENTERS: CompanyVehicleCostCenter[] = [
-  { sno: 1, vehicleNo: "230064", code: "230064", vehicleName: "Pickup", model: "2012", brandName: "Nissan", name: "230064 - Pickup (2012 Nissan)", type: "Vehicle", manager: "Fleet & Transport" },
-  { sno: 2, vehicleNo: "573213", code: "573213", vehicleName: "Sentra", model: "2013", brandName: "Nissan", name: "573213 - Sentra (2013 Nissan)", type: "Vehicle", manager: "Fleet & Transport" },
-  { sno: 3, vehicleNo: "257654", code: "257654", vehicleName: "Pickup", model: "2014", brandName: "Nissan", name: "257654 - Pickup (2014 Nissan)", type: "Vehicle", manager: "Fleet & Transport" },
-  { sno: 4, vehicleNo: "632368", code: "632368", vehicleName: "Sentra", model: "2016", brandName: "Nissan", name: "632368 - Sentra (2016 Nissan)", type: "Vehicle", manager: "Fleet & Transport" },
-  { sno: 5, vehicleNo: "21464", code: "21464", vehicleName: "Pickup", model: "2016", brandName: "Nissan", name: "21464 - Pickup (2016 Nissan)", type: "Vehicle", manager: "Fleet & Transport" },
-  { sno: 6, vehicleNo: "768589", code: "768589", vehicleName: "Pajero", model: "2017", brandName: "Mitsubishi", name: "768589 - Pajero (2017 Mitsubishi)", type: "Vehicle", manager: "Fleet & Transport" },
-  { sno: 7, vehicleNo: "900886", code: "900886", vehicleName: "Raize", model: "2023", brandName: "Toyota", name: "900886 - Raize (2023 Toyota)", type: "Vehicle", manager: "Fleet & Transport" },
-  { sno: 8, vehicleNo: "218943", code: "218943", vehicleName: "Pickup", model: "2024", brandName: "Mitsubishi", name: "218943 - Pickup (2024 Mitsubishi)", type: "Vehicle", manager: "Fleet & Transport" },
-  { sno: 9, vehicleNo: "215517", code: "215517", vehicleName: "Lexus", model: "—", brandName: "Toyota", name: "215517 - Lexus (Toyota)", type: "Vehicle", manager: "Fleet & Transport" },
-  { sno: 10, vehicleNo: "30115", code: "30115", vehicleName: "Range Rover", model: "—", brandName: "Land Rover", name: "30115 - Range Rover (Land Rover)", type: "Vehicle", manager: "Fleet & Transport" },
-  { sno: 11, vehicleNo: "52130", code: "52130", vehicleName: "Dodge", model: "—", brandName: "Chrysler", name: "52130 - Dodge (Chrysler)", type: "Vehicle", manager: "Fleet & Transport" },
-];
+export const COMPANY_VEHICLE_COST_CENTERS: CompanyVehicleCostCenter[] = [];
 
 function CostCenterSubModule() {
   const { units: sharedUnits } = useAppData();
@@ -758,58 +733,10 @@ function CostCenterSubModule() {
   async function load() {
     try {
       const dbData = await FinCostCentersApi.fetchAll();
-      const existing = new Set(dbData.map((d: any) => String(d.code).trim()));
-      const autoSeeds: any[] = [];
-
-      // 1. Seed Company Vehicles based on their "Vehicle No" as Cost Centers
-      for (const v of COMPANY_VEHICLE_COST_CENTERS) {
-        if (!existing.has(v.code) && !existing.has(`CC-VEH-${v.code}`)) {
-          autoSeeds.push({
-            code: v.code,
-            name: v.name,
-            manager: v.manager,
-            type: "Vehicle",
-            vehicleNo: v.vehicleNo,
-            vehicleName: v.vehicleName,
-            model: v.model,
-            brandName: v.brandName,
-          });
-          // Best-effort persist to DB so all modules see vehicle cost centers
-          FinCostCentersApi.create({
-            code: v.code,
-            name: v.name,
-            manager: v.manager,
-            type: "Vehicle",
-          } as any).catch(() => {});
-        }
-      }
-
-      // 2. Enrich existing DB vehicle cost centers with metadata if matched by Vehicle No
-      const enrichedDbData = dbData.map((d: any) => {
-        const matchedVeh = COMPANY_VEHICLE_COST_CENTERS.find(
-          v => v.code === String(d.code).trim() || `CC-VEH-${v.code}` === String(d.code).trim()
-        );
-        if (matchedVeh) {
-          return {
-            ...d,
-            type: "Vehicle",
-            vehicleNo: matchedVeh.vehicleNo,
-            vehicleName: matchedVeh.vehicleName,
-            model: matchedVeh.model,
-            brandName: matchedVeh.brandName,
-          };
-        }
-        return d;
-      });
-
-      // 3. Seed Property Cost Centers
-      for (const prop of sharedProperties) {
-        if (!prop || !prop.title) continue;
-        const code = `CC-PROP-${prop.title.slice(0, 8).toUpperCase().replace(/\s/g, '-')}`;
-        if (!existing.has(code)) autoSeeds.push({ code, name: prop.title, manager: 'Site Manager', type: 'Property' });
-      }
-      setData([...enrichedDbData, ...autoSeeds.map((s, i) => ({ ...s, id: String(-1000 - i) }))]);
-    } catch { }
+      setData(dbData || []);
+    } catch {
+      setData([]);
+    }
   }
   async function handleAdd() {
     try { await FinCostCentersApi.create(form); } catch { }
@@ -1086,22 +1013,9 @@ function BudgetHeadSubModule() {
     async function loadCC() {
       try {
         const dbData = await FinCostCentersApi.fetchAll();
-        const autoSeeds: FinCostCenter[] = [
-          { id: "cc-1", code: "CC-PROP-SALATA", name: "Old Salata Residence 23", manager: "Eng. Fahad", type: "Property" } as any,
-          { id: "cc-2", code: "CC-PROP-MANSOURA", name: "MANSOURA - BLDG06", manager: "Site Manager", type: "Property" } as any,
-          { id: "cc-3", code: "CC-DEPT-OPERATIONS", name: "Property Operations & Facilities", manager: "Head of Operations", type: "Department" } as any,
-          { id: "cc-4", code: "CC-CORP-ADMIN", name: "Corporate Headquarters & Admin", manager: "Finance Manager", type: "Corporate" } as any,
-        ];
-        const existingCodes = new Set((dbData || []).map((d: any) => d.code));
-        const merged = [...(dbData || []), ...autoSeeds.filter(s => !existingCodes.has(s.code))];
-        setCostCenters(merged);
+        setCostCenters(dbData || []);
       } catch {
-        setCostCenters([
-          { id: "cc-1", code: "CC-PROP-SALATA", name: "Old Salata Residence 23", manager: "Eng. Fahad", type: "Property" } as any,
-          { id: "cc-2", code: "CC-PROP-MANSOURA", name: "MANSOURA - BLDG06", manager: "Site Manager", type: "Property" } as any,
-          { id: "cc-3", code: "CC-DEPT-OPERATIONS", name: "Property Operations & Facilities", manager: "Head of Operations", type: "Department" } as any,
-          { id: "cc-4", code: "CC-CORP-ADMIN", name: "Corporate Headquarters & Admin", manager: "Finance Manager", type: "Corporate" } as any,
-        ]);
+        setCostCenters([]);
       }
     }
     loadCC();
@@ -1695,17 +1609,9 @@ function PostingPeriodSubModule() {
   async function load() {
     try {
       const res = await FinPostingPeriodsApi.fetchAll();
-      setData(res.length > 0 ? res : [
-        { id: "1", period_name: "2026-08", year: 2026, month: 8, status: "Open" as const },
-        { id: "2", period_name: "2026-07", year: 2026, month: 7, status: "Closed" as const },
-        { id: "3", period_name: "2026-06", year: 2026, month: 6, status: "Closed" as const },
-      ]);
+      setData(res || []);
     } catch {
-      setData([
-        { id: "1", period_name: "2026-08", year: 2026, month: 8, status: "Open" as const },
-        { id: "2", period_name: "2026-07", year: 2026, month: 7, status: "Closed" as const },
-        { id: "3", period_name: "2026-06", year: 2026, month: 6, status: "Closed" as const },
-      ]);
+      setData([]);
     }
   }
 
@@ -6016,44 +5922,13 @@ function BankSubModule() {
     setLoading(true);
     try {
       const res = await FinBanksApi.fetchAll();
-      if (res && res.length > 0) {
-        const list: FinBank[] = res.map(b => ({
-          ...b,
-          status: (b.status || 'Active') as 'Active' | 'Inactive'
-        }));
-        setData(list);
-        try { localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(list)); } catch {}
-        setLoading(false);
-        return;
-      }
-    } catch (e) {
-      console.warn("Failed to fetch fin_banks from Supabase, loading cache/fallback", e);
+      setData(res || []);
+    } catch {
+      setData([]);
+    } finally {
+      setLoading(false);
     }
-
-    try {
-      const cached = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setData(parsed);
-          setLoading(false);
-          return;
-        }
-      }
-    } catch {}
-
-    const defaults: FinBank[] = [
-      { id: "1", code: "QNB", name: "Qatar National Bank (QNB)", swift_code: "QNBAQAQA", status: "Active" },
-      { id: "2", code: "CBQ", name: "Commercial Bank of Qatar (CBQ)", swift_code: "CBQAQAQA", status: "Active" },
-      { id: "3", code: "DOHA", name: "Doha Bank QPSC", swift_code: "DOHBQAQA", status: "Active" },
-      { id: "4", code: "QIB", name: "Qatar Islamic Bank (QIB)", swift_code: "QISBQAQA", status: "Active" },
-      { id: "5", code: "MAR", name: "Masraf Al Rayan", swift_code: "MARKQAQA", status: "Active" },
-      { id: "6", code: "DUKHAN", name: "Dukhan Bank", swift_code: "BARQAQA", status: "Active" }
-    ];
-    setData(defaults);
-    setLoading(false);
   }
-
   function handleOpenAdd() {
     setEditingBank(null);
     setForm({ code: "", name: "", swift_code: "", status: "Active" });
@@ -6329,8 +6204,6 @@ function BankAccountSubModule() {
 
   async function load() {
     setLoading(true);
-
-    // 1. Fetch available banks from Supabase / cache
     let loadedBanks: FinBank[] = [];
     try {
       const resBanks = await FinBanksApi.fetchAll();
@@ -6341,69 +6214,26 @@ function BankAccountSubModule() {
         }));
       }
     } catch (e) {
-      console.warn("Failed to fetch fin_banks for accounts submodule", e);
-    }
-
-    if (loadedBanks.length === 0) {
-      try {
-        const cachedBanks = localStorage.getItem("pms_fin_banks_override_v2");
-        if (cachedBanks) {
-          const parsed = JSON.parse(cachedBanks);
-          if (Array.isArray(parsed) && parsed.length > 0) loadedBanks = parsed;
-        }
-      } catch {}
-    }
-
-    if (loadedBanks.length === 0) {
-      loadedBanks = [
-        { id: "1", code: "QNB", name: "Qatar National Bank (QNB)", swift_code: "QNBAQAQA", status: "Active" },
-        { id: "2", code: "CBQ", name: "Commercial Bank of Qatar (CBQ)", swift_code: "CBQAQAQA", status: "Active" },
-        { id: "3", code: "DOHA", name: "Doha Bank QPSC", swift_code: "DOHBQAQA", status: "Active" },
-        { id: "4", code: "QIB", name: "Qatar Islamic Bank (QIB)", swift_code: "QISBQAQA", status: "Active" },
-        { id: "5", code: "MAR", name: "Masraf Al Rayan", swift_code: "MARKQAQA", status: "Active" },
-        { id: "6", code: "DUKHAN", name: "Dukhan Bank", swift_code: "BARQAQA", status: "Active" },
-      ];
+      console.warn('Failed to fetch fin_banks', e);
     }
     setBanksList(loadedBanks);
 
-    // 2. Fetch bank accounts from Supabase / cache
     try {
       const resAcc = await FinBankAccountsApi.fetchAll();
       if (resAcc && resAcc.length > 0) {
-        const list: FinBankAccount[] = resAcc.map(a => ({
+        setData(resAcc.map((a: any) => ({
           ...a,
           status: (a.status || 'Active') as 'Active' | 'Inactive'
-        }));
-        setData(list);
-        try { localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(list)); } catch {}
-        setLoading(false);
-        return;
+        })));
+      } else {
+        setData([]);
       }
     } catch (e) {
-      console.warn("Failed to fetch bank accounts from Supabase", e);
+      setData([]);
+    } finally {
+      setLoading(false);
     }
-
-    try {
-      const cached = localStorage.getItem(LOCAL_STORAGE_KEY);
-      if (cached) {
-        const parsed = JSON.parse(cached);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          setData(parsed);
-          setLoading(false);
-          return;
-        }
-      }
-    } catch {}
-
-    const defaults: FinBankAccount[] = [
-      { id: "1", bank_id: String(loadedBanks[0]?.id || "1"), account_number: "QA55QNBA00000000123456789", account_title: "ZYNO Operations & Collection (QNB)", currency: "QAR", opening_balance: 1500000, status: "Active" },
-      { id: "2", bank_id: String(loadedBanks[1]?.id || "2"), account_number: "QA88CBQA00000000987654321", account_title: "ZYNO Escrow & Deposits Account (CBQ)", currency: "QAR", opening_balance: 450000, status: "Active" },
-      { id: "3", bank_id: String(loadedBanks[2]?.id || "3"), account_number: "QA22DOHB00000000554433221", account_title: "ZYNO Payroll & Disbursement (Doha Bank)", currency: "QAR", opening_balance: 200000, status: "Active" },
-    ];
-    setData(defaults);
-    setLoading(false);
   }
-
   function handleOpenAdd() {
     setEditingAccount(null);
     setForm({

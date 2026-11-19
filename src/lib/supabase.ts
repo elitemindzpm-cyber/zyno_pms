@@ -315,7 +315,7 @@ export const supabase = {
   rpc: async (_fn: string, _params?: any) => ({ data: null, error: null }),
   storage: {
     from: (_bucket: string) => ({
-      upload: async () => ({ data: { path: '' }, error: null }),
+      upload: async (_path?: string, _file?: any, _opts?: any) => ({ data: { path: _path || '' }, error: null }),
       getPublicUrl: (path: string) => ({ data: { publicUrl: path } }),
     }),
   },

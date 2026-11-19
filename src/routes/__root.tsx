@@ -115,6 +115,26 @@ function RootShell({ children }: { children: ReactNode }) {
   );
 }
 
+
+// Immediate cleanup of stale prototype local storage keys
+if (typeof window !== "undefined") {
+  try {
+    const staleKeys = [
+      "pms_renewed_leases_v1",
+      "pms_custom_lease_overrides",
+      "pms_fin_banks_override_v2",
+      "pms_fin_bank_accounts_override_v2",
+      "pms_posting_periods_cache",
+      "zyno_finance_budget_heads",
+      "pms_leases_cache_v1",
+      "pms_units_cache_v1",
+      "pms_deleted_leases_v1",
+      "pms_leasing_v2_leases",
+    ];
+    staleKeys.forEach(k => localStorage.removeItem(k));
+  } catch {}
+}
+
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
 
