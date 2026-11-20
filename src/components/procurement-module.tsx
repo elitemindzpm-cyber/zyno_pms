@@ -671,18 +671,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
   const [shipments, setShipments] = useState<any[]>([]);
   const [inventoryParts, setInventoryParts] = useState<any[]>([]);
   const [apInvoices, setApInvoices] = useState<ProcApInvoice[]>([]);
-  const [catalog, setCatalog] = useState<CatalogItem[]>(() => {
-    try {
-      const saved = localStorage.getItem("proc_catalog_items");
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-      }
-      return defaultCatalogItems;
-    } catch {
-      return defaultCatalogItems;
-    }
-  });
+  const [catalog, setCatalog] = useState<CatalogItem[]>([]);
 
   // UI modal states
   const [loading, setLoading] = useState(false);
@@ -1068,9 +1057,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
       setQuoteList(vqRes.data || []);
       setShipments(normalizedShipments);
       setInventoryParts(invRes.data || []);
-      if (catRes && catRes.length > 0) {
-        setCatalog(catRes);
-      }
+      setCatalog(catRes || []);
       setApInvoices(apInvRes || []);
     } catch (e: any) {
       console.error("Error loading procurement data:", e);

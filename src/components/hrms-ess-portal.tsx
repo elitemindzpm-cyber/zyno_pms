@@ -104,8 +104,8 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
   });
 
   // Punch attendance state
-  const [isPunchedIn, setIsPunchedIn] = useState(true);
-  const [lastPunchTime, setLastPunchTime] = useState("07:55 AM");
+  const [isPunchedIn, setIsPunchedIn] = useState(false);
+  const [lastPunchTime, setLastPunchTime] = useState("—");
   const [currentTime, setCurrentTime] = useState(new Date().toLocaleTimeString());
 
   useEffect(() => {
@@ -137,7 +137,7 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
   const [expenseForm, setExpenseForm] = useState({
     type: "Local Travel & Inspection Fuel (Travel Expense)",
     title: "",
-    amount: 150,
+    amount: 0,
     date: new Date().toISOString().split("T")[0],
     receipt_name: "",
     notes: "",
@@ -145,15 +145,15 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
 
   const [loanForm, setLoanForm] = useState({
     loan_type: "Annual Housing Advance Loan",
-    amount: 5000,
+    amount: 0,
     tenure_months: 6,
-    reason: "Personal Emergency / Relocation",
+    reason: "",
   });
 
   const [overtimeForm, setOvertimeForm] = useState({
     date: new Date().toISOString().split("T")[0],
-    hours: 3.5,
-    reason: "Month-end tenant move-in rush & inventory inspection",
+    hours: 0,
+    reason: "",
   });
 
   const [ticketForm, setTicketForm] = useState({
@@ -187,61 +187,13 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
       setMasterLoanTypes(mLoans);
       setMasterTicketCategories(mTickets);
 
-      // Seeded comprehensive leave history for Qatar PMS
-      setMyLeaves([
-        { id: "l-1", type: "Annual Leave", start: "2026-08-10", end: "2026-08-15", days: 5, status: "Approved", appliedOn: "2026-07-28", reason: "Annual family holiday & overseas travel", approver: "Sarah Jenkins" },
-        { id: "l-2", type: "Casual Leave", start: "2026-09-02", end: "2026-09-02", days: 1, status: "Pending", appliedOn: "2026-09-01", reason: "Personal bank documentation & embassy appointment", approver: "Sarah Jenkins" },
-        { id: "l-3", type: "Sick Leave", start: "2026-06-12", end: "2026-06-13", days: 2, status: "Approved", appliedOn: "2026-06-12", reason: "Viral fever & doctor recommended bed rest (Med certificate submitted)", approver: "Sarah Jenkins" },
-        { id: "l-4", type: "Annual Leave", start: "2026-11-20", end: "2026-11-27", days: 7, status: "Approved", appliedOn: "2026-09-15", reason: "Winter break family vacation", approver: "Sarah Jenkins" },
-        { id: "l-5", type: "Emergency Leave", start: "2026-04-05", end: "2026-04-06", days: 2, status: "Approved", appliedOn: "2026-04-04", reason: "Urgent residential maintenance repair attendance", approver: "Sarah Jenkins" },
-        { id: "l-6", type: "Casual Leave", start: "2026-02-18", end: "2026-02-18", days: 1, status: "Cancelled", appliedOn: "2026-02-14", reason: "Traffic department vehicle renewal registration", approver: "Sarah Jenkins" },
-        { id: "l-7", type: "Hajj Pilgrimage Leave", start: "2026-05-10", end: "2026-05-25", days: 15, status: "Rejected", appliedOn: "2026-04-10", reason: "Annual pilgrimage quota conflict with project handover milestone", approver: "Sarah Jenkins" },
-      ]);
-
-      // Seeded attendance timesheet records
-      setMyAttendance([
-        { date: "2026-09-07", day: "Monday", inTime: "07:55 AM", outTime: "05:05 PM", hours: 9.1, otHours: 0, status: "PRESENT", punchSource: "Biometric Doha HQ", shift: "General (08:00 - 17:00)" },
-        { date: "2026-09-06", day: "Sunday", inTime: "08:02 AM", outTime: "05:00 PM", hours: 8.9, otHours: 0, status: "PRESENT", punchSource: "Face Recognition", shift: "General (08:00 - 17:00)" },
-        { date: "2026-09-05", day: "Saturday", inTime: "07:50 AM", outTime: "07:15 PM", hours: 11.4, otHours: 2.5, status: "PRESENT", punchSource: "Biometric Doha HQ", shift: "General (08:00 - 17:00)" },
-        { date: "2026-09-04", day: "Friday", inTime: "—", outTime: "—", hours: 0, otHours: 0, status: "WEEK_OFF", punchSource: "System Schedule", shift: "Weekend Off" },
-        { date: "2026-09-03", day: "Thursday", inTime: "08:00 AM", outTime: "05:10 PM", hours: 9.1, otHours: 0, status: "PRESENT", punchSource: "Web Punch Portal", shift: "General (08:00 - 17:00)" },
-        { date: "2026-09-02", day: "Wednesday", inTime: "08:35 AM", outTime: "05:15 PM", hours: 8.6, otHours: 0, status: "LATE_IN", punchSource: "Biometric Doha HQ", shift: "General (08:00 - 17:00)" },
-        { date: "2026-09-01", day: "Tuesday", inTime: "07:58 AM", outTime: "06:30 PM", hours: 10.5, otHours: 1.5, status: "PRESENT", punchSource: "Mobile GPS", shift: "General (08:00 - 17:00)" },
-        { date: "2026-08-31", day: "Monday", inTime: "07:54 AM", outTime: "05:08 PM", hours: 9.2, otHours: 0, status: "PRESENT", punchSource: "Biometric Doha HQ", shift: "General (08:00 - 17:00)" },
-        { date: "2026-08-30", day: "Sunday", inTime: "08:00 AM", outTime: "05:00 PM", hours: 9.0, otHours: 0, status: "PRESENT", punchSource: "Face Recognition", shift: "General (08:00 - 17:00)" },
-        { date: "2026-08-29", day: "Saturday", inTime: "—", outTime: "—", hours: 0, otHours: 0, status: "WEEK_OFF", punchSource: "System Schedule", shift: "Weekend Off" },
-        { date: "2026-08-28", day: "Friday", inTime: "—", outTime: "—", hours: 0, otHours: 0, status: "WEEK_OFF", punchSource: "System Schedule", shift: "Weekend Off" },
-        { date: "2026-08-27", day: "Thursday", inTime: "08:05 AM", outTime: "01:30 PM", hours: 5.4, otHours: 0, status: "HALF_DAY", punchSource: "Biometric Doha HQ", shift: "General (08:00 - 17:00)" },
-      ]);
-
-      setMyPayslips([
-        { month: "August 2026", basic: 8500, allowances: 3500, gross: 12000, deductions: 0, net: 12000, status: "Paid", paidAt: "2026-08-31" },
-        { month: "July 2026", basic: 8500, allowances: 3500, gross: 12000, deductions: 0, net: 12000, status: "Paid", paidAt: "2026-07-31" },
-        { month: "June 2026", basic: 8500, allowances: 3500, gross: 12000, deductions: 0, net: 12000, status: "Paid", paidAt: "2026-06-30" },
-        { month: "May 2026", basic: 8500, allowances: 3500, gross: 12000, deductions: 0, net: 12000, status: "Paid", paidAt: "2026-05-31" },
-      ]);
-
-      setMyExpenses([
-        { id: "exp-1", title: "Property Inspection Fuel & Parking", amount: 180, type: "Travel Expense", date: "2026-09-01", status: "Approved" },
-        { id: "exp-2", title: "Tenant Welcome Hospitality Box", amount: 250, type: "Reimbursement Expense", date: "2026-08-25", status: "Reimbursed" },
-        { id: "exp-3", title: "Site Key Duplication & Courier", amount: 95, type: "Other Expense", date: "2026-08-14", status: "Approved" },
-      ]);
-
-      setMyLoans([
-        { id: "ln-1", amount: 10000, emi: 1666, tenure: "6 Months", remaining: 3334, status: "Active", reason: "Annual Housing Advance" }
-      ]);
-
-      setMyTickets([
-        { id: "tkt-01", number: "TKT-892110", subject: "Salary Certificate for Embassy Visa", category: "HR Letters", status: "Resolved", date: "2026-08-20" },
-        { id: "tkt-02", number: "TKT-901423", subject: "Dual Monitor Setup for Leasing Desk", category: "IT Hardware", status: "In_Progress", date: "2026-09-02" },
-      ]);
-
-      setMyCourses([
-        { id: "c-1", title: "Qatar Real Estate Regulatory Law & Tenancy Standards", category: "Property Management", progress: "85%", status: "In Progress" },
-        { id: "c-2", title: "Fire Safety & Facility Emergency Procedures", category: "Health & Safety", progress: "100%", status: "Completed" },
-        { id: "c-3", title: "Advanced Financial Ledger Posting & AP Workflow", category: "ERP Training", progress: "40%", status: "In Progress" },
-        { id: "c-4", title: "Anti-Money Laundering & Real Estate KYC Compliance", category: "Compliance", progress: "60%", status: "In Progress" },
-      ]);
+            setMyLeaves([]);
+      setMyAttendance([]);
+      setMyPayslips([]);
+      setMyExpenses([]);
+      setMyLoans([]);
+      setMyTickets([]);
+      setMyCourses([]);
     } catch (e) {
       console.error(e);
     }
@@ -271,7 +223,7 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
       status: "Pending",
       appliedOn: new Date().toISOString().split("T")[0],
       reason: leaveForm.reason,
-      approver: "Sarah Jenkins",
+      approver: "—",
     };
     setMyLeaves([newEntry, ...myLeaves]);
     toast.success("Leave application submitted to reporting manager!");
@@ -534,11 +486,11 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
         <div className="flex flex-wrap items-center gap-3">
           <div className="hidden sm:flex flex-col text-right text-xs">
             <span className="text-muted-foreground text-[11px]">Shift & Schedule</span>
-            <span className="font-semibold text-foreground">General (08:00 – 17:00)</span>
+            <span className="font-semibold text-foreground">—</span>
           </div>
           <div className="hidden md:flex flex-col text-right text-xs border-l pl-3">
             <span className="text-muted-foreground text-[11px]">Reporting Manager</span>
-            <span className="font-semibold text-foreground">Sarah Jenkins (VP Ops)</span>
+            <span className="font-semibold text-foreground">—</span>
           </div>
           <div className="px-3 py-1.5 rounded-xl border bg-muted/30 text-xs flex items-center gap-2">
             <span className={`h-2.5 w-2.5 rounded-full ${isPunchedIn ? "bg-emerald-500 animate-pulse" : "bg-slate-400"}`} />
@@ -651,7 +603,7 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
               <div className="text-2xl font-bold mt-2 text-foreground">
                 {myAttendance.filter(a => a.status === "PRESENT").length} <span className="text-xs text-muted-foreground font-normal">/ {myAttendance.length}</span>
               </div>
-              <span className="text-[11px] text-emerald-600 font-medium">94.2% On-time punctuality</span>
+              <span className="text-[11px] text-muted-foreground font-medium">Recorded attendance</span>
             </Card>
 
             <Card className="p-4 bg-card/60">
@@ -662,7 +614,7 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
               <div className="text-2xl font-bold mt-2 text-foreground">
                 {myAttendance.reduce((acc, a) => acc + (a.hours || 0), 0).toFixed(1)} <span className="text-xs text-muted-foreground font-normal">Hrs</span>
               </div>
-              <span className="text-[11px] text-blue-600 font-medium">Avg ~9.1h / working day</span>
+              <span className="text-[11px] text-muted-foreground font-medium">Total logged hours</span>
             </Card>
 
             <Card className="p-4 bg-card/60">
@@ -671,9 +623,9 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
                 <Sparkles className="h-4 w-4 text-purple-500" />
               </div>
               <div className="text-2xl font-bold mt-2 text-foreground">
-                4.0 <span className="text-xs text-muted-foreground font-normal">Hrs</span>
+                {myAttendance.reduce((acc, a) => acc + (a.otHours || 0), 0).toFixed(1)} <span className="text-xs text-muted-foreground font-normal">Hrs</span>
               </div>
-              <span className="text-[11px] text-purple-600 font-medium">~177 QAR extra payout</span>
+              <span className="text-[11px] text-muted-foreground font-medium">Overtime logged</span>
             </Card>
 
             <Card className="p-4 bg-card/60">
@@ -681,8 +633,8 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
                 <span className="text-xs text-muted-foreground">Late Marks</span>
                 <AlertCircle className="h-4 w-4 text-amber-500" />
               </div>
-              <div className="text-2xl font-bold mt-2 text-foreground">1</div>
-              <span className="text-[11px] text-muted-foreground">Grace period applied</span>
+              <div className="text-2xl font-bold mt-2 text-foreground">{myAttendance.filter(a => a.status === "LATE_IN").length}</div>
+              <span className="text-[11px] text-muted-foreground">Late arrivals</span>
             </Card>
           </div>
 
@@ -717,7 +669,7 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-muted-foreground">Assigned Shift:</span>
-                    <span className="font-medium text-foreground">08:00 AM – 05:00 PM</span>
+                    <span className="font-medium text-foreground">—</span>
                   </div>
                 </div>
 
@@ -891,23 +843,23 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
           <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
             <Card className="p-4 border-l-4 border-l-blue-500 bg-card/60">
               <span className="text-xs text-muted-foreground block font-medium">Annual Leave Quota</span>
-              <div className="text-2xl font-bold text-blue-600 mt-1">18 <span className="text-xs text-muted-foreground font-normal">/ 30 Days</span></div>
-              <Progress value={60} className="h-1.5 mt-2 bg-blue-100" />
-              <span className="text-[11px] text-muted-foreground mt-1.5 block">12 Days utilized this cycle</span>
+              <div className="text-2xl font-bold text-blue-600 mt-1">0 <span className="text-xs text-muted-foreground font-normal">/ 0 Days</span></div>
+              <Progress value={0} className="h-1.5 mt-2 bg-blue-100" />
+              <span className="text-[11px] text-muted-foreground mt-1.5 block">0 Days utilized</span>
             </Card>
 
             <Card className="p-4 border-l-4 border-l-emerald-500 bg-card/60">
               <span className="text-xs text-muted-foreground block font-medium">Casual & Emergency</span>
-              <div className="text-2xl font-bold text-emerald-600 mt-1">5 <span className="text-xs text-muted-foreground font-normal">/ 7 Days</span></div>
-              <Progress value={71} className="h-1.5 mt-2 bg-emerald-100" />
-              <span className="text-[11px] text-muted-foreground mt-1.5 block">2 Days utilized</span>
+              <div className="text-2xl font-bold text-emerald-600 mt-1">0 <span className="text-xs text-muted-foreground font-normal">/ 0 Days</span></div>
+              <Progress value={0} className="h-1.5 mt-2 bg-emerald-100" />
+              <span className="text-[11px] text-muted-foreground mt-1.5 block">0 Days utilized</span>
             </Card>
 
             <Card className="p-4 border-l-4 border-l-purple-500 bg-card/60">
               <span className="text-xs text-muted-foreground block font-medium">Sick / Medical Leave</span>
-              <div className="text-2xl font-bold text-purple-600 mt-1">12 <span className="text-xs text-muted-foreground font-normal">/ 14 Days</span></div>
-              <Progress value={85} className="h-1.5 mt-2 bg-purple-100" />
-              <span className="text-[11px] text-muted-foreground mt-1.5 block">2 Days utilized (Paid)</span>
+              <div className="text-2xl font-bold text-purple-600 mt-1">0 <span className="text-xs text-muted-foreground font-normal">/ 0 Days</span></div>
+              <Progress value={0} className="h-1.5 mt-2 bg-purple-100" />
+              <span className="text-[11px] text-muted-foreground mt-1.5 block">0 Days utilized</span>
             </Card>
 
             <Card className="p-4 border-l-4 border-l-amber-500 bg-card/60 flex flex-col justify-between">
@@ -1414,11 +1366,11 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
                 <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 text-xs">
                   <div className="p-3 rounded-lg border bg-muted/20">
                     <span className="text-[11px] text-muted-foreground block font-medium">Basic Pay Base</span>
-                    <span className="font-bold text-sm">8,500 QAR</span>
+                    <span className="font-bold text-sm">{(employee.basic_salary || 0).toLocaleString()} QAR</span>
                   </div>
                   <div className="p-3 rounded-lg border bg-muted/20">
                     <span className="text-[11px] text-muted-foreground block font-medium">Completed Service</span>
-                    <span className="font-bold text-sm">2 Years, 4 Months</span>
+                    <span className="font-bold text-sm">—</span>
                   </div>
                   <div className="p-3 rounded-lg border bg-muted/20">
                     <span className="text-[11px] text-muted-foreground block font-medium">Annual Accrual Basis</span>
@@ -1426,7 +1378,7 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
                   </div>
                   <div className="p-3 rounded-lg border bg-emerald-500/10 border-emerald-500/30">
                     <span className="text-[11px] text-muted-foreground block font-medium">Accrued Gratuity</span>
-                    <span className="font-bold text-sm text-emerald-600">13,883 QAR</span>
+                    <span className="font-bold text-sm text-emerald-600">0 QAR</span>
                   </div>
                 </div>
               </div>
@@ -1436,9 +1388,9 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
                 <div className="p-4 rounded-xl border bg-card/60 space-y-2">
                   <h5 className="font-bold text-xs">QID & Work Permit Clearance</h5>
                   <div className="space-y-1 text-muted-foreground">
-                    <p>• QID / Residence Permit: <strong className="text-foreground font-mono">QID-29463401928</strong></p>
-                    <p>• Ministry of Labour Contract: <strong className="text-foreground">Unlimited Term Verified</strong></p>
-                    <p>• Sponsor / Establishment: <strong className="text-foreground">Zyno Property Management W.L.L</strong></p>
+                    <p>• QID / Residence Permit: <strong className="text-foreground font-mono">—</strong></p>
+                    <p>• Ministry of Labour Contract: <strong className="text-foreground">—</strong></p>
+                    <p>• Sponsor / Establishment: <strong className="text-foreground">—</strong></p>
                   </div>
                 </div>
 
@@ -1904,7 +1856,7 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
                 <span className="text-xs text-muted-foreground">Notice Period</span>
                 <Clock className="h-4 w-4 text-rose-500" />
               </div>
-              <div className="text-2xl font-bold mt-2">30 <span className="text-xs text-muted-foreground font-normal">Days</span></div>
+              <div className="text-2xl font-bold mt-2">0 <span className="text-xs text-muted-foreground font-normal">Days</span></div>
               <span className="text-[11px] text-rose-600 font-medium">As per Labor Law & Contract</span>
             </Card>
 
@@ -1913,8 +1865,8 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
                 <span className="text-xs text-muted-foreground">EOSB Entitlement</span>
                 <Award className="h-4 w-4 text-emerald-500" />
               </div>
-              <div className="text-2xl font-bold mt-2 text-emerald-600">13,883 <span className="text-xs text-muted-foreground font-normal">QAR</span></div>
-              <span className="text-[11px] text-emerald-600 font-medium">Accrued Gratuity (2y 4m)</span>
+              <div className="text-2xl font-bold mt-2 text-emerald-600">0 <span className="text-xs text-muted-foreground font-normal">QAR</span></div>
+              <span className="text-[11px] text-muted-foreground font-medium">Accrued Gratuity</span>
             </Card>
 
             <Card className="p-4 bg-card/60 border-l-4 border-l-blue-500">
@@ -1922,7 +1874,7 @@ export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalP
                 <span className="text-xs text-muted-foreground">Notice Status</span>
                 <FileText className="h-4 w-4 text-blue-500" />
               </div>
-              <div className="text-2xl font-bold mt-2 text-blue-600">Active</div>
+              <div className="text-2xl font-bold mt-2 text-muted-foreground">—</div>
               <span className="text-[11px] text-blue-600 font-medium">No pending notice filed</span>
             </Card>
           </div>

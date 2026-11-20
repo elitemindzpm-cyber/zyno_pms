@@ -307,11 +307,7 @@ export function UnbilledUnitsReportSubModule() {
     receivableInvoices.forEach((inv) => {
       if (inv.property) set.add(inv.property);
     });
-    if (set.size === 0) {
-      set.add("Old Salata - Residence No:23");
-      set.add("MANSOURA - BLDG06");
-      set.add("Neeman's New Building");
-    }
+    // No static property fallbacks
     return Array.from(set).sort();
   }, [units, leases, receivableInvoices]);
 

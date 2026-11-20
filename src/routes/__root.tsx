@@ -130,6 +130,8 @@ if (typeof window !== "undefined") {
       "pms_units_cache_v1",
       "pms_deleted_leases_v1",
       "pms_leasing_v2_leases",
+      "proc_catalog_items",
+      "zyno-company-bank-accounts-v2",
     ];
     staleKeys.forEach(k => localStorage.removeItem(k));
   } catch {}

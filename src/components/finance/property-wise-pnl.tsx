@@ -150,7 +150,7 @@ export function PropertyWiseProfitAndLossSubModule() {
       }
     });
     const sortedBuildings = Array.from(properties.values()).sort((a, b) => a.localeCompare(b));
-    return [CORPORATE_HEAD_OFFICE_LABEL, ...sortedBuildings];
+    return sortedBuildings;
   }, [units, leases]);
 
   const knownBuildingKeys = useMemo(() => {

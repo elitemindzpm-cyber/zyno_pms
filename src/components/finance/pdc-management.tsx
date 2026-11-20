@@ -1093,44 +1093,7 @@ export function PdcManagement() {
         }
       }
 
-      // Step 7: Guaranteed coverage for Unit MS80-20 renewed contract PDCs
-      const hasMs80_20 = Array.from(dbDataMap.values()).some(
-        p => String(p.unit_ref).toUpperCase().includes("MS80-20") ||
-             String(p.tenant_name).toLowerCase().includes("abdul rafay")
-      );
-      if (!hasMs80_20) {
-        const ms80_20_pdcs = [
-          { num: "1000071", date: "2026-10-05" },
-          { num: "1000072", date: "2026-11-05" },
-          { num: "1000073", date: "2026-12-05" },
-          { num: "1000074", date: "2027-01-05" },
-          { num: "1000075", date: "2027-02-05" },
-          { num: "1000076", date: "2027-03-05" },
-          { num: "1000077", date: "2027-04-05" },
-          { num: "1000078", date: "2027-05-05" },
-          { num: "1000079", date: "2027-06-05" },
-          { num: "1000080", date: "2027-07-05" },
-          { num: "1000081", date: "2027-08-05" },
-          { num: "1000082", date: "2027-09-05" },
-        ];
-        ms80_20_pdcs.forEach((ch, idx) => {
-          const rowKey = `ren-ms80-20-${ch.num}`;
-          dbDataMap.set(rowKey, {
-            id: `ren-ms80-20-${idx + 1}`,
-            entry_date: "2026-10-05",
-            cheque_date: ch.date,
-            cheque_number: ch.num,
-            amount: 4000,
-            status: "In Hand",
-            bank_name: "Qatar National Bank (QNB)",
-            property_name: "Al Ameen Residence 80",
-            unit_ref: "MS80-20",
-            tenant_name: "Mr. Abdul Rafay Anwar Siddiqui",
-            monthly_rent: 4000,
-            _source: "renewal_store",
-          });
-        });
-      }
+      // Step 7 removed: no static MS80-20 PDCs
 
       // Step 9: Guarantee Cheques Integration (Security Deposits & Kahramaa Deposits dated 31.12.2036)
       for (const sd of [] as typeof SECURITY_DEPOSIT_GUARANTEE_ENTRIES) {

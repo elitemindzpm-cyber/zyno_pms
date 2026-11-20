@@ -247,36 +247,6 @@ export function FinanceModule({ role, collectionContext }: FinanceModuleProps) {
           </div>
         </div>
 
-        {/* Top-Level Sub-Navigation Tabs */}
-        {activeGroup && (
-          <div className="flex items-start gap-2 px-4 py-2 bg-muted/30 border-b border-border shrink-0">
-            <span className="text-[11px] font-semibold uppercase tracking-wider text-muted-foreground mr-1.5 mt-1 shrink-0">
-              {activeGroup.group}:
-            </span>
-            <div className="flex min-w-0 flex-1 flex-wrap items-center gap-1.5">
-              {activeGroup.items.map((item) => {
-                const isSelected = item.key === activeKey;
-                const Icon = item.icon;
-                return (
-                  <button
-                    key={item.key}
-                    type="button"
-                    onClick={() => navigate({ search: { tab: item.key } })}
-                    className={`inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-xs font-medium transition-all shrink-0 cursor-pointer ${
-                      isSelected
-                        ? "bg-primary text-primary-foreground shadow-xs font-semibold"
-                        : "text-muted-foreground hover:text-foreground hover:bg-muted bg-background/60 border border-border/50"
-                    }`}
-                  >
-                    <Icon className="h-3 w-3" />
-                    <span>{item.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </div>
-        )}
-
         {/* Content */}
         <ScrollArea className="flex-1">
           <div className="p-6">
@@ -9089,10 +9059,7 @@ function GeneralLedgerReportSubModule() {
 
   const accountOptions = useMemo(() => {
     const accounts = new Map<string, Set<string>>();
-    BANK_GL_ACCOUNTS.forEach(bank => {
-      const label = bank.name.replace(/^\d+\s*[-–—]\s*/, "").trim();
-      accounts.set(bank.code, new Set([label]));
-    });
+    // Only show accounts present in real ledger transactions
     txList.forEach(tx => {
       if (!tx.account_code) return;
       const names = accounts.get(tx.account_code) || new Set<string>();
@@ -11604,7 +11571,7 @@ function VehicleExpenseReportSubModule() {
   const [allocateOpen, setAllocateOpen] = useState(false);
 
   const [allocForm, setAllocForm] = useState({
-    vehicleNo: COMPANY_VEHICLE_COST_CENTERS[0].vehicleNo,
+    vehicleNo: COMPANY_VEHICLE_COST_CENTERS[0]?.vehicleNo || "",
     date: new Date().toISOString().slice(0, 10),
     reference: `VEXP-${Date.now().toString().slice(-5)}`,
     expenseGl: "51102002 - Vehicle Fuel, Maintenance & Running Expenses",

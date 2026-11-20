@@ -2060,7 +2060,7 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
       {activeTab === "payroll" && (
         <div className="space-y-6">
           {/* Payroll Header Controls */}
-          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-card border rounded-xl p-4">
+          <div className="flex flex-col gap-3 bg-card border rounded-xl p-4">
             <div className="flex items-center gap-3">
               <Select value={selectedCycleId} onValueChange={handleCycleChange}>
                 <SelectTrigger className="w-[240px]">
@@ -2361,17 +2361,17 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
                     <h4 className="text-base font-bold mt-1">
                       {appraisalCycles.find(c => c.status === 'Active')?.title || "No active cycle"}
                     </h4>
-                    <p className="text-xs text-emerald-600 font-medium mt-2">Status: Active Review Phase</p>
+                    <p className="text-xs text-muted-foreground font-medium mt-2">{appraisalCycles.find(c => c.status === "Active") ? "Status: Active Review Phase" : "Status: None"}</p>
                   </div>
                   <div className="p-4 rounded-xl border bg-card">
                     <p className="text-xs text-muted-foreground uppercase font-medium">Total Cycles Tracked</p>
-                    <h4 className="text-2xl font-bold mt-1">{Math.max(1, appraisalCycles.length)}</h4>
+                    <h4 className="text-2xl font-bold mt-1">{appraisalCycles.length}</h4>
                     <p className="text-xs text-muted-foreground mt-2">Corporate & Branch Reviews</p>
                   </div>
                   <div className="p-4 rounded-xl border bg-card">
                     <p className="text-xs text-muted-foreground uppercase font-medium">Average Performance</p>
-                    <h4 className="text-2xl font-bold mt-1">4.4 / 5.0</h4>
-                    <p className="text-xs text-primary font-medium mt-2">High performance band</p>
+                    <h4 className="text-2xl font-bold mt-1">—</h4>
+                    <p className="text-xs text-muted-foreground font-medium mt-2">No reviews recorded</p>
                   </div>
                 </div>
 

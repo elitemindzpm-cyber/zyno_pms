@@ -126,7 +126,7 @@ export function ArApAgingReportSubModule() {
     if (tbAcc) {
       return Math.max(0, Math.round((tbAcc.debit - tbAcc.credit) * 100) / 100);
     }
-    return 375417.66;
+    return 0;
   }, [allLedgerTransactions, trialBalanceDetailed, asOfDate]);
 
   // Build strict master list of real properties
