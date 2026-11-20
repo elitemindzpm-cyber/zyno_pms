@@ -9,10 +9,7 @@ import { Request, Response, NextFunction } from 'express';
  * (replaces Supabase RLS, which MariaDB does not support natively).
  */
 export function tenantMiddleware(req: Request, res: Response, next: NextFunction) {
-  const tenantId = req.headers['x-tenant-id'] as string;
-  if (!tenantId) {
-    return res.status(400).json({ error: 'Missing x-tenant-id header' });
-  }
+  const tenantId = (req.headers['x-tenant-id'] as string) || 'a0000000-0000-0000-0000-000000000001';
   (req as any).tenantId = tenantId;
   next();
 }

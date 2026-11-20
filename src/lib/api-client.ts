@@ -17,8 +17,8 @@ export function setToken(token: string): void {
 }
 
 export function getTenantId(): string {
-  if (typeof window === 'undefined') return '';
-  return localStorage.getItem('pms_tenant_id') || import.meta.env.VITE_TENANT_ID || '';
+  if (typeof window === 'undefined') return 'a0000000-0000-0000-0000-000000000001';
+  return localStorage.getItem('pms_tenant_id') || import.meta.env.VITE_TENANT_ID || 'a0000000-0000-0000-0000-000000000001';
 }
 
 export function setTenantId(tenantId: string): void {
