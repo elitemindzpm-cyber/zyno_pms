@@ -2773,7 +2773,7 @@ function JournalLedgerSubModule() {
                     size="sm"
                     variant="outline"
                     className="h-7 text-xs gap-1 border-blue-500/40 text-blue-600"
-                    onClick={() => setJeLines(lines => [...lines, { id: String(Date.now() + Math.random()), type: "DR", account: COMMON_GL_ACCOUNTS[0].name, property: propertiesList[0] || "All / Corporate", amount: "0", description: form.narration }])}
+                    onClick={() => setJeLines(lines => [...lines, { id: String(Date.now() + Math.random()), type: "DR", account: COMMON_GL_ACCOUNTS[0]?.name || "", property: propertiesList[0] || "All / Corporate", amount: "0", description: form.narration }])}
                   >
                     <Plus className="h-3.5 w-3.5" /> Add Debit (Dr) Line
                   </Button>
@@ -2959,8 +2959,8 @@ function CreditDebitBuilderSubModule() {
 
     toast.success(`Journal voucher ${jeNo} (QAR ${totalDebit.toLocaleString()}) built & posted successfully!`);
     setLines([
-      { account: COMMON_GL_ACCOUNTS[0].name, property: propertiesList[0] || "All / Corporate", debit: 0, credit: 0, description: "" },
-      { account: COMMON_GL_ACCOUNTS[6].name, property: propertiesList[0] || "All / Corporate", debit: 0, credit: 0, description: "" }
+      { account: COMMON_GL_ACCOUNTS[0]?.name || "", property: propertiesList[0] || "All / Corporate", debit: 0, credit: 0, description: "" },
+      { account: COMMON_GL_ACCOUNTS[6]?.name || "", property: propertiesList[0] || "All / Corporate", debit: 0, credit: 0, description: "" }
     ]);
   }
 
@@ -4471,36 +4471,9 @@ function PayableInvoiceSubModule() {
   );
 }
 
-const BANK_GL_ACCOUNTS = [
-  { code: "12000001", name: "12000001 - Commercial Bank of Qatar (CBQ)" },
-  { code: "12000002", name: "12000002 - Al Ameen Dukhan Bank" },
-  { code: "12000003", name: "12000003 - Bank Operating Account (QNB)" },
-  { code: "12000004", name: "12000004 - Doha Bank Operating Account" },
-  { code: "12000005", name: "12000005 - Qatar Islamic Bank (QIB)" },
-  { code: "12000006", name: "12000006 - Al Ameen (Oryx) - Dukhan Bank" },
-];
+const BANK_GL_ACCOUNTS: Array<{ code: string; name: string }> = [];
 
-const COMMON_GL_ACCOUNTS = [
-  { code: "12000", name: "12000 - Bank Operating Account (QNB/CBQ)" },
-  { code: "12100", name: "12100 - Cash In Hand (Office Vault)" },
-  { code: "12411", name: "12411 - Legal Receivables (Defaulted Cases)" },
-  { code: "12413", name: "12413 - Tenant Receivables (AR)" },
-  { code: "12413001", name: "12413001 - Tenant Receivables — Unit SL" },
-  { code: "12900", name: "12900 - PDC In Hand / Undeposited Cheques" },
-  { code: "22100001", name: "22100001 - Trade Payables - Vendors (Suppliers/Vendors)" },
-  { code: "21100", name: "21100 - Tenant Security Deposits" },
-  { code: "41100", name: "41100 - Rental Revenue" },
-  { code: "41200", name: "41200 - Parking Fee Revenue" },
-  { code: "41300", name: "41300 - Utility Recovery Revenue" },
-  { code: "41900", name: "41900 - Other Non-AR Income / Miscellaneous" },
-  { code: "50100", name: "50100 - Staff Salaries & Allowances" },
-  { code: "51004001", name: "51004001 - Repair and Maintenance Cost" },
-  { code: "50300", name: "50300 - Cleaning & Sanitation" },
-  { code: "50400", name: "50400 - Elevator Maintenance" },
-  { code: "50500", name: "50500 - Utilities & Electricity (Kahramaa)" },
-  { code: "50600", name: "50600 - Security Services" },
-  { code: "50800", name: "50800 - Legal & Professional Fees" },
-];
+const COMMON_GL_ACCOUNTS: Array<{ code: string; name: string }> = [];
 
 function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment Voucher" | "Receipt Voucher" }) {
   const { vouchers: sharedVouchers, setVouchers: setSharedVouchers, leases, units } = useAppData();
@@ -4953,7 +4926,7 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
                       className="h-7 text-xs gap-1 border-blue-500/40 text-blue-600 hover:bg-blue-50"
                       onClick={() => setJournalLines(lines => [
                         ...lines,
-                        { id: String(Date.now() + Math.random()), type: "DR", account: COMMON_GL_ACCOUNTS[0].name, property: form.property || propertiesList[0] || "All / Corporate", amount: "0", description: form.name }
+                        { id: String(Date.now() + Math.random()), type: "DR", account: COMMON_GL_ACCOUNTS[0]?.name || "", property: form.property || propertiesList[0] || "All / Corporate", amount: "0", description: form.name }
                       ])}
                     >
                       <Plus className="h-3.5 w-3.5" /> Add Debit (Dr) Line
@@ -10631,27 +10604,10 @@ const DEFAULT_VENDORS: Array<{ id: string; name: string; agreement: string; agre
 const DEFAULT_CUSTOMERS: Array<{ id: string; name: string; agreement: string; agreements: string[]; doc: string }> = [];
 
 // COA options for expense GL (Debit Note)
-const EXPENSE_GL_OPTIONS = [
-  { value: "51004001", label: "51004001 – Repair & Maintenance (Property)" },
-  { value: "51004002", label: "51004002 – Repair & Maintenance (Common Area)" },
-  { value: "51004003", label: "51004003 – Repair & Maintenance (Unit)" },
-  { value: "51002001", label: "51002001 – CMEP-Facilities Mgt AMC" },
-  { value: "51002002", label: "51002002 – Swimming Pool Maintenance" },
-  { value: "51002003", label: "51002003 – CCTV AMC Charges" },
-  { value: "51002004", label: "51002004 – Lift Maintenance Charges" },
-  { value: "51001001", label: "51001001 – CMEP-Labor Cost-Facilities Mgt" },
-  { value: "13100001", label: "13100001 – Trade Receivables (Customer Recovery)" },
-];
+const EXPENSE_GL_OPTIONS: Array<{ value: string; label: string }> = [];
 
 // COA options for revenue GL (Credit Note)
-const REVENUE_GL_OPTIONS = [
-  { value: "41001001", label: "41001001 – Rental Income (Residential)" },
-  { value: "41001002", label: "41001002 – Rental Income (Commercial)" },
-  { value: "41002001", label: "41002001 – Service Charges" },
-  { value: "41003001", label: "41003001 – Parking Revenue" },
-  { value: "41004001", label: "41004001 – Utility Recovery" },
-  { value: "22100001", label: "22100001 – Trade Payables (Vendor Credit)" },
-];
+const REVENUE_GL_OPTIONS: Array<{ value: string; label: string }> = [];
 
 type NoteStatus = "DRAFT" | "APPROVED" | "POSTED" | "CANCELLED";
 

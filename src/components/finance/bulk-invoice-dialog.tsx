@@ -132,14 +132,7 @@ function getConcessionBillingStatus(
   return { isFree: false };
 }
 
-const REVENUE_STREAMS = [
-  { code: "41100", label: "41100 - Rental Revenue (Residential/Commercial)" },
-  { code: "41400", label: "41400 - Common Area Maintenance (CAM)" },
-  { code: "41300", label: "41300 - Utility & Electricity Recovery" },
-  { code: "41200", label: "41200 - Parking Space / Slot Fee" },
-  { code: "41500", label: "41500 - Management & Admin Fee" },
-  { code: "41600", label: "41600 - Late Fee & Penalties" },
-];
+const REVENUE_STREAMS: Array<{ code: string; label: string }> = [];
 
 function formatQarAmount(amount: number): string {
   return amount.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -266,7 +259,7 @@ export function BulkInvoiceDialog({
   }, [units, leases]);
 
   const [selectedProperty, setSelectedProperty] = useState<string>(initialProperty || propertiesList[0] || "");
-  const [propertyStream, setPropertyStream] = useState<string>("41100 - Rental Revenue (Residential/Commercial)");
+  const [propertyStream, setPropertyStream] = useState<string>("");
   const [propertyPricingMode, setPropertyPricingMode] = useState<"lease" | "fixed">("lease");
   const [propertyFixedAmount, setPropertyFixedAmount] = useState<string>("350");
 
@@ -277,7 +270,7 @@ export function BulkInvoiceDialog({
   // CUSTOMER-WISE STATE
   // ──────────────────────────────────────────────────────────────────────────
   const [selectedCustomerId, setSelectedCustomerId] = useState<string>(initialCustomerId || "");
-  const [customerStream, setCustomerStream] = useState<string>("41100 - Rental Revenue (Residential/Commercial)");
+  const [customerStream, setCustomerStream] = useState<string>("");
   const [customerPricingMode, setCustomerPricingMode] = useState<"lease" | "fixed">("lease");
   const [customerFixedAmount, setCustomerFixedAmount] = useState<string>("500");
   const [customerBatchItems, setCustomerBatchItems] = useState<BatchItem[]>([]);
