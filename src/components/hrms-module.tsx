@@ -40,7 +40,6 @@ import {
   calculateEmployeeLeaveEntitlement,
   enrichEmployeeWithLeaveMeta
 } from "@/lib/hrmsService";
-import { REAL_EMPLOYEES_SEED } from "@/lib/hrmsSeedData";
 import { syncPayrollRun } from "@/lib/finance/payrollIntegrationService";
 import { printPayslip } from "@/lib/payslip-pdf";
 import { QatarWpsSifDialog } from "@/components/hrms/qatar-wps-sif-dialog";
@@ -199,7 +198,7 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
   });
 
   const [newAppraisalCycle, setNewAppraisalCycle] = useState({
-    title: "2026 Annual Performance Review",
+    title: "",
     start_date: new Date().toISOString().split("T")[0],
     end_date: new Date(Date.now() + 30 * 24 * 3600 * 1000).toISOString().split("T")[0],
     interval_type: "Annual",
@@ -284,7 +283,7 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
         HrmsApi.getHelpdeskTickets()
       ]);
 
-      const rawEmployees = (emps && emps.length > 0) ? emps : REAL_EMPLOYEES_SEED;
+      const rawEmployees = emps || [];
       const effectiveEmployees = rawEmployees.map((emp: any) => enrichEmployeeWithLeaveMeta(emp));
       setEmployees(effectiveEmployees);
       setDepartments(depts);
@@ -1283,9 +1282,9 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
                 <div>
                   <p className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Present Today</p>
                   <h3 className="text-2xl font-bold mt-1.5">
-                    {attendance.filter((a) => a.status === "PRESENT").length || employees.length}
+                    {attendance.filter((a) => a.status === "PRESENT").length}
                   </h3>
-                  <p className="text-xs text-emerald-600 font-medium mt-1">98.5% Shift punctuality</p>
+                  <p className="text-xs text-emerald-600 font-medium mt-1">Marked present today</p>
                 </div>
                 <div className="h-12 w-12 rounded-xl bg-emerald-500/10 flex items-center justify-center">
                   <Clock className="h-6 w-6 text-emerald-600" />
@@ -2360,7 +2359,7 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
                   <div className="p-4 rounded-xl border bg-card">
                     <p className="text-xs text-muted-foreground uppercase font-medium">Active Cycle</p>
                     <h4 className="text-base font-bold mt-1">
-                      {appraisalCycles.find(c => c.status === 'Active')?.title || "2026 Annual Performance Review"}
+                      {appraisalCycles.find(c => c.status === 'Active')?.title || "No active cycle"}
                     </h4>
                     <p className="text-xs text-emerald-600 font-medium mt-2">Status: Active Review Phase</p>
                   </div>

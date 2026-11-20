@@ -237,7 +237,7 @@ const RAW_MASTER_ITEMS_205: Array<[string, string]> = [
   ["Wall plug 8mm & screw box", "Civil Work"],
 ];
 
-export const defaultCatalogItems: CatalogItem[] = RAW_MASTER_ITEMS_205.map(([name, category], idx) => {
+const _UNUSED_SEED_ITEMS: CatalogItem[] = RAW_MASTER_ITEMS_205.map(([name, category], idx) => {
   const num = String(idx + 1).padStart(3, "0");
   return {
     id: `itm-${num}`,
@@ -275,101 +275,32 @@ const LEGACY_INITIAL_SEED_CODES = new Set([
  * Ensures that if the database or local cache only has the 16 initial seed items,
  * all 205 Master Items (ITM-001 to ITM-205) created by Vivek are merged and synced.
  */
+export const defaultCatalogItems: CatalogItem[] = [];
+
 export async function loadCatalogItems(): Promise<CatalogItem[]> {
   try {
-    const { data: dbItems, error: dbErr } = await supabase
+    const { data, error } = await supabase
       .from("procurement_items")
       .select("*")
       .order("item_code", { ascending: true });
-
-    if (!dbErr && dbItems && dbItems.length > 0) {
-      const mappedDb: CatalogItem[] = dbItems
-        .filter((r: any) => !LEGACY_INITIAL_SEED_CODES.has(String(r.item_code || "").toUpperCase()))
-        .map((r: any) => ({
-          id: r.id || `cat-${r.item_code}`,
-          item_code: r.item_code,
-          name: r.name,
-          category: r.category || "Other",
-          item_type: (r.item_type || "maintenance_spare") as ItemType,
-          budget_type: (r.budget_type || "OPEX") as "CAPEX" | "OPEX",
-          budget_head: (r.budget_head || "Maintenance Items") as BudgetHead,
-          unit_price: Number(r.unit_price || 0),
-          unit_of_measure: r.unit_of_measure || "pcs",
-          reorder_level: Number(r.reorder_level || 0),
-          active: r.active !== false,
-        }));
-
-      // If DB already has >= 205 non-legacy items, return them directly
-      if (mappedDb.length >= 205) {
-        try {
-          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(mappedDb));
-        } catch {}
-        return mappedDb;
-      }
-
-      // Otherwise merge DB items with the full 205-item Master Catalog (ITM-001..ITM-205)
-      const byCode = new Map<string, CatalogItem>();
-      defaultCatalogItems.forEach(item => byCode.set(item.item_code.toUpperCase(), item));
-      mappedDb.forEach(item => byCode.set(item.item_code.toUpperCase(), item));
-
-      const merged = Array.from(byCode.values()).sort((a, b) =>
-        a.item_code.localeCompare(b.item_code, undefined, { numeric: true })
-      );
-
-      // Background-sync missing ITM-001..ITM-205 items to Supabase and cleanup legacy 8 seed rows
-      const existingDbCodes = new Set(mappedDb.map(i => i.item_code.toUpperCase()));
-      const missingDefaults = defaultCatalogItems.filter(i => !existingDbCodes.has(i.item_code.toUpperCase()));
-      if (missingDefaults.length > 0) {
-        const payload = missingDefaults.map(item => ({
-          item_code: item.item_code,
-          name: item.name,
-          category: item.category,
-          item_type: item.item_type,
-          budget_type: item.budget_type,
-          budget_head: item.budget_head,
-          unit_price: item.unit_price,
-          unit_of_measure: item.unit_of_measure,
-          reorder_level: item.reorder_level,
-          active: item.active,
-          updated_at: new Date().toISOString(),
-        }));
-        supabase.from("procurement_items").upsert(payload, { onConflict: "item_code" }).then(() => {});
-      }
-      if (dbItems.some((r: any) => LEGACY_INITIAL_SEED_CODES.has(String(r.item_code || "").toUpperCase()))) {
-        supabase
-          .from("procurement_items")
-          .delete()
-          .in("item_code", Array.from(LEGACY_INITIAL_SEED_CODES))
-          .then(() => {});
-      }
-
-      try {
-        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(merged));
-      } catch {}
-
-      return merged;
-    }
+    if (error || !data) return [];
+    return data.map((r: any) => ({
+      id: r.id || `cat-${r.item_code}`,
+      item_code: r.item_code,
+      name: r.name,
+      category: r.category || "Other",
+      item_type: (r.item_type || "maintenance_spare") as ItemType,
+      budget_type: (r.budget_type || "OPEX") as "CAPEX" | "OPEX",
+      budget_head: (r.budget_head || "Maintenance Items") as BudgetHead,
+      unit_price: Number(r.unit_price || 0),
+      unit_of_measure: r.unit_of_measure || "pcs",
+      reorder_level: Number(r.reorder_level || 0),
+      active: r.active !== false,
+    }));
   } catch (err) {
-    console.warn("[Catalog] Supabase query notice, falling back to cache/defaults:", err);
+    console.warn("[Catalog] DB query failed:", err);
+    return [];
   }
-
-  // Fallback 1: LocalStorage (if it has >= 205 items)
-  try {
-    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (saved) {
-      const parsed = JSON.parse(saved);
-      if (Array.isArray(parsed) && parsed.length >= 205) {
-        return parsed;
-      }
-    }
-  } catch {}
-
-  // Fallback 2: Full 205-item Master Catalog defaults
-  try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(defaultCatalogItems));
-  } catch {}
-
-  return defaultCatalogItems;
 }
 
 /**

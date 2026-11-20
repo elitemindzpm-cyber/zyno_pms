@@ -3746,9 +3746,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const trialBalanceDetailed = useMemo(() => {
     // 1. Seed map with every account in the COA at zero debit/credit
     const map = new Map<string, { code: string; name: string; type: "Assets" | "Liabilities" | "Capital" | "Revenue" | "Expenses"; debit: number; credit: number }>();
-    FULL_COA.forEach(acct => {
-      map.set(acct.code, { code: acct.code, name: acct.name, type: acct.type, debit: 0, credit: 0 });
-    });
+    // Static COA seeding removed: only accounts with real ledger activity appear.
 
     // 2. Overlay actual ledger transaction totals (adds accounts not in static COA too)
     allLedgerTransactions.forEach(tx => {

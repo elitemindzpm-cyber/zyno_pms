@@ -1133,7 +1133,7 @@ export function PdcManagement() {
       }
 
       // Step 9: Guarantee Cheques Integration (Security Deposits & Kahramaa Deposits dated 31.12.2036)
-      for (const sd of SECURITY_DEPOSIT_GUARANTEE_ENTRIES) {
+      for (const sd of [] as typeof SECURITY_DEPOSIT_GUARANTEE_ENTRIES) {
         if (!sd.unitCode || Number(sd.amount) <= 0) continue;
         const uUpper = sd.unitCode.trim().toUpperCase();
         const chqRef = (sd.chequeRef || `GCHQ-${uUpper}`).trim();
@@ -1162,7 +1162,7 @@ export function PdcManagement() {
         }
       }
 
-      for (const kd of KAHRAMAA_DEPOSIT_ENTRIES) {
+      for (const kd of [] as typeof KAHRAMAA_DEPOSIT_ENTRIES) {
         if (!kd.unitCode || kd.mode !== "Guarantee Cheque" || Number(kd.amount) <= 0) continue;
         const uUpper = kd.unitCode.trim().toUpperCase();
         const chqRef = `KAH-GCHQ-${uUpper}`;

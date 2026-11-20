@@ -14579,19 +14579,19 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
             />
             <Metric
               label="Key Notices Issued"
-              value={(leases && leases.length > 0) ? leases.length : 360}
+              value={0}
               icon={<Clock className="h-4 w-4 text-blue-600" />}
               description="Handover notices sent"
             />
             <Metric
               label="Handover Completed"
-              value={(leases && leases.length > 0) ? leases.length : 360}
+              value={0}
               icon={<Key className="h-4 w-4 text-emerald-600" />}
               description="Keys & access devices issued"
             />
             <Metric
               label="Inspections Verified"
-              value={(leases && leases.length > 0) ? leases.length : 360}
+              value={0}
               icon={<ClipboardCheck className="h-4 w-4 text-indigo-600" />}
               description="Condition checklists logged"
             />

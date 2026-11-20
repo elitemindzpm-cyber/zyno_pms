@@ -15,48 +15,7 @@ export interface CompanyBankAccount {
   status?: string;
 }
 
-export const DEFAULT_COMPANY_BANK_ACCOUNTS: CompanyBankAccount[] = [
-  {
-    id: "7",
-    bankName: "Commercial Bank of Qatar (CBQ)",
-    accountTitle: "Commercial Bank of Qatar (CBQ)",
-    accountNumber: "4060692533001",
-    iban: "QA40CBQK000000004060692533001",
-    glCode: "12000001",
-    glName: "Commercial Bank of Qatar (CBQ)",
-    currency: "QAR",
-    branch: "Grand Hamad Main Branch",
-    swiftCode: "CBQKQAQA",
-    isDefault: true,
-    status: "Active",
-  },
-  {
-    id: "8",
-    bankName: "Dukhan Bank",
-    accountTitle: "Al Ameen Dukhan Bank",
-    accountNumber: "100001761798",
-    iban: "QA88BARQ00000000100001761798",
-    glCode: "12000002",
-    glName: "Al Ameen Dukhan Bank",
-    currency: "QAR",
-    branch: "Main Branch",
-    swiftCode: "BARQQAQA",
-    status: "Active",
-  },
-  {
-    id: "9",
-    bankName: "Dukhan Bank",
-    accountTitle: "Al Ameen (Oryx)",
-    accountNumber: "100001011781",
-    iban: "QA88BARQ00000000100001011781",
-    glCode: "12000006",
-    glName: "Al Ameen (Oryx) - Dukhan Bank",
-    currency: "QAR",
-    branch: "Main Branch",
-    swiftCode: "BARQQAQA",
-    status: "Active",
-  },
-];
+export const DEFAULT_COMPANY_BANK_ACCOUNTS: CompanyBankAccount[] = [];
 
 const BANK_ACCOUNTS_STORAGE_KEY = "zyno-company-bank-accounts-v2";
 const PMS_FIN_STORAGE_KEY = "pms_fin_bank_accounts_override_v2";

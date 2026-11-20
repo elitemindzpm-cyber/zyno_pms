@@ -30,24 +30,9 @@ export interface HrmsEssPortalProps {
 export function HrmsEssPortal({ currentEmployee, activeTabProp }: HrmsEssPortalProps) {
   // Mock current employee fallback if not provided
   const employee = currentEmployee || {
-    id: "emp-demo-01",
-    first_name: "Deepak",
-    last_name: "Sharma",
-    employee_id_code: "MGT-IN-GUR-01260002",
-    email: "deepak.sharma@zyno.estate",
-    personal_email: "deepak.personal@gmail.com",
-    mobile_number: "+974 5512 3456",
-    designation: "Senior Property Consultant",
-    department: "Commercial & Leasing",
-    branch: "Doha Downtown Branch",
-    entity: "MGT-IN-GUR (PRIMARY)",
-    date_of_joining: "2024-01-15",
-    basic_salary: 8500,
-    hra: 2500,
-    tra: 1000,
-    bank_name: "Qatar National Bank (QNB)",
-    iban: "QA55QNBA00000000123456",
-    status: "ACTIVE",
+    id: "", first_name: "", last_name: "", employee_id_code: "", email: "", personal_email: "",
+    mobile_number: "", designation: "", department: "", branch: "", entity: "", date_of_joining: "",
+    basic_salary: 0, hra: 0, tra: 0, bank_name: "", iban: "", status: "",
   };
 
   const [activeTab, setActiveTab] = useState<string>(() => {

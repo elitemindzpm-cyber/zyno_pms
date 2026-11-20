@@ -1911,7 +1911,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
             { title: "Total Field Staff", value: technicians.length, subtext: "Active in-house team", icon: Users, colorClass: "text-blue-600" },
             { title: "Available on Standby", value: technicians.filter(t => t.status === "Available").length, subtext: "Ready for immediate dispatch", icon: CheckCircle, colorClass: "text-emerald-600" },
             { title: "On-Site Active", value: technicians.filter(t => t.status === "On-Site").length, subtext: "Handling live work orders", icon: Wrench, colorClass: "text-amber-600" },
-            { title: "Avg Tech Rating", value: "4.85 / 5.0", subtext: "Tenant satisfaction score", icon: Star, colorClass: "text-yellow-600" },
+            { title: "Avg Tech Rating", value: "—", subtext: "No ratings recorded", icon: Star, colorClass: "text-yellow-600" },
           ],
         };
       case "inventory":
@@ -1939,7 +1939,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
             { title: "Catalog Items Tracked", value: stockCatalog.length, subtext: "Warehouse SKU parts", icon: Package, colorClass: "text-blue-600" },
             { title: "Low Stock Alerts", value: stockCatalog.filter(p => p.onHand <= p.minLevel).length, subtext: "Below reorder threshold", icon: AlertTriangle, colorClass: "text-red-600" },
             { title: "Warehouse Valuation", value: `QAR ${stockCatalog.reduce((s, p) => s + (p.onHand * p.unitCost), 0).toLocaleString()}`, subtext: "Current inventory valuation", icon: DollarSign, colorClass: "text-emerald-600" },
-            { title: "Procurement Restocks", value: "3 Active PRs", subtext: "In PR -> PO -> GRN pipeline", icon: ShoppingCart, colorClass: "text-indigo-600" },
+            { title: "Procurement Restocks", value: "0 Active PRs", subtext: "In PR -> PO -> GRN pipeline", icon: ShoppingCart, colorClass: "text-indigo-600" },
           ],
         };
       case "vendor_jobs":
@@ -1952,7 +1952,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
           cards: [
             { title: "Contractor Invoices", value: vendorInvoices.length, subtext: "Direct AP bills registered", icon: FileText, colorClass: "text-blue-600" },
             { title: "Total AP Invoiced", value: `QAR ${vendorInvoices.reduce((s, i) => s + i.amount, 0).toLocaleString()}`, subtext: "Queued to Finance AP", icon: CreditCard, colorClass: "text-violet-600" },
-            { title: "Specialist Vendors", value: "5 Registered", subtext: "Carrier, Otis, Al Mana, QFM...", icon: Building2, colorClass: "text-indigo-600" },
+            { title: "Specialist Vendors", value: "0 Registered", subtext: "From vendor master", icon: Building2, colorClass: "text-indigo-600" },
             { title: "Pending Finance Approval", value: vendorInvoices.filter(i => i.status === "Submitted").length, subtext: "Awaiting controller sign-off", icon: Clock, colorClass: "text-amber-600" },
           ],
         };
@@ -1966,7 +1966,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
           cards: [
             { title: "Tenant Chargeable Jobs", value: workOrders.filter(w => w.chargebackToTenant).length, subtext: "Tenant damage liabilities", icon: AlertCircle, colorClass: "text-orange-600" },
             { title: "Billable Recovery Value", value: `QAR ${workOrders.filter(w => w.chargebackToTenant).reduce((s, w) => s + w.totalCost, 0).toLocaleString()}`, subtext: "To recover from tenants", icon: DollarSign, colorClass: "text-red-600" },
-            { title: "Deposit Deductions", value: "1 Settled", subtext: "Deducted on checkout", icon: CheckCircle, colorClass: "text-emerald-600" },
+            { title: "Deposit Deductions", value: "0 Settled", subtext: "Deducted on checkout", icon: CheckCircle, colorClass: "text-emerald-600" },
             { title: "Absorbed in OPEX", value: `QAR ${workOrders.filter(w => !w.chargebackToTenant).reduce((s, w) => s + w.totalCost, 0).toLocaleString()}`, subtext: "Property operating expense", icon: Building2, colorClass: "text-slate-600" },
           ],
         };
