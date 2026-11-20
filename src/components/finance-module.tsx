@@ -2464,11 +2464,7 @@ function JournalLedgerSubModule() {
     const set = new Set<string>();
     leases.forEach(l => { if (l.property) set.add(l.property); });
     units.forEach(u => { if (u.property) set.add(u.property); });
-    if (set.size === 0) {
-      set.add("Old Salata - Residence No:23");
-      set.add("MANSOURA - BLDG06");
-      set.add("Neeman's New Building");
-    }
+
     return Array.from(set).sort();
   }, [leases, units]);
 
@@ -2894,24 +2890,20 @@ function CreditDebitBuilderSubModule() {
     const set = new Set<string>();
     leases.forEach(l => { if (l.property) set.add(l.property); });
     units.forEach(u => { if (u.property) set.add(u.property); });
-    if (set.size === 0) {
-      set.add("Old Salata - Residence No:23");
-      set.add("MANSOURA - BLDG06");
-      set.add("Neeman's New Building");
-    }
+
     return Array.from(set).sort();
   }, [leases, units]);
 
   const [lines, setLines] = useState([
-    { account: COMMON_GL_ACCOUNTS[0].name, property: propertiesList[0] || "All / Corporate", debit: 0, credit: 0, description: "" },
-    { account: COMMON_GL_ACCOUNTS[6].name, property: propertiesList[0] || "All / Corporate", debit: 0, credit: 0, description: "" },
+    { account: "", property: "", debit: 0, credit: 0, description: "" },
+    { account: "", property: "", debit: 0, credit: 0, description: "" },
   ]);
   const totalDebit = lines.reduce((s, l) => s + (Number(l.debit) || 0), 0);
   const totalCredit = lines.reduce((s, l) => s + (Number(l.credit) || 0), 0);
   const isBalanced = Math.abs(totalDebit - totalCredit) < 0.01 && totalDebit > 0;
 
   function addLine() {
-    setLines([...lines, { account: COMMON_GL_ACCOUNTS[0].name, property: propertiesList[0] || "All / Corporate", debit: 0, credit: 0, description: "" }]);
+    setLines([...lines, { account: "", property: "", debit: 0, credit: 0, description: "" }]);
   }
   function removeLine(idx: number) { setLines(lines.filter((_, i) => i !== idx)); }
 
@@ -3081,7 +3073,7 @@ function GrnCostMappingSubModule() {
     grn_no: `GRN-2026-${Math.floor(100 + Math.random() * 900)}`,
     po_ref: `PO-2026-${Math.floor(10 + Math.random() * 90)}`,
     date: new Date().toISOString().split("T")[0],
-    vendor: "Qatar Maintenance & HVAC Co.",
+    vendor: "",
     description: "HVAC Replacement Compressors & Air Filters",
     amount: "4500",
     mapped_gl: "51004001 - Repair and Maintenance Cost",
@@ -3293,7 +3285,7 @@ function GrnCostMappingSubModule() {
             grn_no: `GRN-2026-${Math.floor(100 + Math.random() * 900)}`,
             po_ref: `PO-2026-${Math.floor(10 + Math.random() * 90)}`,
             date: new Date().toISOString().split("T")[0],
-            vendor: "Qatar Maintenance & HVAC Co.",
+            vendor: "",
             description: "Plumbing Fittings, Valves & Repair Spares",
             amount: "4500",
             mapped_gl: "51004001 - Repair and Maintenance Cost",
@@ -3563,11 +3555,7 @@ function PayableInvoiceSubModule() {
     const set = new Set<string>();
     leases.forEach(l => { if (l.property) set.add(l.property); });
     units.forEach(u => { if (u.property) set.add(u.property); });
-    if (set.size === 0) {
-      set.add("Old Salata - Residence No:23");
-      set.add("MANSOURA - BLDG06");
-      set.add("Neeman's New Building");
-    }
+
     return Array.from(set).sort();
   }, [leases, units]);
 
@@ -3724,7 +3712,7 @@ function PayableInvoiceSubModule() {
 
   const [form, setForm] = useState({
     invoice_no: `APINV-${Math.floor(10000 + Math.random() * 90000)}`,
-    vendor: "Qatar Maintenance & HVAC Co.",
+    vendor: "",
     property: "Al Ameen Real Estate Head Office",
     date: new Date().toISOString().split("T")[0],
     voucher_date: new Date().toISOString().split("T")[0],
@@ -4521,20 +4509,12 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
   const [form, setForm] = useState({
     voucher_no: `VCH-${type.slice(0, 3).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`,
     date: new Date().toISOString().split("T")[0],
-    name: type === "Payment Voucher" ? "Payment to Contractor" : type === "Receipt Voucher" ? "Direct Rent Collection" : "General Adjustment",
-    property: "All / Corporate",
+    name: "",
+    property: "",
     leaseId: "",
-    debit: type === "Payment Voucher"
-      ? "22100001 - Trade Payables - Vendors (Suppliers/Vendors)"
-      : type === "Receipt Voucher"
-        ? "12000001 - Commercial Bank of Qatar (CBQ)"
-        : "51004001 - Repair and Maintenance Cost",
-    credit: type === "Payment Voucher"
-      ? "12000 - Bank Operating Account (QNB/CBQ)"
-      : type === "Receipt Voucher"
-        ? "12413001 - Tenant Receivables — Unit SL"
-        : "12100 - Cash In Hand (Office Vault)",
-    amount: "5000",
+    debit: "",
+    credit: "",
+    amount: "",
     method: type === "Payment Voucher" ? "Bank Transfer" : type === "Receipt Voucher" ? "Bank Transfer" : "Batch",
   });
 
@@ -4543,11 +4523,7 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
     const set = new Set<string>();
     leases.forEach(l => { if (l.property) set.add(l.property); });
     units.forEach(u => { if (u.property) set.add(u.property); });
-    if (set.size === 0) {
-      set.add("Old Salata - Residence No:23");
-      set.add("MANSOURA - BLDG06");
-      set.add("Neeman's New Building");
-    }
+
     return Array.from(set).sort();
   }, [leases, units]);
 
@@ -5272,23 +5248,19 @@ function ReceivableInvoiceSubModule({ role }: { role: FinanceModuleProps["role"]
     const set = new Set<string>();
     leases.forEach(l => { if (l.property) set.add(l.property); });
     units.forEach(u => { if (u.property) set.add(u.property); });
-    if (set.size === 0) {
-      set.add("Old Salata - Residence No:23");
-      set.add("MANSOURA - BLDG06");
-      set.add("Neeman's New Building");
-    }
+
     return Array.from(set).sort();
   }, [leases, units]);
 
   const [form, setForm] = useState({
     invoice_no: `INV-AR-${Math.floor(1000 + Math.random() * 9000)}`,
-    tenant: "Mr. Hafeez Shaik",
-    property: "Old Salata - Residence No:23",
-    unit: "AAA - Flat16",
+    tenant: "",
+    property: "",
+    unit: "",
     date: new Date().toISOString().split("T")[0],
     due_date: new Date(Date.now() + 30 * 86400000).toISOString().split("T")[0],
-    stream: "41100 - Rental Revenue",
-    amount: "5600",
+    stream: "",
+    amount: "",
   });
 
   // Filtered units based on selected property
@@ -6654,11 +6626,11 @@ function BankReconciliationSubModule() {
   const [data, setData] = useState([]);
 
   const [form, setForm] = useState({
-    account_number: "QA55QNBA00000000123456789",
+    account_number: "",
     statement_date: new Date().toISOString().split("T")[0],
     entry_date: new Date().toISOString().split("T")[0],
-    book_balance: "1500000",
-    statement_balance: "1500000",
+    book_balance: "",
+    statement_balance: "",
   });
 
   const combinedReconciliations = [...bankReconciliations, ...data];
@@ -6726,9 +6698,7 @@ function BankReconciliationSubModule() {
               <Select value={form.account_number} onValueChange={v => setForm({ ...form, account_number: v })}>
                 <SelectTrigger><SelectValue /></SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="QA55QNBA00000000123456789">QA55QNBA00000000123456789 - QNB Main</SelectItem>
-                  <SelectItem value="QA88CBQA00000000987654321">QA88CBQA00000000987654321 - CBQ Escrow</SelectItem>
-                  <SelectItem value="QA22DOHB00000000554433221">QA22DOHB00000000554433221 - Doha Bank Payroll</SelectItem>
+                  <SelectItem value="none" disabled>No bank accounts registered</SelectItem>
                 </SelectContent>
               </Select>
             </div>
@@ -10005,7 +9975,7 @@ function CashBookSubModule() {
     voucher: `CSH-${Math.floor(10 + Math.random() * 90)}`,
     description: "",
     type: "in",
-    amount: "1500",
+    amount: "",
   });
 
   // Fetch PDC deposits and cash receipts directly from DB (mirrors how PDC Management loads data)
@@ -10226,9 +10196,9 @@ function PettyCashBookSubModule() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState({
     date: new Date().toISOString().split("T")[0],
-    expense: "Refreshments & Tea",
-    paid_to: "Local Cafeteria",
-    amount: "65",
+    expense: "",
+    paid_to: "",
+    amount: "",
   });
 
   function handleAdd() {
@@ -10396,7 +10366,7 @@ function ContractManagementSubModule({ type }: { type: "Expense" | "Revenue" }) 
   const [form, setForm] = useState({
     contract_number: `CNT-${type === "Expense" ? "EXP" : "REV"}-${Math.floor(100 + Math.random() * 900)}`,
     title: type === "Expense" ? "Annual HVAC & MEP Maintenance Agreement" : "Commercial Tenancy Agreement - GF1",
-    party_name: type === "Expense" ? "Qatar Maintenance & HVAC Co." : "M/S. Al Ameen Real Estate",
+    party_name: "",
     type,
     total_value: type === "Expense" ? 65000 : 66000,
     start_date: "2026-01-01",
@@ -10656,21 +10626,9 @@ const CUSTOMER_CREDIT_REASONS = [
 ];
 
 // Common Master Party Presets
-const DEFAULT_VENDORS = [
-  { id: "v1", name: "Qatar Maintenance & HVAC Co.", agreement: "AGR-VND-2026-001", agreements: ["AGR-VND-2026-001", "SVC-HVAC-2026-07", "PO-MAIN-2026-041"], doc: "APINV-2026-000001" },
-  { id: "v2", name: "Gulf Facility Services", agreement: "AGR-VND-2026-002", agreements: ["AGR-VND-2026-002", "GFS-AMC-2026-03"], doc: "APINV-2026-000002" },
-  { id: "v3", name: "Doha Elevator & MEP Corp", agreement: "AGR-VND-2026-003", agreements: ["AGR-VND-2026-003", "LIFT-AMC-2026-02", "MEP-SVC-2026-05"], doc: "APINV-2026-000003" },
-  { id: "v4", name: "Al Rashid Trading LLC", agreement: "AGR-VND-2026-004", agreements: ["AGR-VND-2026-004", "SUPPLY-2026-008"], doc: "APINV-2026-000004" },
-  { id: "v5", name: "Qatar Cleaning & Security Co.", agreement: "AGR-VND-2026-005", agreements: ["AGR-VND-2026-005", "SEC-2026-003", "CLN-2026-009"], doc: "APINV-2026-000005" },
-];
+const DEFAULT_VENDORS: Array<{ id: string; name: string; agreement: string; agreements: string[]; doc: string }> = [];
 
-const DEFAULT_CUSTOMERS = [
-  { id: "c1", name: "Mr. Hafeez Shaik", agreement: "LEASE-2026-00101 (Old Salata)", agreements: ["LEASE-2026-00101 (Old Salata)", "LEASE-2025-00088 (Madinat Khalifa)"], doc: "INV-AR-2026-001" },
-  { id: "c2", name: "Fatima Al-Kuwari", agreement: "LEASE-2026-00204 (Lusail Marina)", agreements: ["LEASE-2026-00204 (Lusail Marina)", "LEASE-2024-00161 (Fox Hills)"], doc: "INV-AR-2026-002" },
-  { id: "c3", name: "Tariq Mansoor", agreement: "LEASE-2026-00310 (The Pearl)", agreements: ["LEASE-2026-00310 (The Pearl)"], doc: "INV-AR-2026-003" },
-  { id: "c4", name: "Global Logistics QSTP LLC", agreement: "LEASE-COM-2026-008 (West Bay)", agreements: ["LEASE-COM-2026-008 (West Bay)", "LEASE-COM-2025-005 (Business Park)"], doc: "INV-AR-2026-004" },
-  { id: "c5", name: "Ahmed Al-Sulaiti", agreement: "LEASE-2026-00412 (Bin Mahmoud)", agreements: ["LEASE-2026-00412 (Bin Mahmoud)", "LEASE-2025-00398 (Al Sadd)", "LEASE-2024-00271 (Al Hilal)"], doc: "INV-AR-2026-005" },
-];
+const DEFAULT_CUSTOMERS: Array<{ id: string; name: string; agreement: string; agreements: string[]; doc: string }> = [];
 
 // COA options for expense GL (Debit Note)
 const EXPENSE_GL_OPTIONS = [
@@ -10758,13 +10716,13 @@ function DebitNoteSubModule() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     party_type: "Vendor" as "Vendor" | "Customer",
-    party_id: DEFAULT_VENDORS[0].id,
-    party_name: DEFAULT_VENDORS[0].name,
-    linked_agreement: DEFAULT_VENDORS[0].agreements[0],
-    linked_invoice: DEFAULT_VENDORS[0].doc,
+    party_id: "",
+    party_name: "",
+    linked_agreement: "",
+    linked_invoice: "",
     amount: 0,
-    reason: VENDOR_DEBIT_REASONS[0],
-    expense_gl: EXPENSE_GL_OPTIONS[0].value,
+    reason: "",
+    expense_gl: "",
     notes: "",
     date: new Date().toISOString().slice(0, 10),
   });
@@ -10775,31 +10733,16 @@ function DebitNoteSubModule() {
   }
 
   function handlePartyTypeChange(type: "Vendor" | "Customer") {
-    if (type === "Vendor") {
-      const first = DEFAULT_VENDORS[0];
-      setForm({
-        ...form,
-        party_type: "Vendor",
-        party_id: first.id,
-        party_name: first.name,
-        linked_agreement: first.agreements[0],
-        linked_invoice: first.doc,
-        reason: VENDOR_DEBIT_REASONS[0],
-        expense_gl: "51004001",
-      });
-    } else {
-      const first = DEFAULT_CUSTOMERS[0];
-      setForm({
-        ...form,
-        party_type: "Customer",
-        party_id: first.id,
-        party_name: first.name,
-        linked_agreement: first.agreements[0],
-        linked_invoice: first.doc,
-        reason: CUSTOMER_DEBIT_REASONS[0],
-        expense_gl: "13100001",
-      });
-    }
+    setForm({
+      ...form,
+      party_type: type,
+      party_id: "",
+      party_name: "",
+      linked_agreement: "",
+      linked_invoice: "",
+      reason: "",
+      expense_gl: "",
+    });
   }
 
   function handlePartySelect(name: string) {
@@ -11176,12 +11119,12 @@ function CreditNoteSubModule() {
   const [saving, setSaving] = useState(false);
   const [form, setForm] = useState({
     party_type: "Tenant" as "Vendor" | "Tenant",
-    party_name: DEFAULT_CUSTOMERS[0].name,
-    linked_agreement: DEFAULT_CUSTOMERS[0].agreements[0],
-    linked_invoice: DEFAULT_CUSTOMERS[0].doc,
+    party_name: "",
+    linked_agreement: "",
+    linked_invoice: "",
     amount: 0,
-    reason: CUSTOMER_CREDIT_REASONS[0],
-    revenue_gl: REVENUE_GL_OPTIONS[0].value,
+    reason: "",
+    revenue_gl: "",
     notes: "",
     date: new Date().toISOString().slice(0, 10),
   });
@@ -11192,29 +11135,15 @@ function CreditNoteSubModule() {
   }
 
   function handlePartyTypeChange(type: "Vendor" | "Tenant") {
-    if (type === "Tenant") {
-      const first = DEFAULT_CUSTOMERS[0];
-      setForm({
-        ...form,
-        party_type: "Tenant",
-        party_name: first.name,
-        linked_agreement: first.agreements[0],
-        linked_invoice: first.doc,
-        reason: CUSTOMER_CREDIT_REASONS[0],
-        revenue_gl: "41001001",
-      });
-    } else {
-      const first = DEFAULT_VENDORS[0];
-      setForm({
-        ...form,
-        party_type: "Vendor",
-        party_name: first.name,
-        linked_agreement: first.agreements[0],
-        linked_invoice: first.doc,
-        reason: VENDOR_CREDIT_REASONS[0],
-        revenue_gl: "22100001",
-      });
-    }
+    setForm({
+      ...form,
+      party_type: type,
+      party_name: "",
+      linked_agreement: "",
+      linked_invoice: "",
+      reason: "",
+      revenue_gl: "",
+    });
   }
 
   function handlePartySelect(name: string) {

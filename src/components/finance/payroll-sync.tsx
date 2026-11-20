@@ -25,14 +25,14 @@ export function PayrollSync() {
   const [openModal, setOpenModal] = useState(false);
 
   const [form, setForm] = useState({
-    payroll_run_id: `PR-RUN-${Date.now().toString().slice(-6)}`,
-    period: "2026-08",
-    department: "Maintenance & Operations",
-    basic_salary: "35000",
-    allowances: "12000",
-    overtime: "4500",
-    deductions: "1500",
-    bank_account: "12000 - QNB Operations Account",
+    payroll_run_id: "",
+    period: "",
+    department: "",
+    basic_salary: "",
+    allowances: "",
+    overtime: "",
+    deductions: "",
+    bank_account: "",
   });
 
   useEffect(() => { load(); }, []);

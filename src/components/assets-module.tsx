@@ -487,7 +487,7 @@ export function AssetManager({ role }: { role: "admin" | "prop-mgr" }) {
     expiry_date: "",
     coverage_scope: "Comprehensive Parts & Labor Coverage",
     amc_cost: "0",
-    new_doc_name: "Warranty Certificate",
+    new_doc_name: "",
     new_doc_filename: "",
     documents: [] as AssetWarrantyDocument[],
   });
@@ -1215,18 +1215,16 @@ export function AssetManager({ role }: { role: "admin" | "prop-mgr" }) {
         warranty_type: "Standard Manufacturer",
         provider_name: asset?.supplier || "",
         policy_number: `POL-${Date.now().toString().slice(-6)}`,
-        support_email: "support@provider.qa",
-        support_phone: "+974 4400 0000",
+        support_email: "",
+        support_phone: "",
         start_date: asset?.purchase_date || getTodayIST(),
         duration_months: "12",
         expiry_date: "",
-        coverage_scope: "Comprehensive Parts & On-site Repair SLA",
+        coverage_scope: "",
         amc_cost: "0",
-        new_doc_name: "Warranty Certificate",
+        new_doc_name: "",
         new_doc_filename: "",
-        documents: [
-          { id: `doc-${Date.now()}`, name: "Warranty Certificate", file_name: `Warranty_Cert_${asset?.asset_code || "AST"}.pdf`, upload_date: getTodayIST() }
-        ],
+        documents: [],
       });
     }
     setShowWarrantyModal(true);

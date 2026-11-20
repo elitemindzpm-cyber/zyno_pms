@@ -32,8 +32,8 @@ export function ReceivablesLegal() {
     tenant_name: "",
     property_name: "",
     unit_ref: "",
-    amount: "5500",
-    reason: "Rent cheques returned unpaid; 60 days overdue notice period expired",
+    amount: "",
+    reason: "",
     legal_case_id: `LGL-2026-${Math.floor(1000 + Math.random() * 9000)}`,
     status: "Legal Notice Sent" as const,
   });
@@ -46,7 +46,7 @@ export function ReceivablesLegal() {
   const [recoveryDate, setRecoveryDate] = useState(new Date().toISOString().split("T")[0]);
   const [transactionNo, setTransactionNo] = useState("");
   const [chequeNo, setChequeNo] = useState("");
-  const [chequeBank, setChequeBank] = useState("Qatar National Bank (QNB)");
+  const [chequeBank, setChequeBank] = useState("");
   const [chequeMaturityDate, setChequeMaturityDate] = useState(new Date().toISOString().split("T")[0]);
   const [bankRef, setBankRef] = useState("BANK-REC-");
 

@@ -261,11 +261,7 @@ export function BulkInvoiceDialog({
     const set = new Set<string>();
     units.forEach(u => { if (u.property) set.add(u.property); });
     leases.forEach(l => { if (l.property) set.add(l.property); });
-    if (set.size === 0) {
-      set.add("Old Salata - Residence No:23");
-      set.add("MANSOURA - BLDG06");
-      set.add("Neeman's New Building");
-    }
+
     return Array.from(set).sort();
   }, [units, leases]);
 
