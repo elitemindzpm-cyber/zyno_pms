@@ -1,6 +1,9 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
+  nitro: {
+    preset: "node-server",
+  },
   vite: {
     cacheDir: process.env.VITE_CACHE_DIR ?? "node_modules/.vite",
     build: {
