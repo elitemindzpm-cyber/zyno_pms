@@ -11798,7 +11798,7 @@ function VehicleExpenseReportSubModule() {
             <h2 className="text-lg font-bold tracking-tight">Company Vehicle-Wise Expense Report</h2>
           </div>
           <p className="text-xs text-muted-foreground mt-0.5">
-            Dedicated Cost Center tracking by <strong>Vehicle No</strong> for all 11 company vehicles — allocate expenses per vehicle and generate vehicle-wise expense statements.
+            Dedicated Cost Center tracking by <strong>Vehicle No</strong> for all {COMPANY_VEHICLE_COST_CENTERS.length} company vehicles — allocate expenses per vehicle and generate vehicle-wise expense statements.
           </p>
         </div>
 
@@ -11821,10 +11821,10 @@ function VehicleExpenseReportSubModule() {
           <Label className="text-[11px] font-semibold mb-1 block">Vehicle Cost Center (Vehicle No)</Label>
           <Select value={selectedVehicleNo} onValueChange={setSelectedVehicleNo}>
             <SelectTrigger className="h-8 text-xs bg-background">
-              <SelectValue placeholder="All Company Vehicles (11)" />
+              <SelectValue placeholder={`All Company Vehicles (${COMPANY_VEHICLE_COST_CENTERS.length})`} />
             </SelectTrigger>
             <SelectContent>
-              <SelectItem value="ALL">All Company Vehicles (11 Cost Centers)</SelectItem>
+              <SelectItem value="ALL">All Company Vehicles ({COMPANY_VEHICLE_COST_CENTERS.length} Cost Centers)</SelectItem>
               {COMPANY_VEHICLE_COST_CENTERS.map(v => (
                 <SelectItem key={v.vehicleNo} value={v.vehicleNo} className="text-xs">
                   {v.vehicleNo} — {v.vehicleName} ({v.brandName}{v.model !== "—" ? ` ${v.model}` : ""})
@@ -11882,7 +11882,7 @@ function VehicleExpenseReportSubModule() {
           <p className="text-[11px] font-semibold uppercase text-muted-foreground">Active Filter Scope</p>
           <p className="text-lg font-bold mt-1 text-primary">
             {selectedVehicleNo === "ALL"
-              ? "All 11 Vehicles"
+              ? `All ${COMPANY_VEHICLE_COST_CENTERS.length} Vehicles`
               : COMPANY_VEHICLE_COST_CENTERS.find(v => v.vehicleNo === selectedVehicleNo)?.name || selectedVehicleNo}
           </p>
           <p className="text-[11px] text-muted-foreground mt-0.5">{filteredRows.length} allocated expense entries</p>
@@ -11914,7 +11914,7 @@ function VehicleExpenseReportSubModule() {
           </div>
           {selectedVehicleNo !== "ALL" && (
             <Button variant="ghost" size="sm" onClick={() => setSelectedVehicleNo("ALL")} className="h-7 text-xs">
-              Show All 11 Vehicles
+              Show All {COMPANY_VEHICLE_COST_CENTERS.length} Vehicles
             </Button>
           )}
         </div>
