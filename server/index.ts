@@ -35,10 +35,14 @@ const CORS_ORIGINS = (process.env.CORS_ORIGINS || 'http://localhost:8080,http://
 for (const o of ['http://localhost:4173', 'http://127.0.0.1:4173']) {
   if (!CORS_ORIGINS.includes(o)) CORS_ORIGINS.push(o);
 }
-app.use(cors({
+const corsOptions: cors.CorsOptions = {
   origin: (origin, cb) => cb(null, !origin || CORS_ORIGINS.includes(origin)),
   credentials: true,
-}));
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Tenant-Id'],
+};
+app.use(cors(corsOptions));
+app.options('/{*splat}', cors(corsOptions));
 app.use(express.json({ limit: '25mb' }));
 app.use(requestLog);
 
