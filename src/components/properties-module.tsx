@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { Link } from "@tanstack/react-router";
 import { useCallback, useEffect, useState } from "react";
 import { ExcelImportEmbedded } from "@/components/excel-import-embedded";
@@ -35,7 +36,7 @@ import {
   fetchHostProperties,
   fetchLeases,
   fetchUnits,
-  supabase,
+  db,
   fetchPropertyTypes,
   fetchOwnershipTypes,
   fetchPropertyCategories,
@@ -43,7 +44,7 @@ import {
   fetchPropertyManagerEmployees,
   updatePropertyImages,
   type Property,
-} from "@/lib/supabase";
+} from "@/lib/db";
 import { ImageUploader, type ImageFile } from "@/components/image-uploader";
 import { PropertyDocumentsManager, type PropertyDocument } from "@/components/property-documents-manager";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
@@ -165,7 +166,7 @@ export function PropertiesModule({ role }: PropertiesModuleProps) {
     try {
       const {
         data: { session },
-      } = await supabase.auth.getSession();
+      } = await db.auth.getSession();
       const demoSession = getDemoSession();
       const hostId = session?.user?.id || demoSession?.id || MOCK_HOST_ID;
 
@@ -206,7 +207,7 @@ export function PropertiesModule({ role }: PropertiesModuleProps) {
       // Get context leases to check active occupancies
       let contextLeases: any[] = [];
       try {
-        const raw = window.localStorage.getItem("zyno-pms-app-data");
+        const raw = kvStore.getItem("zyno-pms-app-data");
         if (raw) {
           const parsed = JSON.parse(raw);
           if (parsed.leases) contextLeases = parsed.leases;
@@ -270,10 +271,10 @@ export function PropertiesModule({ role }: PropertiesModuleProps) {
     try {
       const {
         data: { session },
-      } = await supabase.auth.getSession();
+      } = await db.auth.getSession();
       const demoSession = getDemoSession();
 
-      // Only use a real Supabase user ID as host_id (FK to profiles table).
+      // Only use a real DB user ID as host_id (FK to profiles table).
       // Demo users don't exist in profiles, so we leave host_id null (matches all seeded data).
       const hostId = session?.user?.id ?? undefined;
 
@@ -348,7 +349,7 @@ export function PropertiesModule({ role }: PropertiesModuleProps) {
 
       if (newProperty) {
         try {
-          await supabase.from('fin_cost_centers').upsert({
+          await db.from('fin_cost_centers').upsert({
             code: propCostCenterCode,
             name: propCostCenterName,
             manager: form.property_manager || 'Property Manager',

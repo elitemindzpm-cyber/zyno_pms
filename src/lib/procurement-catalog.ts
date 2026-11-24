@@ -1,4 +1,5 @@
-import { supabase } from "@/lib/supabase";
+import { kvStore } from "@/lib/kv-store";
+import { db } from "@/lib/db";
 
 export type ItemType = "asset" | "maintenance_spare" | "consumable" | "service";
 export type BudgetHead = "Salary" | "Maintenance Items" | "Property Assets" | "Unit Assets" | "Common Area Assets" | "Other";
@@ -279,7 +280,7 @@ export const defaultCatalogItems: CatalogItem[] = [];
 
 export async function loadCatalogItems(): Promise<CatalogItem[]> {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from("procurement_items")
       .select("*")
       .order("item_code", { ascending: true });
@@ -304,17 +305,17 @@ export async function loadCatalogItems(): Promise<CatalogItem[]> {
 }
 
 /**
- * Saves or updates a single item in Supabase and localStorage.
+ * Saves or updates a single item in DB and kvStore.
  */
 export async function persistCatalogItem(item: CatalogItem, currentCatalog: CatalogItem[]): Promise<CatalogItem[]> {
   const updatedCatalog = [item, ...currentCatalog.filter(c => c.item_code.toLowerCase() !== item.item_code.toLowerCase())];
 
   try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedCatalog));
+    kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedCatalog));
   } catch {}
 
   try {
-    await supabase.from("procurement_items").upsert({
+    await db.from("procurement_items").upsert({
       item_code: item.item_code,
       name: item.name,
       category: item.category,
@@ -328,15 +329,25 @@ export async function persistCatalogItem(item: CatalogItem, currentCatalog: Cata
       updated_at: new Date().toISOString(),
     }, { onConflict: "item_code" });
   } catch (e) {
-    console.warn("[Catalog] Supabase persist notice:", e);
+    console.warn("[Catalog] DB persist notice:", e);
   }
 
   return updatedCatalog;
 }
 
 /**
- * Batch saves or imports items to Supabase and localStorage.
+ * Batch saves or imports items to DB and kvStore.
  */
+export async function deleteCatalogItem(itemCode: string, currentCatalog: CatalogItem[]): Promise<CatalogItem[]> {
+  const updatedCatalog = currentCatalog.filter(c => c.item_code.toLowerCase() !== itemCode.toLowerCase());
+  try {
+    kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedCatalog));
+  } catch {}
+  const { error } = await db.from("procurement_items").delete().eq("item_code", itemCode);
+  if (error) throw new Error(error.message || "Failed to delete catalog item");
+  return updatedCatalog;
+}
+
 export async function persistCatalogBatch(newItems: CatalogItem[], currentCatalog: CatalogItem[]): Promise<CatalogItem[]> {
   const map = new Map<string, CatalogItem>();
   // Existing items first
@@ -346,7 +357,7 @@ export async function persistCatalogBatch(newItems: CatalogItem[], currentCatalo
   const merged = Array.from(map.values());
 
   try {
-    localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(merged));
+    kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(merged));
   } catch {}
 
   try {
@@ -364,9 +375,9 @@ export async function persistCatalogBatch(newItems: CatalogItem[], currentCatalo
       updated_at: new Date().toISOString(),
     }));
 
-    await supabase.from("procurement_items").upsert(payload, { onConflict: "item_code" });
+    await db.from("procurement_items").upsert(payload, { onConflict: "item_code" });
   } catch (e) {
-    console.warn("[Catalog] Supabase batch upsert notice:", e);
+    console.warn("[Catalog] DB batch upsert notice:", e);
   }
 
   return merged;

@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouterState } from "@tanstack/react-router";
 import { getDbState, setDbState } from "@/lib/database-state";
@@ -62,7 +63,7 @@ import {
 } from "lucide-react";
 import { ApInvoicesApi } from "@/lib/proc-invoices-api";
 import {
-  supabase,
+  db,
   fetchMaintenanceTickets,
   updateMaintenanceTicket,
   type MaintenanceTicket,
@@ -76,7 +77,7 @@ import {
   fetchUnits,
   type Property,
   type Unit,
-} from "@/lib/supabase";
+} from "@/lib/db";
 import { properties as mockProperties, units as mockUnits } from "@/lib/mock-data";
 
 export interface MaintenanceModuleProps {
@@ -427,7 +428,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
   // Persistent Data State from LocalStorage
   const [tickets, setTickets] = useState<MaintenanceTicket[]>(() => {
     try {
-      const saved = localStorage.getItem("pms_maintenance_tickets");
+      const saved = kvStore.getItem("pms_maintenance_tickets");
       return saved ? JSON.parse(saved) : initialTickets;
     } catch {
       return initialTickets;
@@ -439,7 +440,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
   });
   const [ppmSchedules, setPpmSchedules] = useState<PpmSchedule[]>(() => {
     try {
-      const saved = localStorage.getItem("pms_ppm_schedules");
+      const saved = kvStore.getItem("pms_ppm_schedules");
       return saved ? JSON.parse(saved) : initialPpmSchedules;
     } catch {
       return initialPpmSchedules;
@@ -447,7 +448,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
   });
   const [technicians, setTechnicians] = useState<Technician[]>(() => {
     try {
-      const saved = localStorage.getItem("pms_technicians");
+      const saved = kvStore.getItem("pms_technicians");
       return saved ? JSON.parse(saved) : initialTechnicians;
     } catch {
       return initialTechnicians;
@@ -459,7 +460,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
   const [stockCatalog, setStockCatalog] = useState<StockItem[]>(() => {
     return initialStockCatalog;
   });
-  // Dynamic Properties & Units from Supabase
+  // Dynamic Properties & Units from Db
   const [properties, setProperties] = useState<Property[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
 
@@ -491,7 +492,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
   // Ticket Spare Parts Map state (persisted per ticket)
   const [ticketSparePartsMap, setTicketSparePartsMap] = useState<Record<string, Array<{ id: string; partId: string; quantity: number }>>>(() => {
     try {
-      const saved = localStorage.getItem("pms_ticket_spare_parts");
+      const saved = kvStore.getItem("pms_ticket_spare_parts");
       return saved ? JSON.parse(saved) : {};
     } catch {
       return {};
@@ -526,7 +527,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
   useEffect(() => {
     const handleInvoiceSync = () => {
       try {
-        const saved = localStorage.getItem("pms_vendor_invoices");
+        const saved = kvStore.getItem("pms_vendor_invoices");
         if (saved) {
           setVendorInvoices(JSON.parse(saved));
         }
@@ -545,7 +546,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
   // Derived dynamic property lists and units map matching other modules
   const dynamicPropertyList = useMemo(() => {
     const list: string[] = [];
-    // 1. From live supabase properties
+    // 1. From live db properties
     properties.forEach(p => {
       if (p.title) list.push(p.title);
       const anyP = p as any;
@@ -572,7 +573,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
 
       const foundUnits: string[] = [];
 
-      // 1. From live supabase units
+      // 1. From live db units
       if (prop) {
         units
           .filter(u => u.property_id === prop.id)
@@ -769,7 +770,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
   // Timeline / Comments state for Tickets
   const [ticketComments, setTicketComments] = useState<Record<string, TicketCommentItem[]>>(() => {
     try {
-      const saved = localStorage.getItem("pms_ticket_comments");
+      const saved = kvStore.getItem("pms_ticket_comments");
       return saved ? JSON.parse(saved) : initialTicketCommentsState;
     } catch {
       return initialTicketCommentsState;
@@ -779,7 +780,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
   // Timeline / Comments state for Work Orders
   const [woComments, setWoComments] = useState<Record<string, TicketCommentItem[]>>(() => {
     try {
-      const saved = localStorage.getItem("pms_wo_comments");
+      const saved = kvStore.getItem("pms_wo_comments");
       return saved ? JSON.parse(saved) : initialWoCommentsState;
     } catch {
       return initialWoCommentsState;
@@ -788,17 +789,17 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
 
   useEffect(() => {
     try {
-      localStorage.setItem("pms_ticket_comments", JSON.stringify(ticketComments));
+      kvStore.setItem("pms_ticket_comments", JSON.stringify(ticketComments));
     } catch (e) {
-      console.error("Failed to save ticketComments to localStorage", e);
+      console.error("Failed to save ticketComments to kvStore", e);
     }
   }, [ticketComments]);
 
   useEffect(() => {
     try {
-      localStorage.setItem("pms_wo_comments", JSON.stringify(woComments));
+      kvStore.setItem("pms_wo_comments", JSON.stringify(woComments));
     } catch (e) {
-      console.error("Failed to save woComments to localStorage", e);
+      console.error("Failed to save woComments to kvStore", e);
     }
   }, [woComments]);
 
@@ -1311,7 +1312,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
         setEditStatus(mappedTicketStatus);
       }
 
-      // Sync with Supabase if applicable
+      // Sync with DB if applicable
       try {
         await updateMaintenanceTicket(ticketId, {
           status: mappedTicketStatus as any,
@@ -1520,7 +1521,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
     });
   }
 
-  // ── Shared: push AP invoice to Finance Store localStorage + trigger sync ──
+  // ── Shared: push AP invoice to Finance Store kvStore + trigger sync ──
   function pushApInvoiceToFinanceStore(inv: {
     invoice_no: string;
     vendor: string;
@@ -1546,7 +1547,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
 
       const FINANCE_AP_KEY = "zyno-pms-finance-data-v1-ap";
       // Push AP invoice to Finance AP Key
-      const existing: any[] = JSON.parse(localStorage.getItem(FINANCE_AP_KEY) || "[]");
+      const existing: any[] = JSON.parse(kvStore.getItem(FINANCE_AP_KEY) || "[]");
       const alreadyExists = existing.some((i: any) => i.invoice_no === inv.invoice_no);
       if (!alreadyExists) {
         existing.unshift({
@@ -1564,7 +1565,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
           settlement_mode: inv.settlement_mode || "Bank Wire / Electronic Transfer (QNB)",
           receipt_attachment: inv.receipt_attachment,
         });
-        localStorage.setItem(FINANCE_AP_KEY, JSON.stringify(existing));
+        kvStore.setItem(FINANCE_AP_KEY, JSON.stringify(existing));
       }
 
       // Also register in centralized ApInvoicesApi cache so Vendor Management -> Financials -> AP Invoices reflects it
@@ -1615,9 +1616,9 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
   }) {
     try {
       const FINANCE_JOURNALS_KEY = "zyno-pms-finance-data-v1-journals";
-      const journals: any[] = JSON.parse(localStorage.getItem(FINANCE_JOURNALS_KEY) || "[]");
+      const journals: any[] = JSON.parse(kvStore.getItem(FINANCE_JOURNALS_KEY) || "[]");
       journals.unshift({ ...entry, id: `je-mnt-${Date.now()}`, status: "Posted" });
-      localStorage.setItem(FINANCE_JOURNALS_KEY, JSON.stringify(journals));
+      kvStore.setItem(FINANCE_JOURNALS_KEY, JSON.stringify(journals));
       window.dispatchEvent(new Event("finance_vouchers_updated"));
     } catch (e) {
       console.warn("[Maintenance] GL Journal sync failed:", e);
@@ -1669,7 +1670,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
     const updatedInvoices = [newInv, ...vendorInvoices.filter(i => i.invoiceNo !== newInv.invoiceNo)];
     setVendorInvoices(updatedInvoices);
     try {
-      localStorage.setItem("pms_vendor_invoices", JSON.stringify(updatedInvoices));
+      kvStore.setItem("pms_vendor_invoices", JSON.stringify(updatedInvoices));
     } catch (e) {
       console.error("Failed to save pms_vendor_invoices:", e);
     }
@@ -1764,7 +1765,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
     if (!isDepositDeduction) {
       try {
         const FINANCE_AR_KEY = "zyno-pms-finance-data-v1-ar";
-        const existingAr: any[] = JSON.parse(localStorage.getItem(FINANCE_AR_KEY) || "[]");
+        const existingAr: any[] = JSON.parse(kvStore.getItem(FINANCE_AR_KEY) || "[]");
         existingAr.unshift({
           id: `ar-cb-${Date.now()}`,
           invoice_no: `AR-CB-${chargebackForm.workOrderId.replace("WO-", "")}`,
@@ -1778,7 +1779,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
           amount: chargebackAmount,
           status: "Pending",
         });
-        localStorage.setItem(FINANCE_AR_KEY, JSON.stringify(existingAr));
+        kvStore.setItem(FINANCE_AR_KEY, JSON.stringify(existingAr));
         window.dispatchEvent(new Event("finance_vouchers_updated"));
       } catch (e) {
         console.warn("[Maintenance] AR chargeback sync failed:", e);
@@ -3417,7 +3418,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
               // Record stock movement log in shared movement register with exact date & time stamp
               if (issuedPartsList.length > 0) {
                 try {
-                  const existingMovements = JSON.parse(localStorage.getItem("pms_stock_movements") || "[]");
+                  const existingMovements = JSON.parse(kvStore.getItem("pms_stock_movements") || "[]");
                   const newMovements = issuedPartsList.map((part, idx) => ({
                     id: `mov-${Date.now()}-${idx}`,
                     partCode: part.code,
@@ -3430,13 +3431,13 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
                     timestamp: currentTimestamp,
                     refNo: newWoId,
                   }));
-                  localStorage.setItem("pms_stock_movements", JSON.stringify([...newMovements, ...existingMovements]));
+                  kvStore.setItem("pms_stock_movements", JSON.stringify([...newMovements, ...existingMovements]));
                 } catch (e) {
                   console.error("Failed to append stock movements", e);
                 }
               }
 
-              // 4. Safe Update Ticket in Supabase & Local State
+              // 4. Safe Update Ticket in Db & Local State
               const targetStatus = editStatus || "in_progress";
 
               try {
@@ -3446,7 +3447,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
                   description: editDescription || null,
                 });
               } catch (e) {
-                console.warn("Remote Supabase update skipped for local/mock ticket ID:", selectedTicket.id, e);
+                console.warn("Remote DB update skipped for local/mock ticket ID:", selectedTicket.id, e);
               }
 
               // Always update local state seamlessly

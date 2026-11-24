@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import {
   Home, CreditCard, Wrench, FileText, CalendarCheck2, Shield,
   ChevronRight, AlertTriangle, CheckCircle2, Clock, Building2,
@@ -19,7 +19,7 @@ function PortalHome() {
   const [currentUser, setCurrentUser] = useState<{ name: string; customerId?: string } | null>(null);
 
   useEffect(() => {
-    supabase.auth.getUser().then(({ data }) => {
+    db.auth.getUser().then(({ data }) => {
       if (data?.user) {
         const metadata = data.user.user_metadata || {};
         setCurrentUser({

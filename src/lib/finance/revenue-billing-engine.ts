@@ -9,7 +9,7 @@
  *   5. Prorated Move-In / Move-Out Billing Schedules
  */
 
-import { supabase } from '../supabase';
+import { db } from '../db';
 import { resolveAccountingAccounts, normalizeUuid } from './account-resolver';
 import { postVoucher, type PostingResult } from './posting-engine';
 

@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type ProcurementAnomalyIntelligence = {
   suite: 'PROCUREMENT_ANOMALY_INTELLIGENCE';
@@ -26,7 +26,7 @@ export type ProcurementAnomalyIntelligence = {
 };
 
 export async function getProcurementAnomalyIntelligence(days = 90, limit = 50, highValueThreshold = 100000) {
-  const { data, error } = await supabase.rpc('procurement_anomaly_intelligence', {
+  const { data, error } = await db.rpc('procurement_anomaly_intelligence', {
     p_days: days,
     p_limit: limit,
     p_high_value_threshold: highValueThreshold,

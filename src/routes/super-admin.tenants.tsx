@@ -21,7 +21,7 @@ import {
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter
 } from "@/components/ui/dialog";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { logSecurityEvent } from "@/lib/security";
 import { startImpersonation } from "@/lib/impersonation";
 import { createBroadcastNotification } from "@/lib/system-config";
@@ -187,7 +187,7 @@ export function TenantsPage() {
   async function loadTenants() {
     setLoading(true);
     try {
-      const { data: orgs, error } = await supabase
+      const { data: orgs, error } = await db
         .from("tenant_organisations")
         .select("*")
         .order("created_at", { ascending: false });
@@ -195,7 +195,7 @@ export function TenantsPage() {
       if (error) throw error;
 
       // Enrich property counts
-      const { data: props } = await supabase.from("properties").select("id, host_id");
+      const { data: props } = await db.from("properties").select("id, host_id");
       const propMap: Record<string, number> = {};
       (props || []).forEach((p: any) => {
         propMap[p.host_id] = (propMap[p.host_id] || 0) + 1;
@@ -317,32 +317,32 @@ export function TenantsPage() {
       markStep(0, 1);
 
       // Step 1 — properties
-      const propsRes = await supabase.from("properties")
+      const propsRes = await db.from("properties")
         .select("*")
         .eq("host_id", tenant.admin_user_id || tenant.id);
       markStep(1, (propsRes.data || []).length);
 
       // Step 2 — leases
-      const leasesRes = await supabase.from("leases")
+      const leasesRes = await db.from("leases")
         .select("*")
         .eq("tenant_id", tenant.id);
       markStep(2, (leasesRes.data || []).length);
 
       // Step 3 — payments + journals
       const [paymentsRes, journalsRes] = await Promise.all([
-        supabase.from("payments").select("*").eq("tenant_id", tenant.id),
-        supabase.from("journal_entries").select("*").eq("tenant_id", tenant.id).limit(500),
+        db.from("payments").select("*").eq("tenant_id", tenant.id),
+        db.from("journal_entries").select("*").eq("tenant_id", tenant.id).limit(500),
       ]);
       markStep(3, (paymentsRes.data || []).length + (journalsRes.data || []).length);
 
       // Step 4 — maintenance
-      const maintenanceRes = await supabase.from("maintenance_tickets")
+      const maintenanceRes = await db.from("maintenance_tickets")
         .select("*")
         .eq("tenant_id", tenant.id);
       markStep(4, (maintenanceRes.data || []).length);
 
       // Step 5 — subscription invoices
-      const invoicesRes = await supabase.from("tenant_subscription_invoices")
+      const invoicesRes = await db.from("tenant_subscription_invoices")
         .select("*")
         .eq("tenant_id", tenant.id);
       markStep(5, (invoicesRes.data || []).length);
@@ -434,10 +434,10 @@ export function TenantsPage() {
     }
     try {
       // 1. Delete associated subscription invoices first if any
-      await supabase.from("tenant_subscription_invoices").delete().eq("tenant_id", tenant.id);
+      await db.from("tenant_subscription_invoices").delete().eq("tenant_id", tenant.id);
       
       // 2. Delete tenant organisation record
-      const { error } = await supabase.from("tenant_organisations").delete().eq("id", tenant.id);
+      const { error } = await db.from("tenant_organisations").delete().eq("id", tenant.id);
       if (error) throw error;
 
       await logSecurityEvent({
@@ -461,9 +461,9 @@ export function TenantsPage() {
     }
     try {
       // Delete child subscription invoices
-      await supabase.from("tenant_subscription_invoices").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      await db.from("tenant_subscription_invoices").delete().neq("id", "00000000-0000-0000-0000-000000000000");
       // Delete all tenant organisations
-      const { error } = await supabase.from("tenant_organisations").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+      const { error } = await db.from("tenant_organisations").delete().neq("id", "00000000-0000-0000-0000-000000000000");
       if (error) throw error;
 
       toast.success("All tenant data has been wiped. You can now onboard a fresh tenant.");
@@ -528,10 +528,10 @@ export function TenantsPage() {
     const invoiceNo = `INV-SUB-${Date.now().toString().slice(-6)}`;
 
     try {
-      // 1. Create Supabase Auth Account for Administrator
+      // 1. Create DB Auth Account for Administrator
       let adminUserId: string | null = null;
       try {
-        const { data: authData, error: authError } = await supabase.auth.signUp({
+        const { data: authData, error: authError } = await db.auth.signUp({
           email: form.admin_email,
           password: form.admin_password,
           options: {
@@ -551,7 +551,7 @@ export function TenantsPage() {
       }
 
       // 2. Insert into tenant_organisations table with payment and settlement details
-      const { data: tenantInsertData, error: dbError } = await supabase.from("tenant_organisations").insert({
+      const { data: tenantInsertData, error: dbError } = await db.from("tenant_organisations").insert({
         tenant_key: tenantKey,
         name: form.name,
         legal_entity_name: form.legal_entity_name || form.name,
@@ -593,7 +593,7 @@ export function TenantsPage() {
 
       // 3. Create Subscription Invoice in tenant_subscription_invoices
       if (newTenantId) {
-        await supabase.from("tenant_subscription_invoices").insert({
+        await db.from("tenant_subscription_invoices").insert({
           invoice_number: invoiceNo,
           tenant_id: newTenantId,
           tenant_key: tenantKey,

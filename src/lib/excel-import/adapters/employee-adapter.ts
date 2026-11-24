@@ -1,4 +1,4 @@
-import { supabase } from '../../supabase';
+import { db } from '../../db';
 import { HrmsApi } from '../../hrmsService';
 import { 
   type EntityImportAdapter, 
@@ -77,7 +77,7 @@ export const employeeAdapter: EntityImportAdapter = {
     if (keys.length === 0) return map;
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('employees')
         .select('*, departments(id, name), designations(id, title)')
         .in('employee_id_code', keys);
@@ -212,7 +212,7 @@ export const employeeAdapter: EntityImportAdapter = {
     const deptName = normalized['department'];
     if (deptName && deptName !== '[NULL]') {
       try {
-        const { data: dept } = await supabase
+        const { data: dept } = await db
           .from('departments')
           .select('id, name')
           .ilike('name', deptName)
@@ -230,7 +230,7 @@ export const employeeAdapter: EntityImportAdapter = {
     const desigTitle = normalized['designation'];
     if (desigTitle && desigTitle !== '[NULL]') {
       try {
-        const { data: desig } = await supabase
+        const { data: desig } = await db
           .from('designations')
           .select('id, title')
           .ilike('title', desigTitle)
@@ -249,7 +249,7 @@ export const employeeAdapter: EntityImportAdapter = {
     if (operation === 'DELETE' && existingRecord) {
       try {
         const empId = existingRecord.id;
-        const { data: assignedAssets } = await supabase
+        const { data: assignedAssets } = await db
           .from('assets')
           .select('id, asset_code')
           .eq('assigned_employee_id', empId);

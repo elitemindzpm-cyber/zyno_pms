@@ -8,7 +8,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/super-admin/health")({
@@ -144,9 +144,9 @@ function simulateMetrics(prev?: SystemMetrics): SystemMetrics {
 
 function buildServices(m: SystemMetrics): ServiceHealth[] {
   return [
-    { name: "Supabase Postgres", status: latencyStatus(m.dbLatency), latencyMs: m.dbLatency, uptime: 99.97, region: "ME-Central-1 (Qatar)", details: `${m.dbConnections} active connections · ${m.dbQueryPs} q/s` },
+    { name: "DB Postgres", status: latencyStatus(m.dbLatency), latencyMs: m.dbLatency, uptime: 99.97, region: "ME-Central-1 (Qatar)", details: `${m.dbConnections} active connections · ${m.dbQueryPs} q/s` },
     { name: "Edge Functions Runtime", status: m.edgeFnErrors > 10 ? "critical" : latencyStatus(m.edgeFnAvgMs), latencyMs: m.edgeFnAvgMs, uptime: 99.89, region: "Global CDN Edge", details: `${m.edgeFnTotalCalls.toLocaleString()} invocations · ${m.edgeFnErrors} errors` },
-    { name: "Redis Cache Layer", status: m.cacheHitRate > 85 ? "healthy" : m.cacheHitRate > 70 ? "degraded" : "critical", latencyMs: 3.2 + Math.random() * 1.5, uptime: 99.99, region: "In-Region (Supabase Managed)", details: `${m.cacheHitRate.toFixed(1)}% hit · ${m.cacheMissRate.toFixed(1)}% miss` },
+    { name: "Redis Cache Layer", status: m.cacheHitRate > 85 ? "healthy" : m.cacheHitRate > 70 ? "degraded" : "critical", latencyMs: 3.2 + Math.random() * 1.5, uptime: 99.99, region: "In-Region (DB Managed)", details: `${m.cacheHitRate.toFixed(1)}% hit · ${m.cacheMissRate.toFixed(1)}% miss` },
     { name: "Outgoing Email Queue", status: m.emailQueueSize < 10 ? "healthy" : m.emailQueueSize < 50 ? "degraded" : "critical", latencyMs: 820 + Math.random() * 200, uptime: 99.82, region: "SMTP / Resend CDN", details: `${m.emailQueueSize} queued · ${m.emailDeliveryRate.toFixed(1)}% delivery · ${m.emailFailedLast24h} failed/24h` },
     { name: "Realtime WebSocket Bus", status: m.activeWebsockets > 0 ? "healthy" : "degraded", latencyMs: 12 + Math.random() * 8, uptime: 99.93, region: "ME-Central-1 (Qatar)", details: `${m.activeWebsockets} active sessions · low-latency push` },
     { name: "API Gateway", status: m.apiRequestsPerMin > 1000 ? "degraded" : "healthy", latencyMs: 22 + Math.random() * 12, uptime: 99.95, region: "Cloudflare Global", details: `${m.apiRequestsPerMin} req/min · rate limiting active` },
@@ -154,7 +154,7 @@ function buildServices(m: SystemMetrics): ServiceHealth[] {
 }
 
 const INCIDENTS = [
-  { date: "Sep 14, 2026", service: "Supabase Postgres", type: "Latency Spike", duration: "4 min", impact: "Marginal – < 5 tenants" },
+  { date: "Sep 14, 2026", service: "DB Postgres", type: "Latency Spike", duration: "4 min", impact: "Marginal – < 5 tenants" },
   { date: "Sep 10, 2026", service: "Edge Functions Runtime", type: "Cold Start Delay", duration: "2 min", impact: "None – handled by retry" },
   { date: "Sep 05, 2026", service: "Outgoing Email Queue", type: "SMTP Relay Delay", duration: "22 min", impact: "Moderate – welcome emails delayed" },
   { date: "Aug 28, 2026", service: "API Gateway", type: "Rate Limit Hit", duration: "< 1 min", impact: "Low – 3 requests throttled" },
@@ -179,8 +179,8 @@ export function HealthDashboardPage() {
     const t0 = performance.now();
     try {
       const [, res] = await Promise.all([
-        supabase.from("tenant_organisations").select("id").limit(1),
-        supabase.from("tenant_organisations").select("id", { count: "exact", head: true }),
+        db.from("tenant_organisations").select("id").limit(1),
+        db.from("tenant_organisations").select("id", { count: "exact", head: true }),
       ]);
       const realLatency = performance.now() - t0;
       setTenantCount(res.count || 0);
@@ -232,7 +232,7 @@ export function HealthDashboardPage() {
           <h1 className="text-2xl font-bold tracking-tight text-foreground flex items-center gap-2">
             <Activity className="h-6 w-6 text-primary" /> Platform Health &amp; Telemetry
           </h1>
-          <p className="text-sm text-muted-foreground mt-1">Real-time microservices pulse · Supabase DB · Edge Functions · Redis Cache · Email Queue</p>
+          <p className="text-sm text-muted-foreground mt-1">Real-time microservices pulse · DB DB · Edge Functions · Redis Cache · Email Queue</p>
         </div>
         <div className="flex items-center gap-2">
           <div className="text-xs text-muted-foreground bg-muted/50 px-3 py-1.5 rounded-lg border border-border/60 flex items-center gap-1.5">
@@ -391,7 +391,7 @@ export function HealthDashboardPage() {
               </div>
             </div>
             <div className="w-full bg-muted rounded-full h-2"><div className={`h-2 rounded-full transition-all duration-700 ${storePct < 70 ? "bg-emerald-500" : storePct < 90 ? "bg-amber-500" : "bg-rose-500"}`} style={{ width: `${storePct}%` }} /></div>
-            <p className="text-muted-foreground">Supabase Storage · Object store (docs, images, exports)</p>
+            <p className="text-muted-foreground">DB Storage · Object store (docs, images, exports)</p>
           </CardContent>
         </Card>
 
@@ -402,7 +402,7 @@ export function HealthDashboardPage() {
             <div className="flex justify-between"><span className="text-muted-foreground">Active WebSockets</span><span className="font-bold text-foreground text-sm">{metrics.activeWebsockets}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">Edge Fn Calls (Total)</span><span className="font-bold text-foreground text-sm">{metrics.edgeFnTotalCalls.toLocaleString()}</span></div>
             <div className="flex justify-between"><span className="text-muted-foreground">API Traffic</span><span className="font-bold text-foreground text-sm">{metrics.apiRequestsPerMin} req/min</span></div>
-            <div className="pt-2 border-t border-border/40 flex items-center gap-2"><PulseDot status="healthy" /><span className="text-muted-foreground">Real-time · Live Supabase DB ping</span></div>
+            <div className="pt-2 border-t border-border/40 flex items-center gap-2"><PulseDot status="healthy" /><span className="text-muted-foreground">Real-time · Live DB DB ping</span></div>
           </CardContent>
         </Card>
       </div>

@@ -1,6 +1,6 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -30,8 +30,8 @@ function PricingEngine() {
   const loadData = async () => {
     setLoading(true);
     const [{ data: rulesData }, { data: unitsData }] = await Promise.all([
-      supabase.from('pricing_rules').select('*, units(unit_name, unit_ref)'),
-      supabase.from('units').select('id, unit_name, unit_ref')
+      db.from('pricing_rules').select('*, units(unit_name, unit_ref)'),
+      db.from('units').select('id, unit_name, unit_ref')
     ]);
     if (rulesData) setRules(rulesData);
     if (unitsData) setUnits(unitsData);
@@ -43,13 +43,13 @@ function PricingEngine() {
   }, []);
 
   const handleAddRule = async () => {
-    const { error } = await supabase.from('pricing_rules').insert([formData]);
+    const { error } = await db.from('pricing_rules').insert([formData]);
     if (error) alert("Error adding rule: " + error.message);
     else loadData();
   };
 
   const handleDelete = async (id: string) => {
-    const { error } = await supabase.from('pricing_rules').delete().eq('id', id);
+    const { error } = await db.from('pricing_rules').delete().eq('id', id);
     if (!error) loadData();
   };
 

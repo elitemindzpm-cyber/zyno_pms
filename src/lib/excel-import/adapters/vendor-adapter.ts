@@ -1,4 +1,4 @@
-import { supabase } from '../../supabase';
+import { db } from '../../db';
 import { 
   type EntityImportAdapter, 
   type ColumnDefinition, 
@@ -73,7 +73,7 @@ export const vendorAdapter: EntityImportAdapter = {
     if (keys.length === 0) return map;
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('fin_vendors')
         .select('*')
         .in('code', keys);
@@ -254,7 +254,7 @@ export const vendorAdapter: EntityImportAdapter = {
     // 6. Check Dependencies for DELETE
     if (operation === 'DELETE' && existingRecord?.id) {
       try {
-        const { count: invoiceCount } = await supabase
+        const { count: invoiceCount } = await db
           .from('proc_purchase_orders')
           .select('id', { count: 'exact', head: true })
           .eq('vendor_id', existingRecord.id);
@@ -321,7 +321,7 @@ export const vendorAdapter: EntityImportAdapter = {
           updated_at: new Date().toISOString(),
         };
 
-        const { data: created, error } = await supabase.from('fin_vendors').insert(payload).select().single();
+        const { data: created, error } = await db.from('fin_vendors').insert(payload).select().single();
         if (error) throw error;
 
         return {
@@ -343,7 +343,7 @@ export const vendorAdapter: EntityImportAdapter = {
           updatePayload[change.field] = change.newValue === '[CLEARED]' ? null : change.newValue;
         }
 
-        const { error } = await supabase.from('fin_vendors').update(updatePayload).eq('id', existing.id);
+        const { error } = await db.from('fin_vendors').update(updatePayload).eq('id', existing.id);
         if (error) throw error;
 
         return {
@@ -356,7 +356,7 @@ export const vendorAdapter: EntityImportAdapter = {
         const existing = record.originalDbData;
         if (!existing?.id) throw new Error('Vendor record ID not found');
 
-        const { error } = await supabase.from('fin_vendors').delete().eq('id', existing.id);
+        const { error } = await db.from('fin_vendors').delete().eq('id', existing.id);
         if (error) throw error;
 
         return {

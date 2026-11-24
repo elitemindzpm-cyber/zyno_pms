@@ -1,10 +1,11 @@
+import { kvStore } from "@/lib/kv-store";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { useAppData } from "@/lib/app-data-context";
 import { Loader2, PenLine, CheckSquare, Download, Search, Filter, X, Edit, FileEdit, CheckCircle2, ShieldAlert, FileCheck2, Scale, Building2, RefreshCw, Trash2 } from "lucide-react";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
@@ -194,20 +195,20 @@ export function LeasesModule({ role }: LeasesModuleProps) {
         created_at: new Date().toISOString(),
       };
 
-      // 1. Persist to localStorage pms_renewed_leases_v1
+      // 1. Persist to kvStore pms_renewed_leases_v1
       try {
-        const rawRen = localStorage.getItem('pms_renewed_leases_v1');
+        const rawRen = kvStore.getItem('pms_renewed_leases_v1');
         const renewals: any[] = rawRen ? JSON.parse(rawRen) : [];
         const filtered = renewals.filter(r => r.id !== newRenewedLease.id && r.lease_number !== newRenewedLease.lease_number);
         filtered.unshift(newRenewedLease);
-        localStorage.setItem('pms_renewed_leases_v1', JSON.stringify(filtered));
+        kvStore.setItem('pms_renewed_leases_v1', JSON.stringify(filtered));
       } catch (e) {
         console.warn('Could not save renewal to pms_renewed_leases_v1:', e);
       }
 
-      // 2. Persist to localStorage pms_custom_lease_overrides
+      // 2. Persist to kvStore pms_custom_lease_overrides
       try {
-        const stored = JSON.parse(localStorage.getItem('pms_custom_lease_overrides') || '{}');
+        const stored = JSON.parse(kvStore.getItem('pms_custom_lease_overrides') || '{}');
         stored[newRenewedLease.id] = {
           commencement_date: newRenewedLease.commencement_date,
           expiry_date: newRenewedLease.expiry_date,
@@ -234,28 +235,28 @@ export function LeasesModule({ role }: LeasesModuleProps) {
             updated_at: new Date().toISOString(),
           };
         }
-        localStorage.setItem('pms_custom_lease_overrides', JSON.stringify(stored));
+        kvStore.setItem('pms_custom_lease_overrides', JSON.stringify(stored));
       } catch (e) {
         console.warn('Could not update pms_custom_lease_overrides:', e);
       }
 
-      // 3. Persist to Supabase safely (checking UUID validity)
+      // 3. Persist to DB safely (checking UUID validity)
       try {
         const isOldUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(renewForm.oldLeaseId);
         if (isOldUUID) {
-          await supabase.from('leases').update({ lease_status: 'renewed' }).eq('id', renewForm.oldLeaseId);
+          await db.from('leases').update({ lease_status: 'renewed' }).eq('id', renewForm.oldLeaseId);
         } else if (renewForm.oldLeaseNumber) {
-          await supabase.from('leases').update({ lease_status: 'renewed' }).eq('lease_number', renewForm.oldLeaseNumber);
+          await db.from('leases').update({ lease_status: 'renewed' }).eq('lease_number', renewForm.oldLeaseNumber);
         }
 
-        const { data: uMatch } = await supabase
+        const { data: uMatch } = await db
           .from('units')
           .select('id, property_id')
           .or(`unit_ref.eq.${renewForm.unit_name},unit_code.eq.${renewForm.unit_name},unit_name.eq.${renewForm.unit_name}`)
           .maybeSingle();
 
         if (uMatch?.id) {
-          await supabase.from('leases').insert({
+          await db.from('leases').insert({
             lease_number: newRenewedLease.lease_number,
             commencement_date: newRenewedLease.commencement_date,
             expiry_date: newRenewedLease.expiry_date,
@@ -268,7 +269,7 @@ export function LeasesModule({ role }: LeasesModuleProps) {
             property_id: uMatch.property_id,
           });
 
-          await supabase.from('units').update({
+          await db.from('units').update({
             contract_no: newRenewedLease.lease_number,
             contract_start_date: newRenewedLease.commencement_date,
             contract_end_date: newRenewedLease.expiry_date,
@@ -279,7 +280,7 @@ export function LeasesModule({ role }: LeasesModuleProps) {
           }).eq('id', uMatch.id);
         }
       } catch (dbErr) {
-        console.warn('Supabase lease renewal sync notice:', dbErr);
+        console.warn('DB lease renewal sync notice:', dbErr);
       }
 
       window.dispatchEvent(new CustomEvent('pms_data_updated'));
@@ -297,7 +298,7 @@ export function LeasesModule({ role }: LeasesModuleProps) {
     setSelectedLease(lease);
     const storedOverrides = (() => {
       try {
-        return JSON.parse(localStorage.getItem('pms_custom_lease_overrides') || '{}');
+        return JSON.parse(kvStore.getItem('pms_custom_lease_overrides') || '{}');
       } catch {
         return {};
       }
@@ -375,9 +376,9 @@ export function LeasesModule({ role }: LeasesModuleProps) {
       updated_at: new Date().toISOString(),
     };
 
-    // 1. Persistent localStorage overrides (survives page refresh & context reloads)
+    // 1. Persistent kvStore overrides (survives page refresh & context reloads)
     try {
-      const stored = JSON.parse(localStorage.getItem('pms_custom_lease_overrides') || '{}');
+      const stored = JSON.parse(kvStore.getItem('pms_custom_lease_overrides') || '{}');
       const cleanLease = editForm.lease_number ? editForm.lease_number.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
       const cleanId = editForm.id ? editForm.id.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
       const keysToSave = [
@@ -390,12 +391,12 @@ export function LeasesModule({ role }: LeasesModuleProps) {
       keysToSave.forEach(k => {
         stored[k] = updatedData;
       });
-      localStorage.setItem('pms_custom_lease_overrides', JSON.stringify(stored));
+      kvStore.setItem('pms_custom_lease_overrides', JSON.stringify(stored));
     } catch (e) {
-      console.warn("Could not save to localStorage:", e);
+      console.warn("Could not save to kvStore:", e);
     }
 
-    // 2. Persist to Supabase leases table (errors are surfaced, never swallowed)
+    // 2. Persist to DB leases table (errors are surfaced, never swallowed)
     const dbErrors: string[] = [];
     const rentFreeDays = editForm.has_rent_free ? (parseInt(String(editForm.rent_free_days), 10) || 30) : 0;
     try {
@@ -407,7 +408,7 @@ export function LeasesModule({ role }: LeasesModuleProps) {
         ? `id.eq.${editForm.id},lease_number.eq.${editForm.lease_number || editForm.id}`
         : `lease_number.eq.${editForm.lease_number || editForm.id}`;
 
-      let updateRes = await supabase
+      let updateRes = await db
         .from('leases')
         .update({
           commencement_date: editForm.commencement_date,
@@ -421,13 +422,13 @@ export function LeasesModule({ role }: LeasesModuleProps) {
 
       if (!updateRes.data || updateRes.data.length === 0) {
         // Fallback match through linked unit
-        const { data: uMatch } = await supabase
+        const { data: uMatch } = await db
           .from('units')
           .select('id')
           .or(`unit_ref.eq.${editForm.unit_name},unit_code.eq.${editForm.unit_name},unit_name.eq.${editForm.unit_name}`)
           .maybeSingle();
         if (uMatch?.id) {
-          updateRes = await supabase
+          updateRes = await db
             .from('leases')
             .update({
               commencement_date: editForm.commencement_date,
@@ -446,7 +447,7 @@ export function LeasesModule({ role }: LeasesModuleProps) {
 
       // Rent-free fields are written separately so a missing column cannot block the core update.
       if (matchVal) {
-        const { error: rfError } = await supabase
+        const { error: rfError } = await db
           .from('leases')
           .update({
             has_rent_free: editForm.has_rent_free,
@@ -460,10 +461,10 @@ export function LeasesModule({ role }: LeasesModuleProps) {
       dbErrors.push(`lease: ${e?.message || e}`);
     }
 
-    // 3. Persist to Supabase units table (match on the unit columns the app reads elsewhere)
+    // 3. Persist to DB units table (match on the unit columns the app reads elsewhere)
     if (editForm.unit_name && editForm.unit_name !== '—') {
       try {
-        const { data: uData, error } = await supabase
+        const { data: uData, error } = await db
           .from('units')
           .update({
             contract_start_date: editForm.commencement_date,
@@ -518,7 +519,7 @@ export function LeasesModule({ role }: LeasesModuleProps) {
     try {
       let dbLeases: any[] = [];
       try {
-        const { data, error } = await supabase
+        const { data, error } = await db
           .from('leases')
           .select('*, properties(id, title, property_code), units:unit_id(unit_ref, unit_name, unit_code), customers:customer_id(full_name)')
           .order('created_at', { ascending: false });
@@ -577,9 +578,9 @@ export function LeasesModule({ role }: LeasesModuleProps) {
         }
       }
 
-      // Also merge any newly created leases from Leasing Module localStorage ('pms_leasing_v2_leases')
+      // Also merge any newly created leases from Leasing Module kvStore ('pms_leasing_v2_leases')
       try {
-        const rawV2Leases = localStorage.getItem('pms_leasing_v2_leases');
+        const rawV2Leases = kvStore.getItem('pms_leasing_v2_leases');
         if (rawV2Leases) {
           const parsedV2: any[] = JSON.parse(rawV2Leases);
           if (Array.isArray(parsedV2)) {
@@ -627,7 +628,7 @@ export function LeasesModule({ role }: LeasesModuleProps) {
       const deletedLeasesSet = new Set<string>(
         (() => {
           try {
-            return JSON.parse(localStorage.getItem('pms_deleted_leases_v1') || '["SLT-OS41-14-R3", "SLT-OS4114-R3"]').map((s: string) => String(s).toUpperCase());
+            return JSON.parse(kvStore.getItem('pms_deleted_leases_v1') || '["SLT-OS41-14-R3", "SLT-OS4114-R3"]').map((s: string) => String(s).toUpperCase());
           } catch {
             return ["SLT-OS41-14-R3", "SLT-OS4114-R3"];
           }
@@ -637,7 +638,7 @@ export function LeasesModule({ role }: LeasesModuleProps) {
       deletedLeasesSet.add("SLT-OS4114-R3");
 
       try {
-        const rawRenewals = localStorage.getItem('pms_renewed_leases_v1');
+        const rawRenewals = kvStore.getItem('pms_renewed_leases_v1');
         let localRenewals: any[] = rawRenewals ? JSON.parse(rawRenewals) : [];
         const beforeLen = localRenewals.length;
         localRenewals = localRenewals.filter(r => {
@@ -646,7 +647,7 @@ export function LeasesModule({ role }: LeasesModuleProps) {
           return !deletedLeasesSet.has(rId) && !deletedLeasesSet.has(rNum);
         });
         if (localRenewals.length !== beforeLen) {
-          localStorage.setItem('pms_renewed_leases_v1', JSON.stringify(localRenewals));
+          kvStore.setItem('pms_renewed_leases_v1', JSON.stringify(localRenewals));
         }
         // local renewals fallback removed
 
@@ -692,10 +693,10 @@ export function LeasesModule({ role }: LeasesModuleProps) {
         console.warn('Error reading local renewals:', err);
       }
 
-      // Apply persistent localStorage overrides so refreshed page never reverts
+      // Apply persistent kvStore overrides so refreshed page never reverts
       const storedOverrides = (() => {
         try {
-          return JSON.parse(localStorage.getItem('pms_custom_lease_overrides') || '{}');
+          return JSON.parse(kvStore.getItem('pms_custom_lease_overrides') || '{}');
         } catch {
           return {};
         }
@@ -707,9 +708,6 @@ export function LeasesModule({ role }: LeasesModuleProps) {
           const t = getTenantName(leaseItem)?.toLowerCase()?.trim();
           const lNum = String(leaseItem.lease_number || '').toUpperCase().trim();
           const lId = String(leaseItem.id || '').toUpperCase().trim();
-          if (u.includes("OA22-10") || t.includes("devadas melitta")) {
-            return false;
-          }
           if (deletedLeasesSet.has(lNum) || deletedLeasesSet.has(lId)) {
             return false;
           }
@@ -1265,33 +1263,33 @@ export function LeasesModule({ role }: LeasesModuleProps) {
                               const refNo = lease.lease_number || lease.id;
                               if (!window.confirm(`Are you sure you want to delete contract ${refNo} for unit ${getUnitName(lease)}?`)) return;
                               try {
-                                const deletedList: string[] = JSON.parse(localStorage.getItem('pms_deleted_leases_v1') || '["SLT-OS41-14-R3", "SLT-OS4114-R3"]');
+                                const deletedList: string[] = JSON.parse(kvStore.getItem('pms_deleted_leases_v1') || '["SLT-OS41-14-R3", "SLT-OS4114-R3"]');
                                 if (lease.id) deletedList.push(String(lease.id).toUpperCase());
                                 if (lease.lease_number) deletedList.push(String(lease.lease_number).toUpperCase());
-                                localStorage.setItem('pms_deleted_leases_v1', JSON.stringify(Array.from(new Set(deletedList))));
+                                kvStore.setItem('pms_deleted_leases_v1', JSON.stringify(Array.from(new Set(deletedList))));
 
-                                const rawRenewals = localStorage.getItem('pms_renewed_leases_v1');
+                                const rawRenewals = kvStore.getItem('pms_renewed_leases_v1');
                                 if (rawRenewals) {
                                   const filteredRen = JSON.parse(rawRenewals).filter((r: any) => r.id !== lease.id && r.lease_number !== lease.lease_number);
-                                  localStorage.setItem('pms_renewed_leases_v1', JSON.stringify(filteredRen));
+                                  kvStore.setItem('pms_renewed_leases_v1', JSON.stringify(filteredRen));
                                 }
-                                const rawV2 = localStorage.getItem('pms_leasing_v2_leases');
+                                const rawV2 = kvStore.getItem('pms_leasing_v2_leases');
                                 if (rawV2) {
                                   const filteredV2 = JSON.parse(rawV2).filter((r: any) => r.id !== lease.id && r.lease_number !== lease.lease_number);
-                                  localStorage.setItem('pms_leasing_v2_leases', JSON.stringify(filteredV2));
+                                  kvStore.setItem('pms_leasing_v2_leases', JSON.stringify(filteredV2));
                                 }
-                                const rawOverrides = localStorage.getItem('pms_custom_lease_overrides');
+                                const rawOverrides = kvStore.getItem('pms_custom_lease_overrides');
                                 if (rawOverrides) {
                                   const ov = JSON.parse(rawOverrides);
                                   if (lease.id) delete ov[lease.id];
                                   if (lease.lease_number) delete ov[lease.lease_number];
-                                  localStorage.setItem('pms_custom_lease_overrides', JSON.stringify(ov));
+                                  kvStore.setItem('pms_custom_lease_overrides', JSON.stringify(ov));
                                 }
                                 if (lease.lease_number) {
-                                  await supabase.from('leases').delete().eq('lease_number', lease.lease_number);
+                                  await db.from('leases').delete().eq('lease_number', lease.lease_number);
                                 }
                                 if (lease.id) {
-                                  await supabase.from('leases').delete().eq('id', lease.id);
+                                  await db.from('leases').delete().eq('id', lease.id);
                                 }
                                 setLeases(prev => prev.filter(l => l.id !== lease.id && l.lease_number !== lease.lease_number));
                                 toast.success(`Contract ${refNo} deleted successfully.`);

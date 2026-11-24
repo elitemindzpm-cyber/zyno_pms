@@ -1,4 +1,5 @@
-import { supabase } from './supabase';
+import { kvStore } from "@/lib/kv-store";
+import { db } from './db';
 
 export type ProcApInvoice = {
   id: string;
@@ -67,7 +68,7 @@ if (typeof window !== 'undefined') {
 
 function getLocalInvoices(): ProcApInvoice[] {
   try {
-    const raw = localStorage.getItem(INVOICE_STORAGE_KEY);
+    const raw = kvStore.getItem(INVOICE_STORAGE_KEY);
     if (raw) return JSON.parse(raw);
   } catch (e) {
     console.error("Failed to read local AP Invoices:", e);
@@ -77,7 +78,7 @@ function getLocalInvoices(): ProcApInvoice[] {
 
 function saveLocalInvoices(list: ProcApInvoice[]) {
   try {
-    localStorage.setItem(INVOICE_STORAGE_KEY, JSON.stringify(list));
+    kvStore.setItem(INVOICE_STORAGE_KEY, JSON.stringify(list));
     window.dispatchEvent(new Event('ap_invoices_updated'));
   } catch (e) {
     console.error("Failed to save local AP Invoices:", e);
@@ -86,7 +87,7 @@ function saveLocalInvoices(list: ProcApInvoice[]) {
 
 function getLocalReceipts(): PaymentReceipt[] {
   try {
-    const raw = localStorage.getItem(RECEIPT_STORAGE_KEY);
+    const raw = kvStore.getItem(RECEIPT_STORAGE_KEY);
     if (raw) return JSON.parse(raw);
   } catch (e) {
     console.error("Failed to read local Payment Receipts:", e);
@@ -96,20 +97,20 @@ function getLocalReceipts(): PaymentReceipt[] {
 
 function saveLocalReceipts(list: PaymentReceipt[]) {
   try {
-    localStorage.setItem(RECEIPT_STORAGE_KEY, JSON.stringify(list));
+    kvStore.setItem(RECEIPT_STORAGE_KEY, JSON.stringify(list));
     window.dispatchEvent(new Event('payment_receipts_updated'));
   } catch (e) {
     console.error("Failed to save local Payment Receipts:", e);
   }
 }
 
-// Helper to push vouchers into Finance Store & Supabase
+// Helper to push vouchers into Finance Store & Db
 async function postFinancePaymentVoucher(invoice: ProcApInvoice, receiptNum: string, pvNum: string) {
   const paidDate = invoice.paid_at || new Date().toISOString().slice(0, 10);
 
   try {
-    // 1. Post to Supabase fin_vouchers (best-effort)
-    await supabase.from("fin_vouchers").insert({
+    // 1. Post to DB fin_vouchers (best-effort)
+    await db.from("fin_vouchers").insert({
       voucher_number: pvNum,
       voucher_date: paidDate,
       voucher_type: "PV",
@@ -120,13 +121,13 @@ async function postFinancePaymentVoucher(invoice: ProcApInvoice, receiptNum: str
       posted_at: new Date().toISOString()
     });
   } catch (e) {
-    console.warn("[ApInvoicesApi] fin_vouchers Supabase insert note:", e);
+    console.warn("[ApInvoicesApi] fin_vouchers DB insert note:", e);
   }
 
-  // 2. Write into Finance Store localStorage — vouchers key
+  // 2. Write into Finance Store kvStore — vouchers key
   const FIN_STORE_KEY = "zyno-pms-finance-data-v1-vouchers";
   try {
-    const existing: any[] = JSON.parse(localStorage.getItem(FIN_STORE_KEY) || "[]");
+    const existing: any[] = JSON.parse(kvStore.getItem(FIN_STORE_KEY) || "[]");
     const pvEntry = {
       id: `vch-pv-${Date.now()}`,
       voucher_no: pvNum,
@@ -146,7 +147,7 @@ async function postFinancePaymentVoucher(invoice: ProcApInvoice, receiptNum: str
     };
     // Avoid duplicates
     if (!existing.some((v: any) => v.voucher_no === pvNum)) {
-      localStorage.setItem(FIN_STORE_KEY, JSON.stringify([pvEntry, ...existing]));
+      kvStore.setItem(FIN_STORE_KEY, JSON.stringify([pvEntry, ...existing]));
       // Notify Finance module to reload
       window.dispatchEvent(new Event("finance_vouchers_updated"));
     }
@@ -154,17 +155,17 @@ async function postFinancePaymentVoucher(invoice: ProcApInvoice, receiptNum: str
     console.error("Failed to sync Payment Voucher to Finance Store:", e);
   }
 
-  // 3. Write into Finance Store localStorage — payableInvoices (AP) key
+  // 3. Write into Finance Store kvStore — payableInvoices (AP) key
   const AP_STORE_KEY = "zyno-pms-finance-data-v1-ap";
   try {
-    const existingAp: any[] = JSON.parse(localStorage.getItem(AP_STORE_KEY) || "[]");
+    const existingAp: any[] = JSON.parse(kvStore.getItem(AP_STORE_KEY) || "[]");
     const invNo = invoice.invoice_number;
     // Update status to Paid if already exists, else add it
     if (existingAp.some((i: any) => i.invoice_no === invNo)) {
       const updatedAp = existingAp.map((i: any) =>
         i.invoice_no === invNo ? { ...i, status: "Paid" } : i
       );
-      localStorage.setItem(AP_STORE_KEY, JSON.stringify(updatedAp));
+      kvStore.setItem(AP_STORE_KEY, JSON.stringify(updatedAp));
     } else {
       const apEntry = {
         id: `ap-proc-${Date.now()}`,
@@ -177,7 +178,7 @@ async function postFinancePaymentVoucher(invoice: ProcApInvoice, receiptNum: str
         amount: invoice.total_amount,
         status: "Paid",
       };
-      localStorage.setItem(AP_STORE_KEY, JSON.stringify([apEntry, ...existingAp]));
+      kvStore.setItem(AP_STORE_KEY, JSON.stringify([apEntry, ...existingAp]));
     }
   } catch (e) {
     console.error("Failed to sync AP Invoice to Finance Store:", e);
@@ -188,9 +189,9 @@ export const ApInvoicesApi = {
   fetchAll: async (): Promise<ProcApInvoice[]> => {
     let invoices: ProcApInvoice[] = [];
 
-    // 1. Try fetching from Supabase
+    // 1. Try fetching from Db
     try {
-      const { data, error } = await supabase.from('proc_ap_invoices').select('*').order('created_at', { ascending: false });
+      const { data, error } = await db.from('proc_ap_invoices').select('*').order('created_at', { ascending: false });
       if (!error && Array.isArray(data) && data.length > 0) {
         invoices = data;
       }
@@ -208,13 +209,13 @@ export const ApInvoicesApi = {
     // 3. Auto-sync / synthesize from proc_goods_receipts (GRNs)
     try {
       const [grnRes, poRes] = await Promise.all([
-        supabase.from('proc_goods_receipts').select('*').order('created_at', { ascending: false }),
-        supabase.from('proc_purchase_orders').select('*')
+        db.from('proc_goods_receipts').select('*').order('created_at', { ascending: false }),
+        db.from('proc_purchase_orders').select('*')
       ]);
 
       const grns = grnRes.data || [];
       const pos = poRes.data || [];
-      const poMap = new Map(pos.map(p => [p.id, p]));
+      const poMap = new Map<string, any>(pos.map((p: any) => [p.id, p] as [string, any]));
 
       const existingGrnNumbers = new Set(invoices.map(i => i.grn_number).filter(Boolean));
       let hasNew = false;
@@ -253,7 +254,7 @@ export const ApInvoicesApi = {
 
       // 4. Merge Maintenance Vendor Invoices (pms_vendor_invoices)
       try {
-        const mntInvoicesRaw = localStorage.getItem("pms_vendor_invoices");
+        const mntInvoicesRaw = kvStore.getItem("pms_vendor_invoices");
         if (mntInvoicesRaw) {
           const mntInvoices: any[] = JSON.parse(mntInvoicesRaw);
           for (const m of mntInvoices) {
@@ -308,9 +309,9 @@ export const ApInvoicesApi = {
       created_at: new Date().toISOString()
     };
 
-    // Try Supabase insert
+    // Try DB insert
     try {
-      const { data } = await supabase.from('proc_ap_invoices').insert({
+      const { data } = await db.from('proc_ap_invoices').insert({
         invoice_number: payload.invoice_number,
         vendor_id: payload.vendor_id,
         po_number: payload.po_number || null,
@@ -340,7 +341,7 @@ export const ApInvoicesApi = {
 
   update: async (id: string, payload: Partial<ProcApInvoice>): Promise<void> => {
     try {
-      await supabase.from('proc_ap_invoices').update(payload).eq('id', id);
+      await db.from('proc_ap_invoices').update(payload).eq('id', id);
     } catch {
       // ignore
     }
@@ -415,7 +416,7 @@ export const ApInvoicesApi = {
 
       // ── Cross-sync with Maintenance Vendor Invoices (pms_vendor_invoices) ──
       try {
-        const mntRaw = localStorage.getItem("pms_vendor_invoices");
+        const mntRaw = kvStore.getItem("pms_vendor_invoices");
         if (mntRaw) {
           const mntList: any[] = JSON.parse(mntRaw);
           let mntChanged = false;
@@ -427,7 +428,7 @@ export const ApInvoicesApi = {
             return m;
           });
           if (mntChanged) {
-            localStorage.setItem("pms_vendor_invoices", JSON.stringify(updatedMnt));
+            kvStore.setItem("pms_vendor_invoices", JSON.stringify(updatedMnt));
           }
         }
       } catch (e) {
@@ -436,7 +437,7 @@ export const ApInvoicesApi = {
 
       // ── Cross-sync with Finance Store AP (zyno-pms-finance-data-v1-ap) ──
       try {
-        const finApRaw = localStorage.getItem("zyno-pms-finance-data-v1-ap");
+        const finApRaw = kvStore.getItem("zyno-pms-finance-data-v1-ap");
         if (finApRaw) {
           const finApList: any[] = JSON.parse(finApRaw);
           let finChanged = false;
@@ -448,7 +449,7 @@ export const ApInvoicesApi = {
             return f;
           });
           if (finChanged) {
-            localStorage.setItem("zyno-pms-finance-data-v1-ap", JSON.stringify(updatedFin));
+            kvStore.setItem("zyno-pms-finance-data-v1-ap", JSON.stringify(updatedFin));
           }
         }
       } catch (e) {
@@ -463,7 +464,7 @@ export const ApInvoicesApi = {
 
   delete: async (id: string): Promise<void> => {
     try {
-      await supabase.from('proc_ap_invoices').delete().eq('id', id);
+      await db.from('proc_ap_invoices').delete().eq('id', id);
     } catch {
       // ignore
     }

@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 import { postLeaseDepositReceipt, postVoucher } from './posting-engine';
 import {
   resolveAccountingAccounts,
@@ -6,7 +6,7 @@ import {
   type DepositType,
   type PaymentMethod,
 } from './account-resolver';
-import { FinDepositsApi } from '../supabase-finance';
+import { FinDepositsApi } from '../db-finance';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -131,7 +131,7 @@ export async function transferDepositToRefundable(
   if (!isNumeric) return;
 
   const numId = Number(depositId);
-  const { data: deposit, error } = await supabase
+  const { data: deposit, error } = await db
     .from('fin_deposits')
     .select('*')
     .eq('id', numId)
@@ -218,7 +218,7 @@ export async function settleDeposit(
   if (!isNumeric) return;
 
   const numId = Number(depositId);
-  const { data: deposit, error } = await supabase
+  const { data: deposit, error } = await db
     .from('fin_deposits')
     .select('*')
     .eq('id', numId)
@@ -233,7 +233,7 @@ export async function settleDeposit(
   // Auto-transfer 21500 security deposits to refundable before settlement
   if (deposit.coa_account_code === '21500' && deposit.status === 'Active') {
     await transferDepositToRefundable(numId, propertyId, unitId, unitName);
-    const { data: refreshed } = await supabase
+    const { data: refreshed } = await db
       .from('fin_deposits')
       .select('*')
       .eq('id', numId)

@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import React, { useState, useMemo, useEffect } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -57,7 +58,7 @@ function getConcessionBillingStatus(
   let override: any = null;
   try {
     if (typeof window !== "undefined") {
-      const stored = JSON.parse(localStorage.getItem("pms_custom_lease_overrides") || "{}");
+      const stored = JSON.parse(kvStore.getItem("pms_custom_lease_overrides") || "{}");
       const uKey = (l?.unit || "").toString().toUpperCase().trim();
       override = stored[l?.id] || (l?.contractNumber ? stored[l?.contractNumber] : null) || (uKey ? stored[uKey] : null);
     }

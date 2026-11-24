@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useRef, useEffect } from "react";
 import {
@@ -273,9 +274,9 @@ function DocumentBrandingPage() {
 
   const handleReset = () => {
     if (window.confirm("Are you sure you want to reset all branding, banners, and legal terms back to factory default?")) {
-      localStorage.removeItem("pms_organization_document_branding_v3");
-      localStorage.removeItem("pms_organization_document_branding_v2");
-      localStorage.removeItem("pms_organization_document_branding_v1");
+      kvStore.removeItem("pms_organization_document_branding_v3");
+      kvStore.removeItem("pms_organization_document_branding_v2");
+      kvStore.removeItem("pms_organization_document_branding_v1");
       const defaults = getDocumentBranding();
       setBranding(defaults);
       toast.info("Branding configuration reset to default.");

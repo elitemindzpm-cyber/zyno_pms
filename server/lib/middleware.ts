@@ -6,7 +6,7 @@ import { Request, Response, NextFunction } from 'express';
 /**
  * Extracts tenant_id from request headers or JWT payload.
  * All DB queries MUST scope to req.tenantId for multi-tenancy isolation
- * (replaces Supabase RLS, which MariaDB does not support natively).
+ * (replaces DB RLS, which MariaDB does not support natively).
  */
 export function tenantMiddleware(req: Request, res: Response, next: NextFunction) {
   const tenantId = (req.headers['x-tenant-id'] as string) || 'a0000000-0000-0000-0000-000000000001';

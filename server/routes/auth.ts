@@ -5,9 +5,11 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import prisma from '../lib/prisma';
 import { tenantMiddleware } from '../lib/middleware';
+import { readSessionToken, setSessionCookie, clearSessionCookie } from '../lib/session';
 
 const router = Router();
-const JWT_SECRET = process.env.JWT_SECRET || 'pms_jwt_secret_key_change_in_production';
+import { jwtSecret } from '../lib/config';
+import { signInBlockedFor, recordSignInFailure, clearSignInFailures } from '../lib/login-limiter';
 const JWT_EXPIRES = '7d';
 
 // ── Login ────────────────────────────────────────────────────────────────────
@@ -19,6 +21,11 @@ router.post('/login', async (req: Request, res: Response) => {
     }
 
     const trimmedEmail = email.trim().toLowerCase();
+    const blockedFor = signInBlockedFor(trimmedEmail, req.ip ?? '');
+    if (blockedFor > 0) {
+      res.set('Retry-After', String(blockedFor));
+      return res.status(429).json({ error: 'Too many failed sign-in attempts. Try again later.', retry_after_seconds: blockedFor });
+    }
 
     // Find user in users table
     const user = await prisma.users.findFirst({
@@ -28,7 +35,7 @@ router.post('/login', async (req: Request, res: Response) => {
     });
 
     if (!user) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+      recordSignInFailure(trimmedEmail, req.ip ?? ''); return res.status(401).json({ error: 'Invalid email or password' });
     }
 
     // Parse metadata to extract password_hash
@@ -43,15 +50,16 @@ router.post('/login', async (req: Request, res: Response) => {
 
     const passwordHash = meta.password_hash;
     if (!passwordHash) {
-      return res.status(401).json({ error: 'User has no password set' });
+      recordSignInFailure(trimmedEmail, req.ip ?? ''); return res.status(401).json({ error: 'User has no password set' });
     }
 
     const isValid = await bcrypt.compare(password, passwordHash);
     if (!isValid) {
-      return res.status(401).json({ error: 'Invalid email or password' });
+      recordSignInFailure(trimmedEmail, req.ip ?? ''); return res.status(401).json({ error: 'Invalid email or password' });
     }
 
     // Get user profile
+    clearSignInFailures(trimmedEmail);
     const profile = await prisma.profiles.findFirst({
       where: { id: user.id },
     });
@@ -69,10 +77,10 @@ router.post('/login', async (req: Request, res: Response) => {
       tenant_id: tenantId,
     };
 
-    const token = jwt.sign(payload, JWT_SECRET, { expiresIn: JWT_EXPIRES });
+    const token = jwt.sign(payload, jwtSecret(), { expiresIn: JWT_EXPIRES });
 
+    setSessionCookie(res, token);
     return res.json({
-      token,
       user: {
         id: user.id,
         email: user.email,
@@ -97,13 +105,12 @@ router.post('/login', async (req: Request, res: Response) => {
 // ── Current Session / Me ─────────────────────────────────────────────────────
 router.get('/session', async (req: Request, res: Response) => {
   try {
-    const authHeader = req.headers.authorization;
-    if (!authHeader?.startsWith('Bearer ')) {
+    const token = readSessionToken(req);
+    if (!token) {
       return res.status(401).json({ error: 'No authorization token provided' });
     }
 
-    const token = authHeader.slice(7);
-    const decoded = jwt.verify(token, JWT_SECRET) as any;
+    const decoded = jwt.verify(token, jwtSecret()) as any;
 
     const user = await prisma.users.findFirst({
       where: { id: decoded.sub },
@@ -151,6 +158,7 @@ router.get('/session', async (req: Request, res: Response) => {
 
 // ── Logout ───────────────────────────────────────────────────────────────────
 router.post('/logout', (_req: Request, res: Response) => {
+  clearSessionCookie(res);
   res.json({ success: true });
 });
 

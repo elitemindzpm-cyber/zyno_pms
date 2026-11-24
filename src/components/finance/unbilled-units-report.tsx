@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import React, { useState, useMemo } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -90,7 +91,7 @@ function getConcessionStatusForPeriod(
   let override: any = null;
   try {
     if (typeof window !== "undefined") {
-      const stored = JSON.parse(localStorage.getItem("pms_custom_lease_overrides") || "{}");
+      const stored = JSON.parse(kvStore.getItem("pms_custom_lease_overrides") || "{}");
       const uKey = (l?.unit || "").toString().toUpperCase().trim();
       override =
         stored[l?.id] ||

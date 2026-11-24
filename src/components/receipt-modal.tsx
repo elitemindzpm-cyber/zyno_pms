@@ -3,7 +3,7 @@ import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Printer, Download, Building, User, CreditCard, FileText, ShieldCheck } from 'lucide-react';
-import { generateReceiptBlob, type ReceiptData, type ReceiptLineItem } from './receipt-template';
+import type { ReceiptData, ReceiptLineItem } from './receipt-template';
 import { getDocumentBranding } from '@/lib/document-branding';
 
 export interface TenantReceiptDetails {
@@ -223,6 +223,8 @@ export function ReceiptModal({ open, onOpenChange, data, secondaryData }: Receip
     };
 
     try {
+      // Loaded on demand so the PDF renderer is only fetched when a receipt is produced.
+      const { generateReceiptBlob } = await import('./receipt-template');
       const blob = await generateReceiptBlob(receiptPayload);
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');

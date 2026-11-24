@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import React, { useState, useMemo, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -13,7 +14,7 @@ import {
   Mail, Landmark, FileSpreadsheet, Plus, RefreshCw, Filter, Scale
 } from "lucide-react";
 import { useAppData } from "@/lib/app-data-context";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { useFinanceStore, type ReceivableInvoice } from "@/lib/finance/finance-store";
 import { KAHRAMAA_DEPOSIT_BY_UNIT, resolvePropertyFromUnitCode } from "@/lib/finance/kahramaa-deposits-data";
 import { InvoiceViewDialog } from "./invoice-view-dialog";
@@ -144,7 +145,7 @@ export function CustomerStatementSubModule({
     return Array.from(set);
   }, [customerLeases, currentCustomer]);
 
-  // Live PDC register & pdcs rows fetched directly from Supabase so unlinked fin_pdc_register rows & status changes sync cleanly
+  // Live PDC register & pdcs rows fetched directly from DB so unlinked fin_pdc_register rows & status changes sync cleanly
   const [liveDbPdcs, setLiveDbPdcs] = useState<any[]>([]);
   const [pdcSyncTick, setPdcSyncTick] = useState(0);
 
@@ -153,14 +154,14 @@ export function CustomerStatementSubModule({
     window.addEventListener("pdcs_updated", bump);
     window.addEventListener("finance_vouchers_updated", bump);
 
-    const channel = supabase
+    const channel = db
       .channel("customer-soa-pdc-live")
       .on("postgres_changes" as any, { event: "*", schema: "public", table: "fin_pdc_register" }, bump)
       .on("postgres_changes" as any, { event: "*", schema: "public", table: "pdcs" }, bump)
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      db.removeChannel(channel);
       window.removeEventListener("pdcs_updated", bump);
       window.removeEventListener("finance_vouchers_updated", bump);
     };
@@ -171,11 +172,11 @@ export function CustomerStatementSubModule({
     async function fetchLivePdcs() {
       try {
         const [finRes, pdcsRes, banksRes, bankAcctsRes, vchRes] = await Promise.all([
-          supabase.from("fin_pdc_register").select("*").order("cheque_date", { ascending: true }).limit(2000),
-          supabase.from("pdcs").select("*").order("created_at", { ascending: true }).limit(2000),
-          supabase.from("fin_banks").select("id, code, name"),
-          supabase.from("fin_bank_accounts").select("id, bank_id, account_title, account_number"),
-          supabase
+          db.from("fin_pdc_register").select("*").order("cheque_date", { ascending: true }).limit(2000),
+          db.from("pdcs").select("*").order("created_at", { ascending: true }).limit(2000),
+          db.from("fin_banks").select("id, code, name"),
+          db.from("fin_bank_accounts").select("id, bank_id, account_title, account_number"),
+          db
             .from("fin_vouchers")
             .select("voucher_number, voucher_date, description, total_amount")
             .or("voucher_number.ilike.VCH-PDC-REC-%,voucher_number.ilike.VCH-DEP-%,voucher_number.ilike.VCH-CLR-%")
@@ -236,7 +237,7 @@ export function CustomerStatementSubModule({
 
         let localRenewal: any[] = [];
         try {
-          const parsed = JSON.parse(localStorage.getItem("pms_renewal_pdcs") || "[]");
+          const parsed = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
           if (Array.isArray(parsed)) localRenewal = parsed;
         } catch { localRenewal = []; }
 
@@ -416,7 +417,7 @@ export function CustomerStatementSubModule({
       return Math.abs(amtA - amtB) < 0.01 && (!dateA || !dateB || dateA === dateB);
     };
 
-    // Merge live DB pdcs, AppData context pdcs, and localStorage pms_renewal_pdcs without cross-unit collisions
+    // Merge live DB pdcs, AppData context pdcs, and kvStore pms_renewal_pdcs without cross-unit collisions
     const combinedPdcs: any[] = liveDbPdcs.map((p) => ({ ...p }));
     const mergeCandidate = (cand: any) => {
       const chq = String(cand.chequeNo || cand.chequeNumber || (cand as any).cheque_number || "").trim();
@@ -440,7 +441,7 @@ export function CustomerStatementSubModule({
 
     pdcs.forEach(mergeCandidate);
     try {
-      const localRenewal = JSON.parse(localStorage.getItem("pms_renewal_pdcs") || "[]");
+      const localRenewal = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
       if (Array.isArray(localRenewal)) {
         localRenewal.forEach(mergeCandidate);
       }
@@ -510,10 +511,10 @@ export function CustomerStatementSubModule({
     const normCust = custNameLower.replace(/^(ms\.|mr\.|mrs\.|dr\.|m\/s\.?)\s*/i, "").replace(/[^a-z0-9\s]/g, "").trim();
     const custTokens = normCust.split(/\s+/).filter(t => t.length >= 2);
 
-    // 1. Invoices from ReceivableInvoice store (plus localStorage fallback) matching this customer
+    // 1. Invoices from ReceivableInvoice store (plus kvStore fallback) matching this customer
     const allInvoices: ReceivableInvoice[] = [...receivableInvoices];
     try {
-      const storedInv = JSON.parse(localStorage.getItem("fin_receivable_invoices_v3") || "[]");
+      const storedInv = JSON.parse(kvStore.getItem("fin_receivable_invoices_v3") || "[]");
       if (Array.isArray(storedInv)) {
         storedInv.forEach((si: ReceivableInvoice) => {
           if (si?.invoice_no && !allInvoices.some(ei => ei.invoice_no === si.invoice_no)) {

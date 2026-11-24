@@ -1,4 +1,4 @@
-import { supabase, type Customer } from '../../supabase';
+import { db, type Customer } from '../../db';
 import { 
   type EntityImportAdapter, 
   type ColumnDefinition, 
@@ -104,7 +104,7 @@ export const customerAdapter: EntityImportAdapter = {
     if (keys.length === 0) return map;
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('customers')
         .select('*');
 
@@ -390,7 +390,7 @@ export const customerAdapter: EntityImportAdapter = {
     // Customer Delete / Active Leases Check
     if (operation === 'DELETE' && existingRecord) {
       try {
-        const { data: linkedLeases } = await supabase
+        const { data: linkedLeases } = await db
           .from('leases')
           .select('id, lease_number, lease_status')
           .eq('customer_id', existingRecord.id)
@@ -467,7 +467,7 @@ export const customerAdapter: EntityImportAdapter = {
           // Check if a record with this name now exists in the DB (first occurrence created it)
           const dupCheckName = data.display_name || data.full_name || '';
           if (dupCheckName) {
-            const { data: existing } = await supabase
+            const { data: existing } = await db
               .from('customers')
               .select('id')
               .or(`display_name.eq.${dupCheckName},full_name.eq.${dupCheckName}`)
@@ -557,7 +557,7 @@ export const customerAdapter: EntityImportAdapter = {
         const currentPayload = { ...payload };
 
         for (let attempt = 0; attempt < 5; attempt++) {
-          const { data: created, error } = await supabase.from('customers').insert(currentPayload).select().single();
+          const { data: created, error } = await db.from('customers').insert(currentPayload).select().single();
           if (!error) {
             createdRecord = created;
             lastError = null;
@@ -601,7 +601,7 @@ export const customerAdapter: EntityImportAdapter = {
           updatePayload[change.field] = change.newValue === '[CLEARED]' ? null : change.newValue;
         }
 
-        const { error } = await supabase.from('customers').update(updatePayload).eq('id', existing.id);
+        const { error } = await db.from('customers').update(updatePayload).eq('id', existing.id);
         if (error) throw error;
 
         return {
@@ -614,7 +614,7 @@ export const customerAdapter: EntityImportAdapter = {
         const existing = record.originalDbData;
         if (!existing?.id) throw new Error('Customer ID not found');
 
-        const { error } = await supabase.from('customers').delete().eq('id', existing.id);
+        const { error } = await db.from('customers').delete().eq('id', existing.id);
         if (error) throw error;
 
         return {

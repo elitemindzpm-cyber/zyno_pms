@@ -3,13 +3,13 @@
  *
  * Provides:
  *  - Typed schemas for all configuration domains (Branding, Localization, Engines, Notifications, Security, Integrations)
- *  - Safe Supabase database queries with fallback to validated Qatar defaults
+ *  - Safe DB database queries with fallback to validated Qatar defaults
  *  - Super Admin mutations with automatic Security Audit logging
  *  - In-App Notifications API (fetch, mark-as-read, create broadcast notifications)
  *  - Strict field validations & error formatting
  */
 
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { logSecurityEvent } from "@/lib/security";
 
 // ─── Configuration Interfaces ────────────────────────────────────────────────
@@ -104,7 +104,7 @@ export interface IntegrationConfig {
   sendgridSenderEmail: string;
   twilioSmsConfigured: boolean;
   twilioFromNumber: string;
-  supabaseStorageBucket: string;
+  storageBucket: string;
 }
 
 export interface SystemNotification {
@@ -207,7 +207,7 @@ export const DEFAULT_CONFIGS = {
     sendgridSenderEmail: "noreply@zyno.qa",
     twilioSmsConfigured: false,
     twilioFromNumber: "",
-    supabaseStorageBucket: "property-images",
+    storageBucket: "property-images",
   } as IntegrationConfig,
 };
 
@@ -220,7 +220,7 @@ export type ConfigKey = keyof typeof DEFAULT_CONFIGS;
  */
 export async function fetchSystemConfig<T = any>(key: ConfigKey): Promise<T> {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from("system_configurations")
       .select("config_value")
       .eq("config_key", key)
@@ -241,14 +241,14 @@ export async function fetchSystemConfig<T = any>(key: ConfigKey): Promise<T> {
  */
 export async function fetchAllSystemConfigs() {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from("system_configurations")
       .select("config_key, config_value, updated_at");
 
     const result = { ...DEFAULT_CONFIGS };
 
     if (!error && data) {
-      data.forEach((row) => {
+      data.forEach((row: any) => {
         const k = row.config_key as ConfigKey;
         if (result[k]) {
           result[k] = { ...result[k], ...row.config_value } as any;
@@ -286,7 +286,7 @@ export async function saveSystemConfig<T extends Record<string, any>>(
     }
 
     // 2. Persist to database
-    const { error: dbError } = await supabase
+    const { error: dbError } = await db
       .from("system_configurations")
       .upsert({
         config_key: key,
@@ -331,7 +331,7 @@ export async function saveSystemConfig<T extends Record<string, any>>(
  */
 export async function fetchInAppNotifications(): Promise<SystemNotification[]> {
   try {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from("system_notifications")
       .select("*")
       .order("created_at", { ascending: false })
@@ -349,7 +349,7 @@ export async function fetchInAppNotifications(): Promise<SystemNotification[]> {
  */
 export async function markNotificationAsRead(id: string): Promise<boolean> {
   try {
-    const { error } = await supabase
+    const { error } = await db
       .from("system_notifications")
       .update({ 
         is_read: true,
@@ -357,7 +357,7 @@ export async function markNotificationAsRead(id: string): Promise<boolean> {
       .eq("id", id);
 
     try {
-      await supabase.rpc("track_notification_engagement", { notif_id: id, is_click: false });
+      await db.rpc("track_notification_engagement", { notif_id: id, is_click: false });
     } catch {}
     return !error;
   } catch {
@@ -382,7 +382,7 @@ export async function createBroadcastNotification(notification: {
     const scheduleType = notification.schedule_type || "instant";
     const status = scheduleType === "instant" ? "sent" : "scheduled";
 
-    const { error } = await supabase
+    const { error } = await db
       .from("system_notifications")
       .insert({
         title: notification.title,

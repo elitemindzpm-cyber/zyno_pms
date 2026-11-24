@@ -2,6 +2,9 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../lib/prisma';
 import { parsePagination, paginatedResponse } from '../lib/middleware';
+import { createUnit } from '../services/property';
+import { HttpError, sendDbError } from '../lib/errors';
+import { ensureUnitCoaMapping } from '../lib/finance-rpc';
 
 const router = Router();
 
@@ -41,13 +44,13 @@ router.get('/:id', async (req: Request, res: Response) => {
   }
 });
 
-// POST /api/units
+// POST /api/units — rules in services/property.ts (unique unit number per property, COA mapping).
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const item = await prisma.units.create({ data: req.body });
-    res.status(201).json(item);
+    const unit = await createUnit(req.body || {});
+    res.status(201).json(unit);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    sendDbError(res, e, 'units.create');
   }
 });
 

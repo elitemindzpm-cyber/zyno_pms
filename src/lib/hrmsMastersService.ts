@@ -1,4 +1,5 @@
-import { supabase } from "@/lib/supabase";
+import { kvStore } from "@/lib/kv-store";
+import { db } from "@/lib/db";
 
 export interface MasterItem {
   id: string;
@@ -605,78 +606,74 @@ const REPLACED_CATALOG_ITEMS: Partial<Record<MasterCategoryKey, string[]>> = {
   ],
 };
 
+const TABLE_BACKED_MASTERS: Partial<Record<MasterCategoryKey, { table: string; nameCol: string }>> = {
+  departments: { table: "departments", nameCol: "name" },
+  designations: { table: "designations", nameCol: "title" },
+};
+
+function rowToMasterItem(row: any): MasterItem {
+  let extra: any = undefined;
+  if (row.extra) {
+    try {
+      extra = JSON.parse(row.extra);
+    } catch {
+      extra = undefined;
+    }
+  }
+  return {
+    id: row.id,
+    name: row.name,
+    code: row.code ?? undefined,
+    description: row.description ?? undefined,
+    extra,
+    is_active: row.is_active !== false,
+  };
+}
+
 export const HrmsMastersApi = {
-  // Get all items for a category
+  // Items come from the database only. Departments and designations use their real tables (the employee
+  // form links to them); every other list is stored in hrms_master_items, keyed by category.
   async getMasterItems(categoryKey: MasterCategoryKey): Promise<MasterItem[]> {
-    const config = MASTER_CATEGORIES_CONFIG.find((c) => c.key === categoryKey);
-    const localKey = `${MASTER_CACHE_KEY_PREFIX}${categoryKey}`;
-
-    // Default seeded data
-    const defaults: MasterItem[] = (config?.defaultItems || []).map((item, idx) => ({
-      id: `${categoryKey}-${idx + 1}`,
-      name: item.name,
-      code: item.code || `${config?.codePrefix || "M"}-${idx + 1}`,
-      description: item.description,
-      is_active: true,
-    }));
-
-    try {
-      const stored = localStorage.getItem(localKey);
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          // Filter out legacy dummy entries like "Mindz Developers"
-          const clean = parsed.filter(p => !p.name?.includes("Mindz Developers") && !p.name?.includes("Gurugram"));
-          if (clean.length > 0) {
-            if (categoryKey !== "departments" && categoryKey !== "designations") return clean;
-
-            const replacedNames = new Set((REPLACED_CATALOG_ITEMS[categoryKey] || []).map((name) => name.toLowerCase()));
-            const currentItems = defaults.map((item) => {
-              const storedItem = clean.find((stored) => stored.name?.toLowerCase() === item.name.toLowerCase());
-              return storedItem ? { ...item, ...storedItem, code: item.code } : item;
-            });
-            const currentNames = new Set(currentItems.map((item) => item.name.toLowerCase()));
-            const customItems = clean.filter((item) =>
-              !replacedNames.has(item.name?.toLowerCase()) &&
-              !currentNames.has(item.name?.toLowerCase())
-            );
-            const migrated = [...currentItems, ...customItems];
-            localStorage.setItem(localKey, JSON.stringify(migrated));
-            return migrated;
-          }
-        }
-      }
-    } catch (e) {
-      console.warn("Could not read local master cache:", e);
+    const tableCfg = TABLE_BACKED_MASTERS[categoryKey];
+    if (tableCfg) {
+      const { data, error } = await db.from(tableCfg.table).select("*").order(tableCfg.nameCol, { ascending: true });
+      if (error) throw new Error(error.message || `Failed to load ${categoryKey}`);
+      return ((data || []) as any[]).map((row) => ({
+        id: row.id,
+        name: row[tableCfg.nameCol],
+        code: row.code ?? undefined,
+        description: row.description ?? undefined,
+        is_active: true,
+      }));
     }
-
-    try {
-      localStorage.setItem(localKey, JSON.stringify(defaults));
-    } catch (e) {
-      console.warn("Could not seed local master cache:", e);
-    }
-
-    return defaults;
+    const { data, error } = await db
+      .from("hrms_master_items")
+      .select("*")
+      .eq("category", categoryKey)
+      .order("name", { ascending: true });
+    if (error) throw new Error(error.message || `Failed to load ${categoryKey}`);
+    return ((data || []) as any[]).map(rowToMasterItem);
   },
 
   async addMasterItem(
     categoryKey: MasterCategoryKey,
     item: { name: string; code?: string; description?: string; extra?: any }
   ): Promise<MasterItem> {
-    const current = await this.getMasterItems(categoryKey);
-    const config = MASTER_CATEGORIES_CONFIG.find((c) => c.key === categoryKey);
-    const newItem: MasterItem = {
-      id: `${categoryKey}-${Date.now()}`,
-      name: item.name,
-      code: item.code || `${config?.codePrefix || "M"}-${current.length + 1}`,
-      description: item.description,
-      extra: item.extra,
-      is_active: true,
-    };
-    const updated = [newItem, ...current];
-    localStorage.setItem(`${MASTER_CACHE_KEY_PREFIX}${categoryKey}`, JSON.stringify(updated));
-    window.dispatchEvent(new CustomEvent("hrms_masters_updated", { detail: { categoryKey, items: updated } }));
-    return newItem;
+    const tableCfg = TABLE_BACKED_MASTERS[categoryKey];
+    let created: MasterItem;
+    if (tableCfg) {
+      const payload: Record<string, any> = { [tableCfg.nameCol]: item.name, code: item.code || null, description: item.description || null };
+      const { data, error } = await db.from(tableCfg.table).insert(payload).select().single();
+      if (error) throw new Error(error.message || `Failed to add ${categoryKey}`);
+      created = { id: (data as any).id, name: item.name, code: (data as any).code ?? undefined, description: (data as any).description ?? undefined, is_active: true };
+    } else {
+      const payload = { category: categoryKey, name: item.name, code: item.code || null, description: item.description || null, extra: item.extra ? JSON.stringify(item.extra) : null, is_active: true };
+      const { data, error } = await db.from("hrms_master_items").insert(payload).select().single();
+      if (error) throw new Error(error.message || `Failed to add ${categoryKey}`);
+      created = rowToMasterItem(data as any);
+    }
+    window.dispatchEvent(new CustomEvent("hrms_masters_updated", { detail: { categoryKey } }));
+    return created;
   },
 
   async createMasterItem(
@@ -691,18 +688,35 @@ export const HrmsMastersApi = {
     id: string,
     updates: Partial<MasterItem>
   ): Promise<MasterItem | null> {
-    const current = await this.getMasterItems(categoryKey);
-    const updated = current.map((i) => (i.id === id ? { ...i, ...updates } : i));
-    localStorage.setItem(`${MASTER_CACHE_KEY_PREFIX}${categoryKey}`, JSON.stringify(updated));
-    window.dispatchEvent(new CustomEvent("hrms_masters_updated", { detail: { categoryKey, items: updated } }));
-    return updated.find((i) => i.id === id) || null;
+    const tableCfg = TABLE_BACKED_MASTERS[categoryKey];
+    if (tableCfg) {
+      const payload: Record<string, any> = {};
+      if (updates.name !== undefined) payload[tableCfg.nameCol] = updates.name;
+      if (updates.code !== undefined) payload.code = updates.code || null;
+      if (updates.description !== undefined) payload.description = updates.description || null;
+      const { error } = await db.from(tableCfg.table).update(payload).eq("id", id);
+      if (error) throw new Error(error.message || `Failed to update ${categoryKey}`);
+    } else {
+      const payload: Record<string, any> = {};
+      if (updates.name !== undefined) payload.name = updates.name;
+      if (updates.code !== undefined) payload.code = updates.code || null;
+      if (updates.description !== undefined) payload.description = updates.description || null;
+      if (updates.extra !== undefined) payload.extra = updates.extra ? JSON.stringify(updates.extra) : null;
+      if (updates.is_active !== undefined) payload.is_active = updates.is_active;
+      const { error } = await db.from("hrms_master_items").update(payload).eq("id", id);
+      if (error) throw new Error(error.message || `Failed to update ${categoryKey}`);
+    }
+    window.dispatchEvent(new CustomEvent("hrms_masters_updated", { detail: { categoryKey } }));
+    const items = await this.getMasterItems(categoryKey);
+    return items.find((i) => i.id === id) || null;
   },
 
   async deleteMasterItem(categoryKey: MasterCategoryKey, id: string): Promise<boolean> {
-    const current = await this.getMasterItems(categoryKey);
-    const updated = current.filter((i) => i.id !== id);
-    localStorage.setItem(`${MASTER_CACHE_KEY_PREFIX}${categoryKey}`, JSON.stringify(updated));
-    window.dispatchEvent(new CustomEvent("hrms_masters_updated", { detail: { categoryKey, items: updated } }));
+    const tableCfg = TABLE_BACKED_MASTERS[categoryKey];
+    const table = tableCfg ? tableCfg.table : "hrms_master_items";
+    const { error } = await db.from(table).delete().eq("id", id);
+    if (error) throw new Error(error.message || `Failed to delete ${categoryKey}`);
+    window.dispatchEvent(new CustomEvent("hrms_masters_updated", { detail: { categoryKey } }));
     return true;
   },
 
@@ -773,7 +787,7 @@ export const HrmsMastersApi = {
   // Generate Next Employee ID based on organization master logic or sequential counter
   async generateNextEmployeeId(prefix: string = "EMP"): Promise<string> {
     try {
-      const { data } = await supabase
+      const { data } = await db
         .from('employees')
         .select('employee_id_code');
       

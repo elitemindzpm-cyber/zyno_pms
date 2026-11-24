@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type ProcurementSupplierPerformance = {
   suite: 'PROCUREMENT_SUPPLIER_PERFORMANCE';
@@ -42,7 +42,7 @@ export type ProcurementSupplierPerformance = {
 };
 
 export async function getProcurementSupplierPerformance(days = 365, limit = 25, concentrationThreshold = 30) {
-  const { data, error } = await supabase.rpc('procurement_supplier_performance', {
+  const { data, error } = await db.rpc('procurement_supplier_performance', {
     p_days: days,
     p_limit: limit,
     p_concentration_threshold: concentrationThreshold,

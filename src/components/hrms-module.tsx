@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import React, { useState, useEffect, useMemo, useCallback } from "react";
 import { ExcelImportEmbedded } from "@/components/excel-import-embedded";
 import {
@@ -891,7 +892,7 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
       if (typeof window !== "undefined") {
         try {
           const vKey = "finance_master_v1-vouchers";
-          const raw = localStorage.getItem(vKey);
+          const raw = kvStore.getItem(vKey);
           const list = raw ? JSON.parse(raw) : [];
           const today = new Date().toISOString().split("T")[0];
           const totalAccrual = Math.round(totalGratuityProvision + totalLeaveProvision);
@@ -916,7 +917,7 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
             ]
           };
           if (!list.some((v: any) => v.voucher_no === newVch.voucher_no)) {
-            localStorage.setItem(vKey, JSON.stringify([newVch, ...list]));
+            kvStore.setItem(vKey, JSON.stringify([newVch, ...list]));
           }
         } catch {}
         window.dispatchEvent(new CustomEvent("finance_vouchers_updated"));
@@ -976,7 +977,7 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
           if (typeof window !== "undefined") {
             try {
               const vKey = "finance_master_v1-vouchers";
-              const raw = localStorage.getItem(vKey);
+              const raw = kvStore.getItem(vKey);
               const list = raw ? JSON.parse(raw) : [];
               const today = new Date().toISOString().split("T")[0];
               const newVch = {
@@ -998,7 +999,7 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
                 ]
               };
               if (!list.some((v: any) => v.voucher_no === newVch.voucher_no)) {
-                localStorage.setItem(vKey, JSON.stringify([newVch, ...list]));
+                kvStore.setItem(vKey, JSON.stringify([newVch, ...list]));
               }
             } catch {}
             window.dispatchEvent(new CustomEvent("finance_vouchers_updated"));
@@ -1574,6 +1575,23 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
                               className="gap-1 text-xs text-primary hover:text-primary hover:bg-primary/10"
                             >
                               <Edit3 className="h-3.5 w-3.5" /> Edit Profile
+                            </Button>
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={async () => {
+                                if (!window.confirm(`Delete employee ${emp.first_name ?? ""} ${emp.last_name ?? ""} (${emp.employee_id_code ?? ""})? This cannot be undone.`)) return;
+                                try {
+                                  await HrmsApi.deleteEmployee(emp.id);
+                                  toast.success("Employee deleted.");
+                                  await loadAllHRMSData();
+                                } catch (e: any) {
+                                  toast.error(e?.message || "Failed to delete employee");
+                                }
+                              }}
+                              className="gap-1 text-xs text-red-600 hover:text-red-700 hover:bg-red-50"
+                            >
+                              <Trash2 className="h-3.5 w-3.5" /> Delete
                             </Button>
                             <Button
                               variant="ghost"

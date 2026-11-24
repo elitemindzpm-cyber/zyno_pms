@@ -288,7 +288,7 @@ const ReceiptDocument = ({ data }: { data: ReceiptData }) => {
           </View>
           <View style={styles.sigBlock}>
             <Text style={styles.sigTitle}>AUTHORIZED SIGNATORY</Text>
-            <Text style={styles.sigSub}>{branding.authorizedSignatoryName || 'Jithin Abdul Latheef'} ({branding.authorizedSignatoryTitle || 'General Manager'})</Text>
+            <Text style={styles.sigSub}>{branding.authorizedSignatoryName || ''} ({branding.authorizedSignatoryTitle || 'General Manager'})</Text>
           </View>
           <View style={styles.sigBlock}>
             <Text style={styles.sigTitle}>TENANT ACKNOWLEDGEMENT</Text>

@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { ChevronLeft, Save, Trash2, Calendar as CalendarIcon, Users, Loader2, AlertCircle, Plus, Wrench, Pencil, Building2, Sparkles, FileText, CheckCircle2 } from "lucide-react";
-import { fetchPropertyById, fetchHostBookings, updateProperty, createMaintenanceTicket, fetchUnits, fetchLeases, fetchPropertyTypes, fetchOwnershipTypes, fetchPropertyCategories, fetchCostCenters, fetchPropertyManagerEmployees, updatePropertyImages, type Property } from "@/lib/supabase";
+import { fetchPropertyById, fetchHostBookings, updateProperty, createMaintenanceTicket, fetchUnits, fetchLeases, fetchPropertyTypes, fetchOwnershipTypes, fetchPropertyCategories, fetchCostCenters, fetchPropertyManagerEmployees, updatePropertyImages, type Property } from "@/lib/db";
 import { ImageUploader, type ImageFile } from "@/components/image-uploader";
 import { PropertyDocumentsManager, type PropertyDocument } from "@/components/property-documents-manager";
 import { properties as mockProperties, units as mockUnits, leases as mockLeases, type Property as MockProperty } from "@/lib/mock-data";

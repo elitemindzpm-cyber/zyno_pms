@@ -1,6 +1,7 @@
+import { kvStore } from "@/lib/kv-store";
 import { createContext, useContext, useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { resolveAccountingAccounts } from "./account-resolver";
 import { postVoucher } from "./posting-engine";
 import {
@@ -17,7 +18,7 @@ export function isPostingPeriodClosed(dateStr?: string): { closed: boolean; peri
   if (!dateStr || typeof window === "undefined") return { closed: false };
   try {
     const ym = dateStr.split("T")[0].slice(0, 7);
-    const raw = localStorage.getItem("pms_posting_periods_cache");
+    const raw = kvStore.getItem("pms_posting_periods_cache");
     if (!raw) return { closed: false };
     const list = JSON.parse(raw) as Array<{ period_name: string; status: string }>;
     const found = list.find(p => p.period_name === ym);
@@ -577,7 +578,7 @@ export interface FinanceStoreContextType {
   markPayableInvoicePaid: (invoiceNo: string) => void;
 
   vouchers: FinanceVoucher[];
-  addVoucher: (vch: Omit<FinanceVoucher, "id" | "status">, options?: { skipSupabasePersist?: boolean }) => void;
+  addVoucher: (vch: Omit<FinanceVoucher, "id" | "status">, options?: { skipDbPersist?: boolean }) => void;
 
   receivableInvoices: ReceivableInvoice[];
   addReceivableInvoice: (inv: Omit<ReceivableInvoice, "id" | "status">) => void;
@@ -745,9 +746,9 @@ export const INITIAL_DATE_CORRECTIONS: Record<string, VoucherDateCorrection> = {
 export function getStoredVoucherDateCorrections(): Record<string, VoucherDateCorrection> {
   if (typeof window === "undefined") return INITIAL_DATE_CORRECTIONS;
   try {
-    const raw = localStorage.getItem(VOUCHER_DATE_CORRECTIONS_KEY);
+    const raw = kvStore.getItem(VOUCHER_DATE_CORRECTIONS_KEY);
     if (!raw) {
-      localStorage.setItem(VOUCHER_DATE_CORRECTIONS_KEY, JSON.stringify(INITIAL_DATE_CORRECTIONS));
+      kvStore.setItem(VOUCHER_DATE_CORRECTIONS_KEY, JSON.stringify(INITIAL_DATE_CORRECTIONS));
       return INITIAL_DATE_CORRECTIONS;
     }
     const parsed = JSON.parse(raw);
@@ -760,7 +761,7 @@ export function getStoredVoucherDateCorrections(): Record<string, VoucherDateCor
 export function saveStoredVoucherDateCorrections(corrections: Record<string, VoucherDateCorrection>): void {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(VOUCHER_DATE_CORRECTIONS_KEY, JSON.stringify(corrections));
+    kvStore.setItem(VOUCHER_DATE_CORRECTIONS_KEY, JSON.stringify(corrections));
   } catch {}
 }
 
@@ -847,11 +848,11 @@ export function resolvePdcBankGl(bank?: string | number | null): { glCode: strin
 }
 
 /**
- * Maps a raw Supabase `fin_vouchers` record (and optional joined `fin_voucher_lines`)
+ * Maps a raw Db `fin_vouchers` record (and optional joined `fin_voucher_lines`)
  * into an authoritative, dimension-resolved `FinanceVoucher`. Shared by initial fetch
  * and realtime INSERT subscription so both paths stay consistent.
  */
-function mapSupabaseVoucherRow(r: any): FinanceVoucher {
+function mapDbVoucherRow(r: any): FinanceVoucher {
   const isPV = r.voucher_type === "PV";
   const isRV = r.voucher_type === "RV";
   const lines: Array<{
@@ -1103,11 +1104,11 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
           "pms_general_ledger_entries_v2",
           "pms_cash_book_v2"
         ];
-        legacyKeys.forEach(k => localStorage.removeItem(k));
+        legacyKeys.forEach(k => kvStore.removeItem(k));
 
         // Deduplicate stored vouchers (e.g. redundant PV-SET vouchers for same tenant and unit)
         const vKey = `${FINANCE_STORAGE_KEY}-vouchers`;
-        const raw = localStorage.getItem(vKey);
+        const raw = kvStore.getItem(vKey);
         if (raw) {
           const list: FinanceVoucher[] = JSON.parse(raw);
           if (Array.isArray(list)) {
@@ -1121,7 +1122,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
               return true;
             });
             if (deduped.length !== list.length) {
-              localStorage.setItem(vKey, JSON.stringify(deduped));
+              kvStore.setItem(vKey, JSON.stringify(deduped));
             }
           }
         }
@@ -1134,7 +1135,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [journalEntries, setJournalEntries] = useState<JournalLedgerEntry[]>(() => {
     if (typeof window === "undefined") return INITIAL_JOURNAL_LEDGER;
     try {
-      const saved = localStorage.getItem(`${FINANCE_STORAGE_KEY}-journals`);
+      const saved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-journals`);
       return saved ? JSON.parse(saved) : INITIAL_JOURNAL_LEDGER;
     } catch { return INITIAL_JOURNAL_LEDGER; }
   });
@@ -1142,7 +1143,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [payableInvoices, setPayableInvoices] = useState<PayableInvoice[]>(() => {
     if (typeof window === "undefined") return INITIAL_PAYABLE_INVOICES;
     try {
-      const saved = localStorage.getItem(`${FINANCE_STORAGE_KEY}-ap`);
+      const saved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-ap`);
       return saved ? JSON.parse(saved) : INITIAL_PAYABLE_INVOICES;
     } catch { return INITIAL_PAYABLE_INVOICES; }
   });
@@ -1152,7 +1153,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     const initialSpecialVouchers = [...initialKahramaa, ...initialSdGuarantee];
     if (typeof window === "undefined") return [...initialSpecialVouchers, ...INITIAL_VOUCHERS];
     try {
-      const saved = localStorage.getItem(`${FINANCE_STORAGE_KEY}-vouchers`);
+      const saved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-vouchers`);
       if (!saved) return [...initialSpecialVouchers, ...INITIAL_VOUCHERS];
       const list: FinanceVoucher[] = JSON.parse(saved);
       if (Array.isArray(list)) {
@@ -1161,21 +1162,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
           const vNo = (v.voucher_no || "").toUpperCase();
           const vName = (v.name || "").toLowerCase();
           const uRef = (v.unit_ref || "").toUpperCase();
-
-          // Purge testing transactions for OA22-10 / Cheque 35 and legacy auto-generated Cash->Bank contra deposits on PDC cash replacement
-          if (
-            vNo.includes("TRF-35") || vNo === "PV-SET-970199" || vNo === "PV-SET-973725" || vNo === "PV-SET-073390" ||
-            vNo.includes("TRF-CNL-35") ||
-            vNo.startsWith("VCH-CSH-DEP-") ||
-            vNo.startsWith("BNK-DEP-") ||
-            vName.includes("bank deposit of replaced pdc cash till") ||
-            uRef.includes("OA22-10") ||
-            vName.includes("oa22-10") ||
-            vName.includes("devadas melitta") ||
-            vName.includes("devadas pappu")
-          ) {
-            return false;
-          }
 
           // Always refresh Kahramaa deposit vouchers and Security Deposit guarantee vouchers from authoritative Excel helpers
           if (vNo.startsWith("VCH-KAH-DEP-") || vNo.startsWith("VCH-SD-GCHQ-")) {
@@ -1297,7 +1283,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [receivableInvoices, setReceivableInvoices] = useState<ReceivableInvoice[]>(() => {
     if (typeof window === "undefined") return INITIAL_RECEIVABLE_INVOICES;
     try {
-      const saved = localStorage.getItem(`${FINANCE_STORAGE_KEY}-ar`);
+      const saved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-ar`);
       return saved ? JSON.parse(saved) : INITIAL_RECEIVABLE_INVOICES;
     } catch { return INITIAL_RECEIVABLE_INVOICES; }
   });
@@ -1309,7 +1295,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [cashBookEntries, setCashBookEntries] = useState<CashBookEntry[]>(() => {
     if (typeof window === "undefined") return INITIAL_CASH_BOOK;
     try {
-      const saved = localStorage.getItem(`${FINANCE_STORAGE_KEY}-cashbook`);
+      const saved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-cashbook`);
       return saved ? JSON.parse(saved) : INITIAL_CASH_BOOK;
     } catch { return INITIAL_CASH_BOOK; }
   });
@@ -1320,77 +1306,45 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (typeof window !== "undefined") {
       try {
-        localStorage.setItem(`${FINANCE_STORAGE_KEY}-vouchers`, JSON.stringify(vouchers));
-        localStorage.setItem(`${FINANCE_STORAGE_KEY}-journals`, JSON.stringify(journalEntries));
-        localStorage.setItem(`${FINANCE_STORAGE_KEY}-ar`, JSON.stringify(receivableInvoices));
-        localStorage.setItem(`${FINANCE_STORAGE_KEY}-ap`, JSON.stringify(payableInvoices));
-        localStorage.setItem(`${FINANCE_STORAGE_KEY}-cashbook`, JSON.stringify(cashBookEntries));
+        kvStore.setItem(`${FINANCE_STORAGE_KEY}-vouchers`, JSON.stringify(vouchers));
+        kvStore.setItem(`${FINANCE_STORAGE_KEY}-journals`, JSON.stringify(journalEntries));
+        kvStore.setItem(`${FINANCE_STORAGE_KEY}-ar`, JSON.stringify(receivableInvoices));
+        kvStore.setItem(`${FINANCE_STORAGE_KEY}-ap`, JSON.stringify(payableInvoices));
+        kvStore.setItem(`${FINANCE_STORAGE_KEY}-cashbook`, JSON.stringify(cashBookEntries));
       } catch { /* ignore */ }
     }
   }, [vouchers, journalEntries, receivableInvoices, payableInvoices, cashBookEntries]);
 
-  // Track IDs already merged from Supabase to avoid duplicates
+  // Track IDs already merged from DB to avoid duplicates
   const seenVoucherIds = useRef(new Set<string>());
 
-  const fetchSupabaseData = async (showToast = false) => {
+  const fetchDbData = async (showToast = false) => {
     setIsSyncing(true);
     try {
-      // 1. Pull existing fin_vouchers from Supabase
-      const { data: vData, error: vError } = await supabase
+      // 1. Pull existing fin_vouchers from Db
+      const { data: vData, error: vError } = await db
         .from("fin_vouchers")
         .select("*, fin_voucher_lines(account_code, account_name, debit_amount, credit_amount)")
         .order("voucher_date", { ascending: false });
 
       if (!vError && vData) {
-        // Asynchronously purge testing vouchers for OA22-10 / Cheque 35
-        void supabase
-          .from("fin_vouchers")
-          .delete()
-          .or("voucher_number.ilike.%TRF-35%,voucher_number.ilike.%TRF-CNL-35%,description.ilike.%OA22-10%,description.ilike.%Devadas%");
-
-        // Normalize processed salary amount from 115,250 to 96,820 in backend tables
-        void supabase
-          .from("fin_vouchers")
-          .update({ total_amount: 96820 })
-          .eq("total_amount", 115250);
-        void supabase
-          .from("fin_payroll_syncs")
-          .update({ total_amount: 96820 })
-          .eq("total_amount", 115250);
-        void supabase
-          .from("fin_accounting_events")
-          .update({ total_debit: 96820, total_credit: 96820 })
-          .eq("total_debit", 115250);
-
         setVouchers(prev => {
           const existingNos = new Set(prev.map(v => v.voucher_no));
           const mapped: FinanceVoucher[] = vData
             .filter((r: any) => {
               const vNo = (r.voucher_number || "").toUpperCase();
               const desc = (r.description || "").toLowerCase();
-              if (
-                vNo.includes("TRF-35") || vNo === "PV-SET-970199" || vNo === "PV-SET-973725" || vNo === "PV-SET-073390" ||
-                vNo.includes("TRF-CNL-35") ||
-                vNo.startsWith("VCH-CSH-DEP-") ||
-                vNo.startsWith("BNK-DEP-") ||
-                desc.includes("bank deposit of replaced pdc cash till") ||
-                desc.includes("oa22-10") ||
-                desc.includes("devadas melitta") ||
-                desc.includes("devadas pappu")
-              ) {
-                return false;
-              }
               return !existingNos.has(r.voucher_number);
             })
-            .map(mapSupabaseVoucherRow);
+            .map(mapDbVoucherRow);
 
           return mapped.length ? [...mapped, ...prev] : prev;
         });
         vData.forEach((r: { id: string }) => seenVoucherIds.current.add(r.id));
       }
 
-      // 2. Pull journal_entries from Supabase
-      const { data: jData, error: jError } = await supabase
+      // 2. Pull journal_entries from Db
+      const { data: jData, error: jError } = await db
         .from("journal_entries")
         .select("*, journal_lines(*, gl_accounts(code, name_en))")
         .order("posting_date", { ascending: false })
@@ -1400,8 +1354,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         setJournalEntries(prev => {
           const existingNos = new Set(prev.map(j => j.je_no));
           const mapped: JournalLedgerEntry[] = jData
-            .filter(r => !existingNos.has(r.je_no))
-            .map(r => {
+            .filter((r: any) => !existingNos.has(r.je_no))
+            .map((r: any) => {
               const drLine = r.journal_lines?.find((l: any) => l.debit > 0);
               const crLine = r.journal_lines?.find((l: any) => l.credit > 0);
               return {
@@ -1455,10 +1409,10 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
       const [finPdcRows2, pdcsRows2] = await Promise.all([
         fetchAllPagesFSD((from, to) =>
-          supabase.from("fin_pdc_register").select("*").order("cheque_date", { ascending: true }).range(from, to)
+          db.from("fin_pdc_register").select("*").order("cheque_date", { ascending: true }).range(from, to)
         ),
         fetchAllPagesFSD((from, to) =>
-          supabase.from("pdcs").select("*").order("created_at", { ascending: true }).range(from, to)
+          db.from("pdcs").select("*").order("created_at", { ascending: true }).range(from, to)
         ),
       ]);
       const finPdcRes = { data: finPdcRows2 };
@@ -1637,7 +1591,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
             const chq = extractPdcChequeNo(vn, v.name);
             if (chq) clrKeysInVData.add(`${uKey}:${chq}`);
           }
-          // Keep operational vouchers AND real Supabase PDC deposit/clear/return vouchers
+          // Keep operational vouchers AND real DB PDC deposit/clear/return vouchers
           // (only drop legacy synthesized VCH-PDC-* unless backed by fin_vouchers, to prevent stale cache dupes)
           const nonPdcVouchers = prev.filter(v => {
             const vNo = v.voucher_no || "";
@@ -1851,7 +1805,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
           const combined = [...pdcVouchers, ...kahramaaVouchers, ...sdGuaranteeVouchers, ...nonPdcVouchers];
           try {
-            localStorage.setItem(`${FINANCE_STORAGE_KEY}-vouchers`, JSON.stringify(combined));
+            kvStore.setItem(`${FINANCE_STORAGE_KEY}-vouchers`, JSON.stringify(combined));
           } catch {}
           return combined;
         });
@@ -1873,7 +1827,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       // 4. Pull fin_accounting_events for security deposits, utility deposits, and other
 
       // in-app posting-engine events that were written to the DB but not via fin_vouchers.
-      const { data: evtData } = await supabase
+      const { data: evtData } = await db
         .from("fin_accounting_events")
         .select("*")
         .order("event_date", { ascending: true });
@@ -1939,10 +1893,10 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         });
       }
 
-      // 5. Reload localStorage caches for AP/AR/Cashbook (vouchers are maintained authoritatively above)
-      // 5. Pull fin_payroll_syncs from Supabase & ensure GL reflection
+      // 5. Reload kvStore caches for AP/AR/Cashbook (vouchers are maintained authoritatively above)
+      // 5. Pull fin_payroll_syncs from Db & ensure GL reflection
       try {
-        const { data: pSyncData } = await supabase
+        const { data: pSyncData } = await db
           .from("fin_payroll_syncs")
           .select("*")
           .order("created_at", { ascending: false });
@@ -2005,25 +1959,25 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         console.warn("Payroll syncs DB fetch note:", pErr);
       }
 
-      // 6. Reload localStorage caches for AP/AR/Cashbook (vouchers are maintained authoritatively above)
+      // 6. Reload kvStore caches for AP/AR/Cashbook (vouchers are maintained authoritatively above)
       if (typeof window !== "undefined") {
         try {
-          const jDataSaved = localStorage.getItem(`${FINANCE_STORAGE_KEY}-journals`);
+          const jDataSaved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-journals`);
           if (jDataSaved) {
             const parsed = JSON.parse(jDataSaved);
             if (Array.isArray(parsed) && parsed.length) setJournalEntries(parsed);
           }
-          const arDataSaved = localStorage.getItem(`${FINANCE_STORAGE_KEY}-ar`);
+          const arDataSaved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-ar`);
           if (arDataSaved) {
             const parsed = JSON.parse(arDataSaved);
             if (Array.isArray(parsed) && parsed.length) setReceivableInvoices(parsed);
           }
-          const apDataSaved = localStorage.getItem(`${FINANCE_STORAGE_KEY}-ap`);
+          const apDataSaved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-ap`);
           if (apDataSaved) {
             const parsed = JSON.parse(apDataSaved);
             if (Array.isArray(parsed) && parsed.length) setPayableInvoices(parsed);
           }
-          const cbDataSaved = localStorage.getItem(`${FINANCE_STORAGE_KEY}-cashbook`);
+          const cbDataSaved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-cashbook`);
           if (cbDataSaved) {
             const parsed = JSON.parse(cbDataSaved);
             if (Array.isArray(parsed) && parsed.length) setCashBookEntries(parsed);
@@ -2044,7 +1998,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   };
 
   const refreshFinanceData = async () => {
-    await fetchSupabaseData(true);
+    await fetchDbData(true);
   };
 
   // ── One-time GL Initializer from PDCs ─────────────────────────────────────
@@ -2079,13 +2033,13 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       // + customers + leases for full name resolution
       const [finPdcRows, pdcsRows, customersRes, leasesRes] = await Promise.all([
         fetchAllPages((from, to) =>
-          supabase.from("fin_pdc_register").select("*").order("cheque_date", { ascending: true }).range(from, to)
+          db.from("fin_pdc_register").select("*").order("cheque_date", { ascending: true }).range(from, to)
         ),
         fetchAllPages((from, to) =>
-          supabase.from("pdcs").select("*").order("created_at", { ascending: true }).range(from, to)
+          db.from("pdcs").select("*").order("created_at", { ascending: true }).range(from, to)
         ),
-        supabase.from("customers").select("id, name"),
-        supabase.from("leases").select("id, customer_id, tenant_name, tenantName"),
+        db.from("customers").select("id, name"),
+        db.from("leases").select("id, customer_id, tenant_name, tenantName"),
       ]);
 
       // Wrap in same shape for compatibility
@@ -2271,8 +2225,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
       if (typeof window !== "undefined") {
         try {
-          localStorage.setItem(`${FINANCE_STORAGE_KEY}-vouchers`, JSON.stringify(freshVouchers));
-          localStorage.setItem(`${FINANCE_STORAGE_KEY}-journals`, JSON.stringify([]));
+          kvStore.setItem(`${FINANCE_STORAGE_KEY}-vouchers`, JSON.stringify(freshVouchers));
+          kvStore.setItem(`${FINANCE_STORAGE_KEY}-journals`, JSON.stringify([]));
         } catch {}
       }
 
@@ -2292,12 +2246,12 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  // Pull and subscribe to Supabase data on mount
+  // Pull and subscribe to DB data on mount
   useEffect(() => {
-    void fetchSupabaseData(false);
+    void fetchDbData(false);
 
     // Subscribe to fin_vouchers INSERT events for real-time updates.
-    const voucherChannel = supabase
+    const voucherChannel = db
       .channel("finance-store:fin_vouchers")
       .on(
         "postgres_changes" as any,
@@ -2306,19 +2260,19 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
           const r = payload.new;
           if (!r?.id || seenVoucherIds.current.has(r.id)) return;
           seenVoucherIds.current.add(r.id);
-          const mapped = mapSupabaseVoucherRow(r);
+          const mapped = mapDbVoucherRow(r);
 
           setVouchers(prev => {
             if (prev.some(v => v.id === r.id || v.voucher_no === r.voucher_number)) return prev;
             return [mapped, ...prev];
           });
-          toast.info(`Voucher ${r.voucher_number} posted to GL via Supabase.`);
+          toast.info(`Voucher ${r.voucher_number} posted to GL via Db.`);
         }
       )
       .subscribe();
 
     // Subscribe to fin_accounting_events for visibility into posting-engine writes.
-    const eventChannel = supabase
+    const eventChannel = db
       .channel("finance-store:fin_accounting_events")
       .on(
         "postgres_changes" as any,
@@ -2357,13 +2311,13 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       const STORE_KEY_V = `${FINANCE_STORAGE_KEY}-vouchers`;
       const STORE_KEY_AP = `${FINANCE_STORAGE_KEY}-ap`;
       try {
-        const vData: FinanceVoucher[] = JSON.parse(localStorage.getItem(STORE_KEY_V) || "[]");
+        const vData: FinanceVoucher[] = JSON.parse(kvStore.getItem(STORE_KEY_V) || "[]");
         setVouchers(prev => {
           const existingNos = new Set(prev.map(v => v.voucher_no));
           const newOnes = vData.filter(v => !existingNos.has(v.voucher_no));
           return newOnes.length ? [...newOnes, ...prev] : prev;
         });
-        const apData: PayableInvoice[] = JSON.parse(localStorage.getItem(STORE_KEY_AP) || "[]");
+        const apData: PayableInvoice[] = JSON.parse(kvStore.getItem(STORE_KEY_AP) || "[]");
         setPayableInvoices(prev => {
           const existingNos = new Set(prev.map(i => i.invoice_no));
           const newOnes = apData.filter(i => !existingNos.has(i.invoice_no));
@@ -2378,9 +2332,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
           return merged;
         });
       } catch { /* ignore */ }
-      // Trigger a full supabase re-fetch so any PDC/deposit written by any module
+      // Trigger a full db re-fetch so any PDC/deposit written by any module
       // (pdc-manager, leasing, cashier) shows up in GL immediately
-      void fetchSupabaseData(false);
+      void fetchDbData(false);
     };
     window.addEventListener("finance_vouchers_updated", handleVoucherSync);
     // Run once on mount to pick up any payments made before this render
@@ -2391,7 +2345,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     // cashier, bulk-pdc-deposit-modal) triggers this. We immediately synthesize
     // Entry 1 (PDC Received: Dr 12900001 PDC In Hand / Cr 21400001 Customer PDC
     // Liability) so the GL & Trial Balance update without needing a manual refresh.
-    const pdcChannel = supabase
+    const pdcChannel = db
       .channel("finance-store:pdcs")
       .on(
         "postgres_changes" as any,
@@ -2439,20 +2393,20 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     // Security deposit settlements and PDC status changes produce UPDATEs on
     // existing event rows. The INSERT listener above doesn't catch these,
     // so we trigger a silent re-fetch on any event update.
-    const eventUpdateChannel = supabase
+    const eventUpdateChannel = db
       .channel("finance-store:fin_accounting_events:update")
       .on(
         "postgres_changes" as any,
         { event: "UPDATE", schema: "public", table: "fin_accounting_events" },
-        () => { void fetchSupabaseData(false); }
+        () => { void fetchDbData(false); }
       )
       .subscribe();
 
     return () => {
-      supabase.removeChannel(voucherChannel);
-      supabase.removeChannel(eventChannel);
-      supabase.removeChannel(pdcChannel);
-      supabase.removeChannel(eventUpdateChannel);
+      db.removeChannel(voucherChannel);
+      db.removeChannel(eventChannel);
+      db.removeChannel(pdcChannel);
+      db.removeChannel(eventUpdateChannel);
       window.removeEventListener("finance_vouchers_updated", handleVoucherSync);
     };
   }, []);
@@ -2474,9 +2428,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     setJournalEntries(prev => [newEntry, ...prev]);
     toast.success(`Journal Entry ${newEntry.je_no} posted to General Ledger!`);
 
-    // Persist to Supabase journal_entries table (best-effort, fire-and-forget).
+    // Persist to DB journal_entries table (best-effort, fire-and-forget).
     void Promise.resolve(
-      supabase.from("journal_entries").insert({
+      db.from("journal_entries").insert({
         je_no: newEntry.je_no,
         posting_date: newEntry.posting_date,
         period: newEntry.posting_date?.slice(0, 7) ?? new Date().toISOString().slice(0, 7),
@@ -2548,7 +2502,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     toast.success(`Invoice ${invoiceNo} marked as Paid. Payment Voucher generated.`);
   }
 
-  function addVoucher(vch: Omit<FinanceVoucher, "id" | "status">, options?: { skipSupabasePersist?: boolean }) {
+  function addVoucher(vch: Omit<FinanceVoucher, "id" | "status">, options?: { skipDbPersist?: boolean }) {
     const periodCheck = isPostingPeriodClosed(vch.date);
     if (periodCheck.closed) {
       toast.error(`Posting rejected: Accounting period ${periodCheck.periodName} is CLOSED.`);
@@ -2574,12 +2528,12 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     });
     toast.success(`${newVch.voucher_type} ${newVch.voucher_no} posted successfully!`);
 
-    if (options?.skipSupabasePersist) return;
+    if (options?.skipDbPersist) return;
 
-    // Persist to Supabase fin_vouchers (best-effort, fire-and-forget).
+    // Persist to DB fin_vouchers (best-effort, fire-and-forget).
     const typeCode = newVch.voucher_type === "Payment Voucher" ? "PV" : newVch.voucher_type === "Receipt Voucher" ? "RV" : "JV";
     void Promise.resolve(
-      supabase.from("fin_vouchers").insert({
+      db.from("fin_vouchers").insert({
         voucher_number: newVch.voucher_no,
         voucher_date: newVch.date,
         voucher_type: typeCode,
@@ -2696,7 +2650,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       };
       setVouchers(v => [rv, ...v]);
       void Promise.resolve(
-        supabase.from("fin_vouchers").insert({
+        db.from("fin_vouchers").insert({
           voucher_number: rv.voucher_no,
           voucher_date: rv.date,
           voucher_type: "RV",
@@ -2967,18 +2921,18 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         };
       });
       try {
-        localStorage.setItem(`${FINANCE_STORAGE_KEY}-vouchers`, JSON.stringify(updated));
+        kvStore.setItem(`${FINANCE_STORAGE_KEY}-vouchers`, JSON.stringify(updated));
       } catch {}
       return updated;
     });
 
-    // Best-effort remote update in Supabase fin_vouchers
+    // Best-effort remote update in DB fin_vouchers
     try {
       const updatePayload: Record<string, any> = { voucher_date: newDate };
       if (newBankCode) {
         updatePayload.reference_no = `${newBankCode} - ${newBankName || ""}`.trim();
       }
-      await supabase
+      await db
         .from("fin_vouchers")
         .update(updatePayload)
         .eq("voucher_number", voucherNo);
@@ -2994,9 +2948,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
           if (voucherNo.startsWith("VCH-DEP-")) {
             const pdcUpdate: Record<string, any> = { deposit_date: newDate };
             if (newBankName) pdcUpdate.deposit_bank = newBankName;
-            await supabase.from("pdcs").update(pdcUpdate).eq("id", pdcId);
+            await db.from("pdcs").update(pdcUpdate).eq("id", pdcId);
           } else if (voucherNo.startsWith("VCH-CLR-")) {
-            await supabase.from("pdcs").update({ cleared_date: newDate }).eq("id", pdcId);
+            await db.from("pdcs").update({ cleared_date: newDate }).eq("id", pdcId);
           }
         } catch (e) {
           console.warn("[correctVoucherDate] pdcs date update warning:", e);
@@ -3006,7 +2960,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
     // Record immutable audit log
     try {
-      await supabase.from("security_audit_logs").insert({
+      await db.from("security_audit_logs").insert({
         event_type: "data_mutation",
         severity: "warning",
         action: "CORRECT_VOUCHER_DATE_OR_BANK",
@@ -3408,18 +3362,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       const vchNo = (vch.voucher_no || "").toUpperCase();
       const vchDesc = (vch.name || "").toLowerCase();
       const vchUnit = (vch.unit_ref || "").toUpperCase();
-
-      // Purge/exclude test transactions for OA22-10 / Cheque 35
-      if (
-        vchNo.includes("TRF-35") ||
-        vchNo.includes("TRF-CNL-35") ||
-        vchUnit.includes("OA22-10") ||
-        vchDesc.includes("oa22-10") ||
-        vchDesc.includes("devadas melitta") ||
-        vchDesc.includes("devadas pappu")
-      ) {
-        return;
-      }
 
       const normalizedVch = normalizeVoucherAccounts(vch);
       let debitCode = normalizedVch.debit_code || "12000001";

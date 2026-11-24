@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { useState, useMemo, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -39,7 +40,7 @@ import {
 } from "lucide-react";
 import { useAppData } from "@/lib/app-data-context";
 import { useFinanceStore } from "@/lib/finance/finance-store";
-import { supabase, fetchMaintenanceTickets, type MaintenanceTicket } from "@/lib/supabase";
+import { db, fetchMaintenanceTickets, type MaintenanceTicket } from "@/lib/db";
 import { settleDeposit } from "@/lib/finance/depositService";
 import { toast } from "sonner";
 
@@ -76,7 +77,7 @@ export function SecurityDepositReconciliationSubModule() {
   >(() => {
     if (typeof window === "undefined") return {};
     try {
-      return JSON.parse(localStorage.getItem("pms_deposit_settlements_v1") || "{}");
+      return JSON.parse(kvStore.getItem("pms_deposit_settlements_v1") || "{}");
     } catch {
       return {};
     }
@@ -100,7 +101,7 @@ export function SecurityDepositReconciliationSubModule() {
       .then((res) => setTickets(res || []))
       .catch(() => {});
 
-    supabase
+    db
       .from("fin_deposits")
       .select("*")
       .then(({ data }) => {
@@ -351,7 +352,7 @@ export function SecurityDepositReconciliationSubModule() {
       };
       setSettledLocalMap(nextMap);
       if (typeof window !== "undefined") {
-        localStorage.setItem("pms_deposit_settlements_v1", JSON.stringify(nextMap));
+        kvStore.setItem("pms_deposit_settlements_v1", JSON.stringify(nextMap));
       }
 
       toast.success(

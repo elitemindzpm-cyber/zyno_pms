@@ -1,0 +1,27 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build-and-unit-test:
+    runs-on: ubuntu-latest
+    env:
+      # Placeholder for build-time code only. The database is never contacted in CI.
+      DATABASE_URL: mysql://ci:ci@127.0.0.1:3306/ci
+      JWT_SECRET: ci-only-secret-that-is-long-enough-to-pass-the-check-0123456789
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npx prisma generate
+      - name: Type-check server
+        run: npx tsc --noEmit -p tsconfig.server.json
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Production build
+        run: npm run build

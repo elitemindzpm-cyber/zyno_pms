@@ -15,7 +15,7 @@
  *   6. Guarantee cheque returns
  */
 
-import { supabase } from '../supabase';
+import { db } from '../db';
 import { resolveAccountingAccounts, normalizeUuid } from './account-resolver';
 import { postVoucher, postRentInvoiceReversal, type PostingResult } from './posting-engine';
 import { returnPdc } from './pdcService';
@@ -109,8 +109,8 @@ async function resolveLeaseFinanceContext(params: {
   if (!tenantId || !propertyId || !unitId || !normalizeUuid(params.leaseId)) {
     try {
       const lookup = normalizeUuid(params.leaseId)
-        ? supabase.from('leases').select('id, customer_id, property_id, unit_id').eq('id', params.leaseId).maybeSingle()
-        : supabase.from('leases').select('id, customer_id, property_id, unit_id').eq('lease_number', params.leaseId).maybeSingle();
+        ? db.from('leases').select('id, customer_id, property_id, unit_id').eq('id', params.leaseId).maybeSingle()
+        : db.from('leases').select('id, customer_id, property_id, unit_id').eq('lease_number', params.leaseId).maybeSingle();
       const { data: leaseRow } = await lookup;
       if (leaseRow) {
         leaseUuid = String(leaseRow.id);
@@ -618,7 +618,7 @@ export async function returnFuturePdcsForLease(
 
   // 1. Query all active/held PDCs for this lease in fin_pdc_register
   try {
-    let query = supabase
+    let query = db
       .from('fin_pdc_register')
       .select('*')
       .or(`lease_id.eq.${String(leaseId)}${extra?.tenantId ? `,tenant_id.eq.${extra.tenantId}` : ''}`)
@@ -631,7 +631,7 @@ export async function returnFuturePdcsForLease(
       if (pdc.cheque_number && processedChequeNos.has(pdc.cheque_number)) continue;
       try {
         await returnPdc(pdc.id, pdc.cheque_number);
-        await supabase.from('fin_pdc_register').update({ status: 'Cancelled' }).eq('id', pdc.id);
+        await db.from('fin_pdc_register').update({ status: 'Cancelled' }).eq('id', pdc.id);
         returned.push(pdc);
         if (pdc.cheque_number) processedChequeNos.add(pdc.cheque_number);
       } catch (e: any) {
@@ -644,7 +644,7 @@ export async function returnFuturePdcsForLease(
 
   // 2. Also query and update legacy pdcs table
   try {
-    let query2 = supabase
+    let query2 = db
       .from('pdcs')
       .select('*')
       .or(`lease_id.eq.${String(leaseId)}${extra?.unitCode ? `,unit_name.ilike.%${extra.unitCode}%` : ''}`)
@@ -658,7 +658,7 @@ export async function returnFuturePdcsForLease(
       if (chq && processedChequeNos.has(chq)) continue;
       try {
         await returnPdc(pdc.id, chq).catch(() => {});
-        await supabase.from('pdcs').update({ status: 'cancelled', status_pdc: 'Cancelled' }).eq('id', pdc.id);
+        await db.from('pdcs').update({ status: 'cancelled', status_pdc: 'Cancelled' }).eq('id', pdc.id);
         returned.push(pdc);
         if (chq) processedChequeNos.add(chq);
       } catch (e: any) {
@@ -704,7 +704,7 @@ export async function settleEarlyLeaseVacate(params: {
   const context = await resolveLeaseFinanceContext(params);
   const { leaseUuid, tenantId, propertyId, unitId } = context;
 
-  const { data: events, error } = await supabase
+  const { data: events, error } = await db
     .from('fin_accounting_events')
     .select('id, reference_number, posting_date, description, metadata')
     .eq('lease_id', normalizeUuid(leaseUuid))
@@ -726,15 +726,15 @@ export async function settleEarlyLeaseVacate(params: {
     // metadata are retained as a fallback using their posting date.
     if (origin && origin !== 'RENT_INVOICE') continue;
 
-    const { data: lines, error: lineError } = await supabase
+    const { data: lines, error: lineError } = await db
       .from('fin_accounting_event_lines')
       .select('account_code, debit, credit')
       .eq('event_id', event.id);
     if (lineError) throw lineError;
 
     const rentAmount = (lines ?? [])
-      .filter((l) => l.account_code === '41100001')
-      .reduce((sum, l) => sum + Number(l.credit || 0), 0);
+      .filter((l: any) => l.account_code === '41100001')
+      .reduce((sum: any, l: any) => sum + Number(l.credit || 0), 0);
     if (rentAmount <= 0) continue;
 
     let reversalAmount = 0;
@@ -813,7 +813,7 @@ export async function auditLeaseClosure(leaseId: string | number): Promise<Lease
   const blockers: string[] = [];
 
   // ── 1. Tenant AR (12413 [unit SL]) for this lease ─────────────────────────
-  const { data: arRows, error: arErr } = await supabase
+  const { data: arRows, error: arErr } = await db
     .from('fin_voucher_lines')
     .select('debit, credit, account_code, lease_id, voucher:voucher_id(status)')
     .eq('lease_id', String(leaseId))
@@ -841,7 +841,7 @@ export async function auditLeaseClosure(leaseId: string | number): Promise<Lease
   //    DEPOSIT_TO_REFUNDABLE. QATAR_COOL / KAHRAMAA / SERVICE_FEE live on
   //    21100003/4/5. The 21100006 bucket is the consolidated refundable pool.
   //    All three must net to zero before closure.
-  const { data: depRows, error: depErr } = await supabase
+  const { data: depRows, error: depErr } = await db
     .from('fin_voucher_lines')
     .select('debit, credit, account_code, lease_id, voucher:voucher_id(status)')
     .eq('lease_id', String(leaseId))
@@ -864,7 +864,7 @@ export async function auditLeaseClosure(leaseId: string | number): Promise<Lease
   }
 
   // ── 3. Unclaimed deposit (21100002) — must be 0 before closure ────────────
-  const { data: unRows, error: unErr } = await supabase
+  const { data: unRows, error: unErr } = await db
     .from('fin_voucher_lines')
     .select('debit, credit, account_code, lease_id, voucher:voucher_id(status)')
     .eq('lease_id', String(leaseId))
@@ -887,7 +887,7 @@ export async function auditLeaseClosure(leaseId: string | number): Promise<Lease
   }
 
   // ── 4. Unpresented PDCs for this lease ────────────────────────────────────
-  const { data: pdcs, error: pdcErr } = await supabase
+  const { data: pdcs, error: pdcErr } = await db
     .from('fin_pdc_register')
     .select('id, cheque_number, status, amount')
     .eq('lease_id', String(leaseId))
@@ -895,7 +895,7 @@ export async function auditLeaseClosure(leaseId: string | number): Promise<Lease
 
   if (pdcErr) throw pdcErr;
 
-  const unpresentedPdcs = (pdcs ?? []).map((p) => ({
+  const unpresentedPdcs = (pdcs ?? []).map((p: any) => ({
     id:            p.id as string | number,
     cheque_number: p.cheque_number as string,
     status:        p.status as string,

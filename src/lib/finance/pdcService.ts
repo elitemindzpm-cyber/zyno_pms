@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 import {
   postPdcCollection,
   postPdcDepositToBank,
@@ -8,7 +8,7 @@ import {
   postPdcCancel,
   postVoucher,
 } from './posting-engine';
-import { FinPdcRegisterApi } from '../supabase-finance';
+import { FinPdcRegisterApi } from '../db-finance';
 import { resolveAccountingAccounts, normalizeUuid, type PdcType } from './account-resolver';
 
 // ── Typed errors ──────────────────────────────────────────────────────────────
@@ -129,7 +129,7 @@ async function resolveUuidScope(args: {
   const leaseId = normalizeUuid(args.leaseId as any);
   try {
     if (leaseId) {
-      const { data: lease } = await supabase
+      const { data: lease } = await db
         .from('leases')
         .select('customer_id, property_id, unit_id')
         .eq('id', leaseId)
@@ -144,7 +144,7 @@ async function resolveUuidScope(args: {
     }
     const code = (args.unitCode || '').trim();
     if (code) {
-      const { data: unitRows } = await supabase
+      const { data: unitRows } = await db
         .from('units')
         .select('id, property_id')
         .or(`unit_ref.eq.${code},unit_code.eq.${code},unit_name.eq.${code}`)
@@ -223,7 +223,7 @@ async function resolveGlContext(
   // 1. Direct lookup on fin_pdc_register when we have a numeric or `fin-<id>` identifier
   if (targetFinId) {
     try {
-      const { data } = await supabase
+      const { data } = await db
         .from('fin_pdc_register')
         .select(FIN_PDC_SELECT)
         .eq('id', targetFinId)
@@ -237,7 +237,7 @@ async function resolveGlContext(
   // 2. Direct lookup on pdcs strictly using UUID ids (never pass `fin-...` or `pdc-local-...` into UUID eq)
   if (targetPdcsId) {
     try {
-      const { data } = await supabase
+      const { data } = await db
         .from('pdcs')
         .select('id, sl_no, amount, unit_name, cheque_number, status, status_pdc, maturity_date, property_code, tenant_name, lease_id')
         .eq('id', targetPdcsId)
@@ -251,7 +251,7 @@ async function resolveGlContext(
   // 3. Cross-resolve pdcs via finRow.original_pdc_id -> pdcs.sl_no, or cheque_number + disambiguator
   if (!pdcRow && finRow?.original_pdc_id != null) {
     try {
-      const { data } = await supabase
+      const { data } = await db
         .from('pdcs')
         .select('id, sl_no, amount, unit_name, cheque_number, status, status_pdc, maturity_date, property_code, tenant_name, lease_id')
         .eq('sl_no', Number(finRow.original_pdc_id))
@@ -268,7 +268,7 @@ async function resolveGlContext(
 
   if (!pdcRow && lookupChq) {
     try {
-      const { data: candidates } = await supabase
+      const { data: candidates } = await db
         .from('pdcs')
         .select('id, sl_no, amount, unit_name, cheque_number, status, status_pdc, maturity_date, property_code, tenant_name, lease_id')
         .eq('cheque_number', lookupChq)
@@ -284,7 +284,7 @@ async function resolveGlContext(
   // 4. Cross-resolve fin_pdc_register rows (by original_pdc_id or exact cheque_number + date + amount + unlinked scope)
   if (!finRow && pdcRow?.sl_no != null) {
     try {
-      const { data } = await supabase
+      const { data } = await db
         .from('fin_pdc_register')
         .select(FIN_PDC_SELECT)
         .eq('original_pdc_id', Number(pdcRow.sl_no))
@@ -313,7 +313,7 @@ async function resolveGlContext(
 
     if (!finRow || finIsUnlinked) {
       try {
-        let q = supabase
+        let q = db
           .from('fin_pdc_register')
           .select(FIN_PDC_SELECT)
           .eq('cheque_number', lookupChq);
@@ -426,7 +426,7 @@ export async function receivePdc(payload: {
 
   // Deduplicate active fin_pdc_register entries so re-saving/renewing does not spawn duplicates
   try {
-    const { data: existingRows } = await supabase
+    const { data: existingRows } = await db
       .from('fin_pdc_register')
       .select(FIN_PDC_SELECT)
       .eq('cheque_number', payload.cheque_number)
@@ -452,7 +452,7 @@ export async function receivePdc(payload: {
 
     if (activeExisting) {
       if (targetBankId && activeExisting.bank_id == null) {
-        await supabase
+        await db
           .from('fin_pdc_register')
           .update({ bank_id: Number(targetBankId) })
           .eq('id', activeExisting.id);
@@ -512,15 +512,15 @@ interface FinRegisterStatusUpdate {
 async function findFallbackFinIds(ctx: ResolvedPdcContext): Promise<number[]> {
   try {
     if (ctx.sl_no != null) {
-      const { data } = await supabase
+      const { data } = await db
         .from('fin_pdc_register')
         .select('id')
         .eq('original_pdc_id', ctx.sl_no)
         .limit(10);
-      if (data?.length) return data.map((r: any) => Number(r.id)).filter((n) => n > 0);
+      if (data?.length) return data.map((r: any) => Number(r.id)).filter((n: any) => n > 0);
     }
     if (ctx.cheque_number && ctx.amount > 0) {
-      let q = supabase
+      let q = db
         .from('fin_pdc_register')
         .select('id, tenant_id, property_id, unit_id, original_pdc_id')
         .eq('cheque_number', ctx.cheque_number)
@@ -538,7 +538,7 @@ async function findFallbackFinIds(ctx: ResolvedPdcContext): Promise<number[]> {
             r.original_pdc_id == null,
         );
         const target = unlinked.length ? unlinked : data.length === 1 ? data : [];
-        return target.map((r: any) => Number(r.id)).filter((n) => n > 0);
+        return target.map((r: any) => Number(r.id)).filter((n: any) => n > 0);
       }
     }
   } catch {
@@ -558,7 +558,7 @@ async function updateSingleFinRegisterRow(
   finUpdates: FinRegisterStatusUpdate,
   chequeNumber: string,
 ) {
-  const { data: rpcRow, error: rpcErr } = await supabase.rpc('fin_manual_pdc_status_update', {
+  const { data: rpcRow, error: rpcErr } = await db.rpc('fin_manual_pdc_status_update', {
     p_pdc_id:        finId,
     p_status:        finUpdates.status,
     p_deposit_date:  finUpdates.deposit_date ?? null,
@@ -577,7 +577,7 @@ async function updateSingleFinRegisterRow(
 
   const errMsg = String(rpcErr.message || '');
   const isMissingRpc =
-    rpcErr.code === 'PGRST202' ||
+    (rpcErr as any).code === 'PGRST202' ||
     /fin_manual_pdc_status_update|schema cache|Could not find the function/i.test(errMsg);
 
   if (!isMissingRpc) {
@@ -590,7 +590,7 @@ async function updateSingleFinRegisterRow(
   if (finUpdates.returned_date !== undefined) directPayload.returned_date = finUpdates.returned_date;
   if (finUpdates.bank_id !== undefined) directPayload.bank_id = finUpdates.bank_id;
 
-  const { data: updatedRow, error: updErr } = await supabase
+  const { data: updatedRow, error: updErr } = await db
     .from('fin_pdc_register')
     .update(directPayload)
     .eq('id', finId)
@@ -634,7 +634,7 @@ async function persistPdcStatusUpdate(args: {
   const targetPdcsId =
     parsed.pdcsId || (ctx.pdcId && UUID_RE.test(ctx.pdcId) ? ctx.pdcId : undefined);
   if (targetPdcsId) {
-    const { error: legacyErr } = await supabase
+    const { error: legacyErr } = await db
       .from('pdcs')
       .update(legacyUpdates)
       .eq('id', targetPdcsId);

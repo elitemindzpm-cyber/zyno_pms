@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useRouterState } from "@tanstack/react-router";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -19,9 +20,9 @@ import {
   CreditCard, Ship, DollarSign, Star, Pencil, Trash2, Send, CheckCheck, Search, FileText, Eye,
   ArrowRight, ShieldCheck, PieChart, Layers, Clock, Upload, Download, X, CheckCircle, XCircle
 } from "lucide-react";
-import { fetchProperties, fetchUnits, type Property, type Unit } from "@/lib/supabase";
-import { supabase } from "@/lib/supabase";
-import { FinVendorsApi, type FinVendor } from "@/lib/supabase-finance";
+import { fetchProperties, fetchUnits, type Property, type Unit } from "@/lib/db";
+import { db } from "@/lib/db";
+import { FinVendorsApi, type FinVendor } from "@/lib/db-finance";
 import { nextProcurementDocumentNumber } from "@/lib/procurement/numbering";
 import { ApInvoicesApi, type ProcApInvoice, type PaymentReceipt } from "@/lib/proc-invoices-api";
 import { PaymentReceiptDialog } from "@/components/payment-receipt-dialog";
@@ -33,6 +34,7 @@ import {
   defaultCatalogItems,
   loadCatalogItems,
   persistCatalogItem,
+  deleteCatalogItem,
   persistCatalogBatch,
   exportCatalogCSV
 } from "@/lib/procurement-catalog";
@@ -683,6 +685,40 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
   const [showNewRFX, setShowNewRFX] = useState(false);
   const [showNewQuote, setShowNewQuote] = useState(false);
   const [showCatalogModal, setShowCatalogModal] = useState(false);
+  const [editingCatalogCode, setEditingCatalogCode] = useState<string | null>(null);
+  const emptyCatalogForm: Omit<CatalogItem, "id"> = {
+    item_code: "",
+    name: "",
+    category: "HVAC",
+    item_type: "asset",
+    budget_type: "CAPEX",
+    budget_head: "Property Assets",
+    unit_price: 100,
+    unit_of_measure: "Nos",
+    reorder_level: 5,
+    active: true,
+  };
+  const openNewCatalogItem = () => {
+    setEditingCatalogCode(null);
+    setCatalogForm(emptyCatalogForm);
+    setShowCatalogModal(true);
+  };
+  const openEditCatalogItem = (item: CatalogItem) => {
+    setEditingCatalogCode(item.item_code);
+    const { id: _id, ...rest } = item as CatalogItem;
+    setCatalogForm(rest);
+    setShowCatalogModal(true);
+  };
+  const handleDeleteCatalogItem = async (item: CatalogItem) => {
+    if (!window.confirm(`Delete catalog item ${item.item_code} (${item.name})? This cannot be undone.`)) return;
+    try {
+      const updated = await deleteCatalogItem(item.item_code, catalog);
+      setCatalog(updated);
+      toast.success(`Item ${item.item_code} deleted.`);
+    } catch (e: any) {
+      toast.error(e?.message || "Failed to delete catalog item");
+    }
+  };
   const [showBulkCatalogModal, setShowBulkCatalogModal] = useState(false);
   const [showShipmentModal, setShowShipmentModal] = useState(false);
   const [showReceiptModal, setShowReceiptModal] = useState(false);
@@ -697,7 +733,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
   const [showIssueToJobCardModal, setShowIssueToJobCardModal] = useState(false);
   const [jobCardIssues, setJobCardIssues] = useState<any[]>(() => {
     try {
-      const raw = localStorage.getItem("pms_job_card_material_issues_v1");
+      const raw = kvStore.getItem("pms_job_card_material_issues_v1");
       if (raw) {
         const parsed = JSON.parse(raw);
         if (Array.isArray(parsed)) return parsed;
@@ -760,12 +796,12 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
     const updatedIssues = [newIssue, ...jobCardIssues];
     setJobCardIssues(updatedIssues);
     try {
-      localStorage.setItem("pms_job_card_material_issues_v1", JSON.stringify(updatedIssues));
+      kvStore.setItem("pms_job_card_material_issues_v1", JSON.stringify(updatedIssues));
     } catch {}
 
-    // Decrement maintenance stock in localStorage
+    // Decrement maintenance stock in kvStore
     try {
-      const savedStockRaw = localStorage.getItem("pms_maintenance_stock");
+      const savedStockRaw = kvStore.getItem("pms_maintenance_stock");
       const savedStock: any[] = savedStockRaw ? JSON.parse(savedStockRaw) : [];
       const existingIdx = savedStock.findIndex((s: any) => s.code === issueForm.itemCode);
       if (existingIdx >= 0) {
@@ -778,7 +814,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
           location: "Facility Store (Rack B-04)",
         });
       }
-      localStorage.setItem("pms_maintenance_stock", JSON.stringify(savedStock));
+      kvStore.setItem("pms_maintenance_stock", JSON.stringify(savedStock));
     } catch {}
 
     toast.success(`Issued ${qtyNum} x ${issueForm.itemName} (${issueForm.itemCode}) to Job Card ${issueForm.jobCardNo}`);
@@ -922,7 +958,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
   const [tradeCatLoadError, setTradeCatLoadError] = useState("");
 
   const loadTradeCategories = useCallback(async () => {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from("proc_trade_categories")
       .select("id, name")
       .eq("is_active", true)
@@ -946,7 +982,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
       toast.error(`Trade category "${name}" already exists.`);
       return;
     }
-    const { error } = await supabase.from("proc_trade_categories").insert({
+    const { error } = await db.from("proc_trade_categories").insert({
       name, sort_order: (tradeCategories.length + 1) * 10,
     });
     if (error) { toast.error(`Could not add category: ${error.message}`); return; }
@@ -962,7 +998,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
       toast.error(`"${cat.name}" is used by ${inUse} catalog item(s). Re-categorise them before deleting.`);
       return;
     }
-    const { error } = await supabase.from("proc_trade_categories").delete().eq("id", cat.id);
+    const { error } = await db.from("proc_trade_categories").delete().eq("id", cat.id);
     if (error) { toast.error(`Could not delete category: ${error.message}`); return; }
     toast.success(`Trade category "${cat.name}" deleted.`);
     await loadTradeCategories();
@@ -1009,15 +1045,15 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
         fetchProperties().catch(() => []),
         fetchUnits().catch(() => []),
         FinVendorsApi.fetchAll().catch(() => []),
-        supabase.from("proc_purchase_requests").select("*").order("created_at", { ascending: false }),
-        supabase.from("proc_purchase_orders").select("*").order("created_at", { ascending: false }),
-        supabase.from("proc_purchase_order_lines").select("*").order("line_no", { ascending: true }),
-        supabase.from("proc_goods_receipts").select("*").order("created_at", { ascending: false }),
-        supabase.from("proc_grn_lines").select("*").order("line_no", { ascending: true }),
-        supabase.from("proc_rfx").select("*").order("created_at", { ascending: false }),
-        supabase.from("proc_vendor_quotes").select("*").order("created_at", { ascending: false }),
-        supabase.from("proc_shipments").select("*").order("created_at", { ascending: false }),
-        supabase.from("inventory_parts").select("*"),
+        db.from("proc_purchase_requests").select("*").order("created_at", { ascending: false }),
+        db.from("proc_purchase_orders").select("*").order("created_at", { ascending: false }),
+        db.from("proc_purchase_order_lines").select("*").order("line_no", { ascending: true }),
+        db.from("proc_goods_receipts").select("*").order("created_at", { ascending: false }),
+        db.from("proc_grn_lines").select("*").order("line_no", { ascending: true }),
+        db.from("proc_rfx").select("*").order("created_at", { ascending: false }),
+        db.from("proc_vendor_quotes").select("*").order("created_at", { ascending: false }),
+        db.from("proc_shipments").select("*").order("created_at", { ascending: false }),
+        db.from("inventory_parts").select("*"),
         ApInvoicesApi.fetchAll().catch(() => []),
         loadCatalogItems().catch(() => defaultCatalogItems),
       ]);
@@ -1165,7 +1201,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
       // Encode lines JSON inside remarks for multi-line fidelity
       const remarksPayload = `[LINES_JSON]: ${JSON.stringify(validLines)}\n${prForm.remarks || ""}`.trim();
 
-      const { data, error } = await supabase.from("proc_purchase_requests").insert({
+      const { data, error } = await db.from("proc_purchase_requests").insert({
         doc_number: docNum,
         request_date: new Date().toISOString().slice(0, 10),
         status: "DRAFT",
@@ -1196,7 +1232,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
   async function handleSubmitPR(pr: PurchaseRequest) {
     setSaving(true);
     try {
-      await supabase.from("proc_purchase_requests").update({ status: "SUBMITTED" }).eq("id", pr.id);
+      await db.from("proc_purchase_requests").update({ status: "SUBMITTED" }).eq("id", pr.id);
       toast.success(`PR ${pr.doc_number} submitted for approval.`);
       await loadAll();
     } catch (e: any) {
@@ -1209,7 +1245,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
   async function handleApprovePR(pr: PurchaseRequest) {
     setSaving(true);
     try {
-      await supabase.from("proc_purchase_requests").update({ status: "APPROVED" }).eq("id", pr.id);
+      await db.from("proc_purchase_requests").update({ status: "APPROVED" }).eq("id", pr.id);
       toast.success(`PR ${pr.doc_number} approved. Ready to create RFX or PO.`);
       await loadAll();
     } catch (e: any) {
@@ -1242,7 +1278,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
       const primaryPropertyId = validLines[0]?.propertyId || null;
       const primaryUnitId = validLines[0]?.unitId || null;
 
-      const { data: poData, error: poErr } = await supabase.from("proc_purchase_orders").insert({
+      const { data: poData, error: poErr } = await db.from("proc_purchase_orders").insert({
         doc_number: docNum,
         po_date: new Date().toISOString().slice(0, 10),
         vendor_id: Number(poForm.vendorId) || 1,
@@ -1280,7 +1316,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
         remarks: l.remarks || null,
       }));
 
-      const { error: lineErr } = await supabase.from("proc_purchase_order_lines").insert(linesToInsert);
+      const { error: lineErr } = await db.from("proc_purchase_order_lines").insert(linesToInsert);
       if (lineErr) console.warn("Error inserting PO lines:", lineErr);
 
       // Update PR status to COMPLETED and update remarks with PO details
@@ -1289,7 +1325,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
           const targetPr = prs.find(p => p.id === poForm.sourcePrId);
           const currentRemarks = targetPr?.remarks || "";
           const updatedRemarks = currentRemarks ? `${currentRemarks} • [PO Issued: ${docNum}]` : `[PO Issued: ${docNum}]`;
-          await supabase.from("proc_purchase_requests").update({
+          await db.from("proc_purchase_requests").update({
             status: "COMPLETED",
             posting_status: "POSTED",
             remarks: updatedRemarks,
@@ -1322,7 +1358,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
   async function handleApprovePO(po: PurchaseOrder) {
     setSaving(true);
     try {
-      await supabase.from("proc_purchase_orders").update({ status: "APPROVED" }).eq("id", po.id);
+      await db.from("proc_purchase_orders").update({ status: "APPROVED" }).eq("id", po.id);
       toast.success(`PO ${po.doc_number} approved. Ready to dispatch shipment or receive.`);
       await loadAll();
     } catch (e: any) {
@@ -1384,7 +1420,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
       const grnNum = await nextProcurementDocumentNumber("GRN");
       const totalAccVal = receiveForm.lines.reduce((sum, l) => sum + (Number(l.acceptedQty) || 0) * (Number(l.unitRate) || 0), 0);
 
-      const { data: grnData, error: grnErr } = await supabase.from("proc_goods_receipts").insert({
+      const { data: grnData, error: grnErr } = await db.from("proc_goods_receipts").insert({
         grn_number: grnNum,
         purchase_order_id: po.id,
         vendor_id: po.vendor_id,
@@ -1407,7 +1443,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
         const rate = Number(rl.unitRate) || 0;
         const lineAccVal = accQty * rate;
 
-        await supabase.from("proc_grn_lines").insert({
+        await db.from("proc_grn_lines").insert({
           goods_receipt_id: grnData.id,
           purchase_order_line_id: rl.poLineId || null,
           line_no: idx + 1,
@@ -1426,7 +1462,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
         if (rl.poLineId) {
           const originalPoLine = poLines.find(p => p.id === rl.poLineId);
           if (originalPoLine) {
-            await supabase.from("proc_purchase_order_lines").update({
+            await db.from("proc_purchase_order_lines").update({
               received_quantity: (originalPoLine.received_quantity || 0) + accQty + rejQty,
               accepted_quantity: (originalPoLine.accepted_quantity || 0) + accQty,
               rejected_quantity: (originalPoLine.rejected_quantity || 0) + rejQty,
@@ -1438,14 +1474,14 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
         const isCapexAsset = rl.itemCode?.startsWith("AST-") || rl.itemCode?.startsWith("FUR-") || rl.itemCode?.startsWith("APP-");
         if (isCapexAsset && accQty > 0) {
           try {
-            const { data: existingAsset } = await supabase
+            const { data: existingAsset } = await db
               .from("assets")
               .select("id")
               .eq("asset_tag", rl.itemCode)
               .maybeSingle();
 
             if (!existingAsset) {
-              await supabase.from("assets").insert({
+              await db.from("assets").insert({
                 asset_tag: rl.itemCode,
                 name: rl.itemName,
                 category: rl.itemCode?.startsWith("AST-HVAC") ? "HVAC" : rl.itemCode?.startsWith("AST-PUMP") ? "Plumbing" : rl.itemCode?.startsWith("AST-FUR") ? "Furnishing" : "Appliances",
@@ -1464,7 +1500,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
         }
       }
 
-      await supabase.from("proc_purchase_orders").update({
+      await db.from("proc_purchase_orders").update({
         status: "CLOSED",
         posting_status: "POSTED",
       }).eq("id", po.id);
@@ -1548,7 +1584,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
       };
 
       if (editShipment) {
-        const { error } = await supabase.from("proc_shipments").update({
+        const { error } = await db.from("proc_shipments").update({
           shipping_mode: shipmentForm.carrierName,
           tracking_number: shipmentForm.trackingNumber || null,
           origin_country: shipmentForm.originCountry || "Qatar",
@@ -1562,7 +1598,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
         toast.success(`Shipment updated successfully.`);
       } else {
         const shNum = await nextProcurementDocumentNumber("SH");
-        const { error } = await supabase.from("proc_shipments").insert({
+        const { error } = await db.from("proc_shipments").insert({
           shipment_number: shNum,
           purchase_order_id: shipmentForm.purchaseOrderId,
           vendor_id: targetPo?.vendor_id || 1,
@@ -1594,10 +1630,10 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
     setPaymentTargetInvoice(inv);
     const vendorName = getVendorName(Number(inv.vendor_id));
     const partialKey = `partial_paid_${inv.id}`;
-    const alreadyPaid = Number(localStorage.getItem(partialKey) || "0");
+    const alreadyPaid = Number(kvStore.getItem(partialKey) || "0");
     const outstanding = Number(inv.total_amount || 0) - alreadyPaid;
     const advKey = `vendor_advance_${inv.vendor_id}`;
-    const advBalance = Number(localStorage.getItem(advKey) || "0");
+    const advBalance = Number(kvStore.getItem(advKey) || "0");
 
     setPaymentForm({
       paymentDate: new Date().toISOString().slice(0, 10),
@@ -1626,9 +1662,9 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
       const inv = paymentTargetInvoice;
       const totalDue = Number(inv.total_amount || 0);
       const partialKey = `partial_paid_${inv.id}`;
-      const alreadyPaid = Number(localStorage.getItem(partialKey) || "0");
+      const alreadyPaid = Number(kvStore.getItem(partialKey) || "0");
       const advKey = `vendor_advance_${inv.vendor_id}`;
-      const advBalance = Number(localStorage.getItem(advKey) || "0");
+      const advBalance = Number(kvStore.getItem(advKey) || "0");
 
       const cashAmount = paymentForm.paymentAmount;
       const advApplied = paymentForm.applyAdvance ? Math.min(paymentForm.advanceAmount, advBalance) : 0;
@@ -1636,9 +1672,9 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
       const newTotalPaid = alreadyPaid + effectivePaid;
       const isFullySettled = newTotalPaid >= totalDue - 0.01;
 
-      localStorage.setItem(partialKey, String(newTotalPaid));
+      kvStore.setItem(partialKey, String(newTotalPaid));
       if (advApplied > 0) {
-        localStorage.setItem(advKey, String(advBalance - advApplied));
+        kvStore.setItem(advKey, String(advBalance - advApplied));
       }
 
       await ApInvoicesApi.update(inv.id, {
@@ -1726,7 +1762,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
               </Button>
             )}
             {activeTab === "catalog" && (
-              <Button size="sm" onClick={() => setShowCatalogModal(true)}>
+              <Button size="sm" onClick={openNewCatalogItem}>
                 <Plus className="mr-2 h-4 w-4" /> Add Master Item
               </Button>
             )}
@@ -2013,75 +2049,6 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
               </div>
             )}
 
-            {/* Material Issue Register: GRN -> Job Cards */}
-            <Card className="border shadow-xs">
-              <CardHeader className="py-3 px-4 flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <Wrench className="h-4 w-4 text-amber-600" />
-                    Material Issues to Maintenance Job Cards (GRN → Job Card Register)
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    Issue received GRN materials and spare parts directly into respective Maintenance Job Cards / Work Orders and Units.
-                  </CardDescription>
-                </div>
-                <Button
-                  size="sm"
-                  className="h-8 text-xs gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
-                  onClick={() => openIssueToJobCardModal()}
-                >
-                  <Plus className="h-3.5 w-3.5" /> Issue Material to Job Card
-                </Button>
-              </CardHeader>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-muted/50 text-xs">
-                      <TableHead className="font-bold">Issue #</TableHead>
-                      <TableHead className="font-bold">Issue Date</TableHead>
-                      <TableHead className="font-bold">Job Card / Work Order #</TableHead>
-                      <TableHead className="font-bold">GRN Ref</TableHead>
-                      <TableHead className="font-bold">Property &amp; Unit</TableHead>
-                      <TableHead className="font-bold">Item Code &amp; Description</TableHead>
-                      <TableHead className="text-right font-bold">Qty Issued</TableHead>
-                      <TableHead className="font-bold">Issued To (Technician)</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {jobCardIssues.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={8} className="text-center py-6 text-xs text-muted-foreground">
-                          No materials issued to Job Cards yet. Click &ldquo;Issue to Job Card&rdquo; on any GRN above or &ldquo;Issue Material to Job Card&rdquo; to allocate received items to a Job Card.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      jobCardIssues.map((iss) => (
-                        <TableRow key={iss.id} className="text-xs hover:bg-muted/30">
-                          <TableCell className="font-mono font-bold text-primary">{iss.issueNo}</TableCell>
-                          <TableCell className="font-mono">{iss.issueDate}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="font-mono text-xs border-amber-500/40 bg-amber-500/10 text-amber-800">
-                              {iss.jobCardNo}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="font-mono text-muted-foreground">{iss.grnRef}</TableCell>
-                          <TableCell>
-                            <div className="font-medium">{iss.property}</div>
-                            <div className="text-[11px] font-mono text-muted-foreground">Unit: {iss.unit}</div>
-                          </TableCell>
-                          <TableCell>
-                            <span className="font-mono font-bold text-primary mr-1.5">{iss.itemCode}</span>
-                            <span className="font-medium">{iss.itemName}</span>
-                          </TableCell>
-                          <TableCell className="text-right font-mono font-bold text-rose-600">-{iss.qty}</TableCell>
-                          <TableCell className="text-muted-foreground">{iss.technician}</TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
           </div>
         )}
 
@@ -2168,7 +2135,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                                   onClick={async () => {
                                     setSaving(true);
                                     try {
-                                      await supabase.from("proc_purchase_orders").update({ status: "APPROVED" }).eq("id", po.id);
+                                      await db.from("proc_purchase_orders").update({ status: "APPROVED" }).eq("id", po.id);
                                       toast.success(`Purchase Order ${po.doc_number} confirmed and approved! Ready for Shipment or GRN Receiving.`);
                                       await loadAll();
                                     } catch (e: any) {
@@ -2228,75 +2195,6 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
               </div>
             )}
 
-            {/* Material Issue Register: GRN -> Job Cards */}
-            <Card className="border shadow-xs">
-              <CardHeader className="py-3 px-4 flex flex-row items-center justify-between">
-                <div>
-                  <CardTitle className="text-sm font-bold flex items-center gap-2">
-                    <Wrench className="h-4 w-4 text-amber-600" />
-                    Material Issues to Maintenance Job Cards (GRN → Job Card Register)
-                  </CardTitle>
-                  <CardDescription className="text-xs">
-                    Issue received GRN materials and spare parts directly into respective Maintenance Job Cards / Work Orders and Units.
-                  </CardDescription>
-                </div>
-                <Button
-                  size="sm"
-                  className="h-8 text-xs gap-1.5 bg-amber-600 hover:bg-amber-700 text-white"
-                  onClick={() => openIssueToJobCardModal()}
-                >
-                  <Plus className="h-3.5 w-3.5" /> Issue Material to Job Card
-                </Button>
-              </CardHeader>
-              <CardContent className="p-0">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="bg-muted/50 text-xs">
-                      <TableHead className="font-bold">Issue #</TableHead>
-                      <TableHead className="font-bold">Issue Date</TableHead>
-                      <TableHead className="font-bold">Job Card / Work Order #</TableHead>
-                      <TableHead className="font-bold">GRN Ref</TableHead>
-                      <TableHead className="font-bold">Property &amp; Unit</TableHead>
-                      <TableHead className="font-bold">Item Code &amp; Description</TableHead>
-                      <TableHead className="text-right font-bold">Qty Issued</TableHead>
-                      <TableHead className="font-bold">Issued To (Technician)</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {jobCardIssues.length === 0 ? (
-                      <TableRow>
-                        <TableCell colSpan={8} className="text-center py-6 text-xs text-muted-foreground">
-                          No materials issued to Job Cards yet. Click &ldquo;Issue to Job Card&rdquo; on any GRN above or &ldquo;Issue Material to Job Card&rdquo; to allocate received items to a Job Card.
-                        </TableCell>
-                      </TableRow>
-                    ) : (
-                      jobCardIssues.map((iss) => (
-                        <TableRow key={iss.id} className="text-xs hover:bg-muted/30">
-                          <TableCell className="font-mono font-bold text-primary">{iss.issueNo}</TableCell>
-                          <TableCell className="font-mono">{iss.issueDate}</TableCell>
-                          <TableCell>
-                            <Badge variant="outline" className="font-mono text-xs border-amber-500/40 bg-amber-500/10 text-amber-800">
-                              {iss.jobCardNo}
-                            </Badge>
-                          </TableCell>
-                          <TableCell className="font-mono text-muted-foreground">{iss.grnRef}</TableCell>
-                          <TableCell>
-                            <div className="font-medium">{iss.property}</div>
-                            <div className="text-[11px] font-mono text-muted-foreground">Unit: {iss.unit}</div>
-                          </TableCell>
-                          <TableCell>
-                            <span className="font-mono font-bold text-primary mr-1.5">{iss.itemCode}</span>
-                            <span className="font-medium">{iss.itemName}</span>
-                          </TableCell>
-                          <TableCell className="text-right font-mono font-bold text-rose-600">-{iss.qty}</TableCell>
-                          <TableCell className="text-muted-foreground">{iss.technician}</TableCell>
-                        </TableRow>
-                      ))
-                    )}
-                  </TableBody>
-                </Table>
-              </CardContent>
-            </Card>
           </div>
         )}
 
@@ -2907,7 +2805,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                   {apInvoices.map(inv => {
                     const isPaid = inv.status === "PAID";
                     const totalDue = Number(inv.total_amount || 0);
-                    const alreadyPaid = Number(localStorage.getItem(`partial_paid_${inv.id}`) || "0");
+                    const alreadyPaid = Number(kvStore.getItem(`partial_paid_${inv.id}`) || "0");
                     const outstanding = totalDue - alreadyPaid;
                     const isPartial = (inv.status as string) === "PARTIAL";
                     const matchedVendor = vendors.find(v => String(v.id) === String(inv.vendor_id));
@@ -3261,7 +3159,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                         </TableRow>
                       )}
                       {catalog.filter(c => ["maintenance_spare", "consumable"].includes(c.item_type)).map(item => {
-                        // Retrieve live onHand from Supabase inventory_parts API table
+                        // Retrieve live onHand from DB inventory_parts API table
                         let onHand = Number((item as any).on_hand_qty ?? (item as any).quantity_on_hand ?? 25);
                         let storageLoc = (item as any).storage_location || (item as any).warehouse_location || "Facility Store (Rack B-04)";
                         const matchedPart = inventoryParts.find(p => p.sku === item.item_code || p.name?.toLowerCase() === item.name.toLowerCase() || p.procurement_item_id === item.id);
@@ -3270,7 +3168,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                           if (matchedPart.location) storageLoc = matchedPart.location;
                         } else {
                           try {
-                            const savedStock = JSON.parse(localStorage.getItem("pms_maintenance_stock") || "[]");
+                            const savedStock = JSON.parse(kvStore.getItem("pms_maintenance_stock") || "[]");
                             const matched = savedStock.find((s: any) => s.code === item.item_code || s.name?.toLowerCase().includes(item.name?.toLowerCase().slice(0, 10)));
                             if (matched && typeof matched.onHand === "number") {
                               onHand = matched.onHand;
@@ -3361,7 +3259,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                     <Upload className="h-3.5 w-3.5" /> Bulk Import
                   </Button>
                   <Button size="sm" className="h-8 text-xs gap-1.5"
-                    onClick={() => setShowCatalogModal(true)}>
+                    onClick={openNewCatalogItem}>
                     <Plus className="h-3.5 w-3.5" /> Add Master Item
                   </Button>
                 </div>
@@ -3436,10 +3334,20 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                             </Badge>
                           </TableCell>
                           <TableCell className="text-right">
-                            <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
-                              onClick={() => setSelectedCatalogDetail(item)}>
-                              <Eye className="h-3 w-3" /> View Details
-                            </Button>
+                            <div className="flex justify-end gap-1.5">
+                              <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                                onClick={() => setSelectedCatalogDetail(item)}>
+                                <Eye className="h-3 w-3" /> View Details
+                              </Button>
+                              <Button size="sm" variant="outline" className="h-7 text-xs gap-1"
+                                onClick={() => openEditCatalogItem(item)}>
+                                <Pencil className="h-3 w-3" /> Edit
+                              </Button>
+                              <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-red-600 border-red-500/40 hover:bg-red-50"
+                                onClick={() => handleDeleteCatalogItem(item)}>
+                                <Trash2 className="h-3 w-3" /> Delete
+                              </Button>
+                            </div>
                           </TableCell>
                         </TableRow>
                       ))}
@@ -3527,10 +3435,10 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                   {(() => {
                     const totalDue = Number(paymentTargetInvoice.total_amount || 0);
                     const partialKey = `partial_paid_${paymentTargetInvoice.id}`;
-                    const alreadyPaid = Number(localStorage.getItem(partialKey) || "0");
+                    const alreadyPaid = Number(kvStore.getItem(partialKey) || "0");
                     const outstanding = totalDue - alreadyPaid;
                     const advKey = `vendor_advance_${paymentTargetInvoice.vendor_id}`;
-                    const advBalance = Number(localStorage.getItem(advKey) || "0");
+                    const advBalance = Number(kvStore.getItem(advKey) || "0");
                     const payingNow = paymentForm.paymentAmount;
                     const advApplied = paymentForm.applyAdvance ? Math.min(paymentForm.advanceAmount, advBalance) : 0;
                     const remaining = outstanding - payingNow - advApplied;
@@ -3983,7 +3891,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                 {(() => {
                   let movements: Array<any> = [];
                   try {
-                    const raw = localStorage.getItem("pms_stock_movements");
+                    const raw = kvStore.getItem("pms_stock_movements");
                     if (raw) {
                       const parsed = JSON.parse(raw);
                       if (Array.isArray(parsed)) {
@@ -5339,7 +5247,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Package className="h-5 w-5 text-emerald-600" />
-              Add Master Item to Catalog
+              {editingCatalogCode ? `Edit Master Item ${editingCatalogCode}` : "Add Master Item to Catalog"}
             </DialogTitle>
             <DialogDescription>
               Define a new item in the Item Master. All fields should match your item's classification, budget mapping, and inventory control settings.
@@ -5352,7 +5260,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
               <p className="font-semibold text-[11px] uppercase tracking-wider text-muted-foreground">Item Identification</p>
               <div className="grid grid-cols-2 gap-3">
                 <Field label="Item Code *">
-                  <Input value={catalogForm.item_code} onChange={e => setCatalogForm({ ...catalogForm, item_code: e.target.value })} placeholder="e.g. MNT-FLT-002 / AST-HVAC-003" />
+                  <Input value={catalogForm.item_code} disabled={!!editingCatalogCode} onChange={e => setCatalogForm({ ...catalogForm, item_code: e.target.value })} placeholder="e.g. MNT-FLT-002 / AST-HVAC-003" />
                 </Field>
                 <Field label="Item Name / Description *">
                   <Input value={catalogForm.name} onChange={e => setCatalogForm({ ...catalogForm, name: e.target.value })} placeholder="Full item name and description" />
@@ -5470,15 +5378,19 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
             <Button
               className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1"
               onClick={async () => {
-                const newItem: CatalogItem = { ...catalogForm, id: `cat-${Date.now()}` };
+                const existing = editingCatalogCode ? catalog.find(c => c.item_code === editingCatalogCode) : undefined;
+                const newItem: CatalogItem = { ...catalogForm, id: existing?.id ?? `cat-${Date.now()}` };
                 const updated = await persistCatalogItem(newItem, catalog);
                 setCatalog(updated);
                 setShowCatalogModal(false);
-                toast.success(`Item "${newItem.name}" (${newItem.item_code}) added & synced to database.`);
+                setEditingCatalogCode(null);
+                toast.success(editingCatalogCode
+                  ? `Item "${newItem.name}" (${newItem.item_code}) updated & synced to database.`
+                  : `Item "${newItem.name}" (${newItem.item_code}) added & synced to database.`);
               }}
               disabled={!catalogForm.name || !catalogForm.item_code || !catalogForm.category}
             >
-              <Package className="h-4 w-4" /> Save Item to Catalog
+              <Package className="h-4 w-4" /> {editingCatalogCode ? "Update Item" : "Save Item to Catalog"}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -5734,7 +5646,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                       onClick={async () => {
                         setSaving(true);
                         try {
-                          await supabase.from("proc_purchase_orders").update({ status: "APPROVED" }).eq("id", viewPo.id);
+                          await db.from("proc_purchase_orders").update({ status: "APPROVED" }).eq("id", viewPo.id);
                           toast.success(`Purchase Order ${viewPo.doc_number} approved!`);
                           setViewPo({ ...viewPo, status: "APPROVED" });
                           await loadAll();

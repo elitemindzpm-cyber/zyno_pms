@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Users, Download, Printer, Building2, Search } from "lucide-react";
 import { useFinanceStore } from "@/lib/finance/finance-store";
-import { FinVendorsApi } from "@/lib/supabase-finance";
+import { FinVendorsApi } from "@/lib/db-finance";
 import { toast } from "sonner";
 
 interface VendorLedgerRow {

@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { toast } from "sonner";
 import { Loader2, Lock, Eye, EyeOff, CheckCircle2, AlertCircle } from "lucide-react";
 
@@ -22,18 +22,18 @@ function ResetPasswordPage() {
   const [hasSession, setHasSession] = useState<boolean | null>(null);
 
   useEffect(() => {
-    // Supabase passes recovery token in URL hash / active session
-    supabase.auth.getSession().then(({ data }) => {
+    // DB passes recovery token in URL hash / active session
+    db.auth.getSession().then(({ data }) => {
       if (data?.session) {
         setHasSession(true);
       } else {
         // Also listen for PASSWORD_RECOVERY event
-        const { data: authListener } = supabase.auth.onAuthStateChange((event) => {
+        const { data: authListener } = db.auth.onAuthStateChange((event) => {
           if (event === "PASSWORD_RECOVERY") {
             setHasSession(true);
           }
         });
-        // Default to true so user can submit (Supabase will validate the token on updateUser)
+        // Default to true so user can submit (DB will validate the token on updateUser)
         setHasSession(true);
         return () => authListener.subscription.unsubscribe();
       }
@@ -56,7 +56,7 @@ function ResetPasswordPage() {
     setLoading(true);
 
     try {
-      const { error } = await supabase.auth.updateUser({
+      const { error } = await db.auth.updateUser({
         password: password,
       });
 
@@ -66,7 +66,7 @@ function ResetPasswordPage() {
       toast.success("Password updated successfully! You can now log in.");
       
       // Sign out recovery session so user logs in cleanly with new credentials
-      await supabase.auth.signOut();
+      await db.auth.signOut();
 
       setTimeout(() => {
         navigate({ to: "/auth" as any });

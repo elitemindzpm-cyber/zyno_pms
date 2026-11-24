@@ -1,10 +1,11 @@
+import { kvStore } from "@/lib/kv-store";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 
@@ -48,7 +49,7 @@ function NewLeaseForm() {
 
     try {
       // 1. Create the customer first
-      const { data: customerData, error: customerError } = await supabase
+      const { data: customerData, error: customerError } = await db
         .from('customers')
         .insert({
           full_name: formData.customerName,
@@ -66,7 +67,7 @@ function NewLeaseForm() {
       const termMonths = formData.hasRentFree ? 13 : 12;
 
       // 2. Create the lease attached to the customer
-      const { data: leaseData, error: leaseError } = await supabase
+      const { data: leaseData, error: leaseError } = await db
         .from('leases')
         .insert({
           customer_id: customerData.id,
@@ -89,7 +90,7 @@ function NewLeaseForm() {
 
       // 3. Persist overrides to browser storage for instant reload hydration
       try {
-        const stored = JSON.parse(localStorage.getItem('pms_custom_lease_overrides') || '{}');
+        const stored = JSON.parse(kvStore.getItem('pms_custom_lease_overrides') || '{}');
         const overridePayload = {
           commencement_date: formData.startDate,
           expiry_date: formData.endDate,
@@ -107,9 +108,9 @@ function NewLeaseForm() {
         if (leaseData?.id) {
           stored[leaseData.id] = overridePayload;
         }
-        localStorage.setItem('pms_custom_lease_overrides', JSON.stringify(stored));
+        kvStore.setItem('pms_custom_lease_overrides', JSON.stringify(stored));
       } catch (e) {
-        console.warn("Could not save to localStorage:", e);
+        console.warn("Could not save to kvStore:", e);
       }
 
       toast.success(formData.hasRentFree ? "13-Month Concession Lease Draft created successfully!" : "Lease draft created successfully!");

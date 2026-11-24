@@ -38,7 +38,7 @@ import {
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
 import { DynamicMastersService } from "@/lib/dynamic-masters-service";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { receivePdc } from "@/lib/finance/pdcService";
 import { postLeaseDepositReceipt } from "@/lib/finance/posting-engine";
 import { saveImportBatch, getImportBatchHistory, type AuditLogEntry } from "@/lib/excel-import/storage-service";
@@ -845,7 +845,7 @@ export function BulkPdcDepositModal({
 
               // Check existing PDC by compound key (cheque_number + unit_name) to avoid
               // overwriting a different unit's PDC that happens to share the same cheque number.
-              const { data: existingPdc } = await supabase
+              const { data: existingPdc } = await db
                 .from("pdcs")
                 .select("id")
                 .eq("cheque_number", item.chequeNumber)
@@ -853,7 +853,7 @@ export function BulkPdcDepositModal({
                 .maybeSingle();
 
               if (existingPdc?.id) {
-                await supabase
+                await db
                   .from("pdcs")
                   .update({
                     bank: item.bank,
@@ -870,7 +870,7 @@ export function BulkPdcDepositModal({
                   })
                   .eq("id", existingPdc.id);
               } else {
-                await supabase.from("pdcs").insert({
+                await db.from("pdcs").insert({
                   cheque_number: item.chequeNumber,
                   bank: item.bank,
                   maturity_date: safeMaturityDate,
@@ -921,7 +921,7 @@ export function BulkPdcDepositModal({
             try {
               const numAmount = typeof item.amount === "number" ? item.amount : parseFloat(String(item.amount).replace(/,/g, "")) || 0;
               const safeMaturityDate = formatDateToIso(item.maturityDate);
-              await supabase
+              await db
                 .from("fin_pdc_register")
                 .update({
                   amount: numAmount,
@@ -929,7 +929,7 @@ export function BulkPdcDepositModal({
                 })
                 .eq("cheque_number", item.chequeNumber);
 
-              await supabase
+              await db
                 .from("pdcs")
                 .update({
                   amount: numAmount,
@@ -950,8 +950,8 @@ export function BulkPdcDepositModal({
         } else if (selectedOperation === "DELETE") {
           const chqNos = pdcList.map((r) => r.chequeNumber);
           if (chqNos.length > 0) {
-            await supabase.from("fin_pdc_register").delete().in("cheque_number", chqNos);
-            await supabase.from("pdcs").delete().in("cheque_number", chqNos);
+            await db.from("fin_pdc_register").delete().in("cheque_number", chqNos);
+            await db.from("pdcs").delete().in("cheque_number", chqNos);
           }
           successCount += chqNos.length;
         }

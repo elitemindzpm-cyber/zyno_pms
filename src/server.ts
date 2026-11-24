@@ -1,22 +1,3 @@
-// ── WebSocket polyfill ─────────────────────────────────────────────────────
-// Supabase Realtime (via @supabase/realtime-js) requires a global WebSocket.
-// Node 22+ ships one natively; Node 20 (Netlify default) does not.
-// We patch globalThis.WebSocket once, before the app server entry is imported,
-// so the polyfill is in place for every subsequent Supabase client import.
-if (typeof globalThis.WebSocket === "undefined") {
-  try {
-    // eslint-disable-next-line @typescript-eslint/no-var-requires
-    // @ts-ignore
-    const { WebSocket: WsImpl } = await import("ws");
-    // @ts-ignore
-    globalThis.WebSocket = WsImpl;
-  } catch {
-    // ws not installed – this will be caught downstream when Realtime connects
-    console.warn("[server] ws package not found; Supabase Realtime may fail on this runtime.");
-  }
-}
-// ───────────────────────────────────────────────────────────────────────────
-
 import "./lib/error-capture";
 
 import { consumeLastCapturedError } from "./lib/error-capture";

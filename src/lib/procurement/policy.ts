@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type ProcurementApprovalPolicy = {
   allowed: boolean;
@@ -27,7 +27,7 @@ export type ProcurementPolicySnapshot = {
 };
 
 export async function resolveProcurementApprovalPolicy(amount: number, documentType = 'PO', tenantId?: string | null) {
-  const { data, error } = await supabase.rpc('proc_resolve_approval_policy', {
+  const { data, error } = await db.rpc('proc_resolve_approval_policy', {
     p_document_type: documentType,
     p_amount: amount,
     p_tenant_id: tenantId ?? null,
@@ -37,13 +37,13 @@ export async function resolveProcurementApprovalPolicy(amount: number, documentT
 }
 
 export async function getProcurementPolicySnapshot(tenantId?: string | null) {
-  const { data, error } = await supabase.rpc('proc_policy_admin_snapshot', { p_tenant_id: tenantId ?? null });
+  const { data, error } = await db.rpc('proc_policy_admin_snapshot', { p_tenant_id: tenantId ?? null });
   if (error) throw error;
   return data as ProcurementPolicySnapshot;
 }
 
 export async function activateProcurementPolicyVersion(policyId: string, effectiveTo?: string | null) {
-  const { error } = await supabase
+  const { error } = await db
     .from('procurement_policy_versions')
     .update({ status: 'ACTIVE', effective_to: effectiveTo ?? null, updated_at: new Date().toISOString() })
     .eq('id', policyId);
@@ -58,7 +58,7 @@ export async function createProcurementPolicyVersion(input: {
   effectiveTo?: string | null;
   notes?: string;
 }) {
-  const { data, error } = await supabase.from('procurement_policy_versions').insert({
+  const { data, error } = await db.from('procurement_policy_versions').insert({
     policy_code: input.policyCode,
     version_no: input.versionNo,
     status: 'DRAFT',
@@ -81,7 +81,7 @@ export async function createProcurementPolicyRule(input: {
   slaHours?: number;
   escalationRole?: string | null;
 }) {
-  const { data, error } = await supabase.from('procurement_policy_rules').insert({
+  const { data, error } = await db.from('procurement_policy_rules').insert({
     policy_version_id: input.policyVersionId,
     document_type: input.documentType ?? 'PO',
     min_amount: input.minAmount,
@@ -106,7 +106,7 @@ export async function createProcurementDelegation(input: {
   effectiveTo: string;
   reason?: string;
 }) {
-  const { data, error } = await supabase.from('procurement_approval_delegations').insert({
+  const { data, error } = await db.from('procurement_approval_delegations').insert({
     policy_version_id: input.policyVersionId ?? null,
     source_role: input.sourceRole ?? null,
     delegate_role: input.delegateRole ?? null,

@@ -5,7 +5,9 @@ import { v4 as uuidv4 } from 'uuid';
 async function seedUser() {
   try {
     const email = 'alameenadmin@yopmail.com';
-    const password = 'Mindz@007';
+    // Supplied at run time, never stored in source: SEED_ADMIN_PASSWORD=... npx tsx scripts/seed_admin.ts
+    const password = process.env.SEED_ADMIN_PASSWORD;
+    if (!password) throw new Error('Set SEED_ADMIN_PASSWORD before running this script');
     const salt = await bcrypt.genSalt(10);
     const passwordHash = await bcrypt.hash(password, salt);
 
@@ -72,7 +74,7 @@ async function seedUser() {
       console.log('Profile updated');
     }
 
-    console.log('SUCCESS: alameenadmin@yopmail.com / Mindz@007 ready!');
+    console.log('SUCCESS: admin user seeded for alameenadmin@yopmail.com ready!');
   } catch (err) {
     console.error('Error seeding user:', err);
   } finally {

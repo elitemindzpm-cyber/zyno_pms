@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 
 export interface FinVoucher {
   id: string;
@@ -18,7 +18,7 @@ export function useFinanceVouchers(filters?: { type?: string; status?: string })
   return useQuery({
     queryKey: ["finance-vouchers", filters],
     queryFn: async () => {
-      let query = supabase
+      let query = db
         .from("fin_vouchers")
         .select("*")
         .order("voucher_date", { ascending: false });
@@ -42,7 +42,7 @@ export function useCreateFinanceVoucher() {
 
   return useMutation({
     mutationFn: async (payload: Omit<FinVoucher, "id" | "created_at">) => {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("fin_vouchers")
         .insert({
           ...payload,

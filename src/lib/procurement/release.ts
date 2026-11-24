@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type ProcurementReleaseReadiness = {
   po_id: string;
@@ -16,13 +16,13 @@ export type ProcurementSchemaSmokeCheck = {
 };
 
 export async function getProcurementReleaseReadiness(poId: string): Promise<ProcurementReleaseReadiness> {
-  const { data, error } = await supabase.rpc('proc_release_readiness', { p_po_id: poId });
+  const { data, error } = await db.rpc('proc_release_readiness', { p_po_id: poId });
   if (error) throw error;
   return data as ProcurementReleaseReadiness;
 }
 
 export async function runProcurementSchemaSmokeCheck(): Promise<ProcurementSchemaSmokeCheck> {
-  const { data, error } = await supabase.rpc('proc_schema_smoke_check');
+  const { data, error } = await db.rpc('proc_schema_smoke_check');
   if (error) throw error;
   return data as ProcurementSchemaSmokeCheck;
 }

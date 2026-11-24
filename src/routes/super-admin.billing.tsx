@@ -15,7 +15,7 @@ import { Textarea } from "@/components/ui/textarea";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter
 } from "@/components/ui/dialog";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { RBAC_MODULES } from "@/lib/rbac";
 import { logSecurityEvent } from "@/lib/security";
 import { toast } from "sonner";
@@ -81,7 +81,7 @@ export function BillingPage() {
   async function loadPlans() {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("platform_subscription_plans")
         .select("*")
         .order("display_order", { ascending: true });
@@ -229,7 +229,7 @@ export function BillingPage() {
     try {
       if (editingPlanId) {
         // Update existing plan
-        const { error } = await supabase
+        const { error } = await db
           .from("platform_subscription_plans")
           .update({
             name: planForm.name,
@@ -260,7 +260,7 @@ export function BillingPage() {
         toast.success(`Plan "${planForm.name}" updated successfully!`);
       } else {
         // Insert new plan
-        const { error } = await supabase
+        const { error } = await db
           .from("platform_subscription_plans")
           .insert({
             name: planForm.name,

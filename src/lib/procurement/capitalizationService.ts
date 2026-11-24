@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 import { createAccountingEvent } from '../finance/accounting-event-engine';
 import { postAccountingEvent } from '../finance/posting-engine';
 import { resolveGlOnlyAccount } from '../finance/account-resolver';
@@ -13,17 +13,17 @@ import { resolveGlOnlyAccount } from '../finance/account-resolver';
  */
 
 export async function capitalizePurchase(purchaseId: string) {
-  const { data: purchase, error } = await supabase.from('proc_purchases').select('*').eq('id', purchaseId).single();
+  const { data: purchase, error } = await db.from('proc_purchases').select('*').eq('id', purchaseId).single();
   if (error) throw error;
   if (purchase.posting_status === 'POSTED') return purchase;
 
-  const { data: lines, error: linesError } = await supabase.from('proc_purchase_lines').select('*').eq('purchase_id', purchaseId).eq('item_type', 'CAPEX');
+  const { data: lines, error: linesError } = await db.from('proc_purchase_lines').select('*').eq('purchase_id', purchaseId).eq('item_type', 'CAPEX');
   if (linesError) throw linesError;
   const amount = (lines ?? []).reduce((sum: number, line: any) => sum + Number(line.total_amount || 0), 0);
   if (amount <= 0) throw new Error('No CAPEX amount is available for capitalization.');
 
   const firstAssetCategory = (lines?.[0] as any)?.asset_category as string | null | undefined;
-  const { data: assetAccount } = await supabase
+  const { data: assetAccount } = await db
     .from('fin_coa_accounts')
     .select('account_code, account_name')
     .eq('is_active', true)
@@ -67,7 +67,7 @@ export async function capitalizePurchase(purchaseId: string) {
   await postAccountingEvent(event.id);
 
   // Asset creation itself remains owned by the existing Assets module; this phase posts the capitalization event.
-  const { data: updated, error: updateError } = await supabase.from('proc_purchases').update({
+  const { data: updated, error: updateError } = await db.from('proc_purchases').update({
     posting_status: 'POSTED', status: 'APPROVED', accounting_event_id: event.id, capitalized_amount: amount,
   }).eq('id', purchaseId).select().single();
   if (updateError) throw updateError;

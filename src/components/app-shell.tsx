@@ -5,7 +5,7 @@ import { type ReactNode, useState, useEffect } from "react";
 
 import { clearDemoSession } from "@/lib/demo-auth";
 import { getImpersonationSession, stopImpersonation } from "@/lib/impersonation";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { cn } from "@/lib/utils";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { InAppNotificationBell } from "@/components/in-app-notification-bell";
@@ -98,7 +98,7 @@ export function AppShell({
 
   async function handleSignOut() {
     clearDemoSession();
-    await supabase.auth.signOut();
+    await db.auth.signOut();
     navigate({ to: "/auth" });
   }
 

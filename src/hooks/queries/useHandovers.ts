@@ -1,11 +1,11 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase, type KeyHandover, type InspectionReport } from "@/lib/supabase";
+import { db, type KeyHandover, type InspectionReport } from "@/lib/db";
 
 export function useKeyHandovers(leaseId?: string) {
   return useQuery({
     queryKey: ["key-handovers", leaseId],
     queryFn: async () => {
-      let query = supabase
+      let query = db
         .from("key_handovers")
         .select("*")
         .order("created_at", { ascending: false });
@@ -26,7 +26,7 @@ export function useCreateKeyHandover() {
 
   return useMutation({
     mutationFn: async (payload: Omit<KeyHandover, "id" | "created_at">) => {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("key_handovers")
         .insert({
           ...payload,
@@ -48,7 +48,7 @@ export function useInspectionReports(leaseId?: string) {
   return useQuery({
     queryKey: ["inspection-reports", leaseId],
     queryFn: async () => {
-      let query = supabase
+      let query = db
         .from("inspection_reports")
         .select("*")
         .order("inspection_date", { ascending: false });
@@ -69,7 +69,7 @@ export function useCreateInspectionReport() {
 
   return useMutation({
     mutationFn: async (payload: Omit<InspectionReport, "id" | "created_at" | "updated_at">) => {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("inspection_reports")
         .insert({
           ...payload,

@@ -1,4 +1,4 @@
-import { supabase, type Asset } from '../../supabase';
+import { db, type Asset } from '../../db';
 import { 
   type EntityImportAdapter, 
   type ColumnDefinition, 
@@ -77,7 +77,7 @@ export const assetAdapter: EntityImportAdapter = {
     if (keys.length === 0) return map;
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('assets')
         .select('*')
         .in('asset_code', keys);
@@ -199,7 +199,7 @@ export const assetAdapter: EntityImportAdapter = {
     const assignedPropCode = normalized['assigned_property_code'];
     if (assignedPropCode && assignedPropCode !== '[NULL]') {
       try {
-        const { data: propData } = await supabase
+        const { data: propData } = await db
           .from('properties')
           .select('id')
           .ilike('property_code', assignedPropCode)
@@ -232,7 +232,7 @@ export const assetAdapter: EntityImportAdapter = {
     const assignedEmpId = normalized['assigned_employee_id'];
     if (assignedEmpId && assignedEmpId !== '[NULL]') {
       try {
-        const { data: empData } = await supabase
+        const { data: empData } = await db
           .from('employees')
           .select('id, first_name, last_name')
           .ilike('employee_id_code', assignedEmpId)
@@ -359,7 +359,7 @@ export const assetAdapter: EntityImportAdapter = {
           remarks: data.remarks,
         };
 
-        const { data: created, error } = await supabase.from('assets').insert(payload).select().single();
+        const { data: created, error } = await db.from('assets').insert(payload).select().single();
         if (error) throw error;
 
         return {
@@ -381,7 +381,7 @@ export const assetAdapter: EntityImportAdapter = {
           updatePayload[change.field] = change.newValue === '[CLEARED]' ? null : change.newValue;
         }
 
-        const { error } = await supabase.from('assets').update(updatePayload).eq('id', existing.id);
+        const { error } = await db.from('assets').update(updatePayload).eq('id', existing.id);
         if (error) throw error;
 
         return {
@@ -394,7 +394,7 @@ export const assetAdapter: EntityImportAdapter = {
         const existing = record.originalDbData;
         if (!existing?.id) throw new Error('Asset record ID not found');
 
-        const { error } = await supabase.from('assets').update({ asset_status: 'Disposed', updated_at: new Date().toISOString() }).eq('id', existing.id);
+        const { error } = await db.from('assets').update({ asset_status: 'Disposed', updated_at: new Date().toISOString() }).eq('id', existing.id);
         if (error) throw error;
 
         return {

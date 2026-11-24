@@ -4,7 +4,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { fetchJournalEntries, type JournalEntry } from "@/lib/supabase";
+import { fetchJournalEntries, type JournalEntry } from "@/lib/db";
 import { useFinanceStore } from "@/lib/finance/finance-store";
 import { Loader2, Search, Download } from "lucide-react";
 import { toast } from "sonner";

@@ -1,4 +1,4 @@
-import { supabase, createUnit, updateUnit, type Unit } from '../../supabase';
+import { db, createUnit, updateUnit, type Unit } from '../../db';
 import { 
   type EntityImportAdapter, 
   type ColumnDefinition, 
@@ -79,7 +79,7 @@ export const unitAdapter: EntityImportAdapter = {
 
     try {
       // Fetch units with joined property_code
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('units')
         .select('*, properties(id, property_code, title)');
 
@@ -136,7 +136,7 @@ export const unitAdapter: EntityImportAdapter = {
     let matchedProperty: any = null;
     if (rawPropCode) {
       try {
-        const { data: propData } = await supabase
+        const { data: propData } = await db
           .from('properties')
           .select('id, property_code, title, no_of_units')
           .ilike('property_code', rawPropCode)
@@ -205,7 +205,7 @@ export const unitAdapter: EntityImportAdapter = {
         if (!(context as any).cache) (context as any).cache = {};
         if ((context as any).cache[cacheKey] === undefined) {
           try {
-            const { count } = await supabase
+            const { count } = await db
               .from('units')
               .select('id', { count: 'exact', head: true })
               .eq('property_id', propertyId);
@@ -301,7 +301,7 @@ export const unitAdapter: EntityImportAdapter = {
     // Protection rule: If active lease exists, protect occupied status
     if (existingRecord) {
       try {
-        const { data: activeLeases } = await supabase
+        const { data: activeLeases } = await db
           .from('leases')
           .select('id, lease_number, lease_status')
           .eq('unit_id', existingRecord.id)

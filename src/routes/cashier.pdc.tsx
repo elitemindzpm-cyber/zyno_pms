@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import { Search, CreditCard, Building2, AlertCircle, CheckCircle2, Clock, Wifi, Loader2, Banknote } from "lucide-react";
 import { useAppData } from "@/lib/app-data-context";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { depositPdc, clearPdc, returnPdc, cashDepositInPlaceOfPdc, receivePdc } from "@/lib/finance/pdcService";
 import { collectSecurityDeposit } from "@/lib/finance/depositService";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -98,7 +98,7 @@ function LegacyCashierPDCs() {
   async function loadDbPdcs() {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("fin_pdc_register")
         .select("*")
         .order("cheque_date", { ascending: true });

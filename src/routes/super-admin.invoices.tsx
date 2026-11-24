@@ -12,7 +12,7 @@ import { Input } from "@/components/ui/input";
 import {
   Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter
 } from "@/components/ui/dialog";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { toast } from "sonner";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 
@@ -103,8 +103,8 @@ export function InvoicesPage() {
         return inv;
       }));
 
-      // Try updating in supabase if row exists
-      await supabase
+      // Try updating in db if row exists
+      await db
         .from("tenant_subscription_invoices")
         .update({
           status: "Paid",
@@ -126,7 +126,7 @@ export function InvoicesPage() {
   async function loadInvoices() {
     setLoading(true);
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("tenant_subscription_invoices")
         .select("*")
         .order("created_at", { ascending: false });

@@ -59,11 +59,11 @@ import {
   fetchSecurityDepositTypes,
   fetchUnits,
   fetchViewTypes,
-  supabase,
+  db,
   updateUnit,
   type MasterItem,
   type Unit,
-} from "@/lib/supabase";
+} from "@/lib/db";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { useAppData } from "@/lib/app-data-context";
 
@@ -267,7 +267,7 @@ export function UnitsModule({ role }: UnitsModuleProps) {
     try {
       const {
         data: { session },
-      } = await supabase.auth.getSession();
+      } = await db.auth.getSession();
       const hostId = session?.user?.id || "00000000-0000-4000-8000-000000000001";
 
       const [fur, ls, rf, mr, dt, vt] = await Promise.all([
@@ -447,7 +447,7 @@ export function UnitsModule({ role }: UnitsModuleProps) {
             const unitLabel = form.unit_code || form.unit_ref || created.id.slice(0, 6);
             const unitCcCode = `CC-UNIT-${created.id.slice(0, 8).toUpperCase()}`;
             const unitCcName = `Unit ${unitLabel} Cost Center`;
-            await supabase.from('fin_cost_centers').upsert({
+            await db.from('fin_cost_centers').upsert({
               code: unitCcCode,
               name: unitCcName,
               manager: '',

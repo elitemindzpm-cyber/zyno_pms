@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { createFileRoute } from "@tanstack/react-router";
 import { createReservation as persistReservation, scheduleReservationExpiryNotification } from "@/lib/reservationService";
 import { checkExpiringReservationsAndNotify } from "@/lib/notificationService";
@@ -15,7 +16,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import {
   AlertCircle,
   BadgeCheck,
@@ -58,7 +59,6 @@ import {
   voucherDocumentMasters,
 } from "@/lib/reference-data";
 import { ReceiptModal, type TenantReceiptDetails } from "@/components/receipt-modal";
-import { generateReceiptBlob } from "@/components/receipt-template";
 import { toast } from "sonner";
 import { LeaseRenewalStepperModal, type RenewalSubmitData } from "@/components/lease-renewal-stepper-modal";
 
@@ -1010,6 +1010,7 @@ function LeasingPage() {
             },
           ],
         };
+        const { generateReceiptBlob } = await import("@/components/receipt-template");
         const blob = await generateReceiptBlob(receiptData);
         const url = URL.createObjectURL(blob);
         setTokenReceiptUrl(url);
@@ -1222,10 +1223,10 @@ function LeasingPage() {
       setLeases(prev => prev.map(l => l.id === targetLease.id ? { ...l, status: "active" as LeaseStatus } : l));
       setUnits(prev => prev.map(u => (u.unit === targetLease.unit || (u as any).unit_number === targetLease.unit) ? { ...u, status: "Occupied" } : u));
       try {
-        void supabase.from("leases").update({ status: "active" }).eq("id", targetLease.id);
-        void supabase.from("units").update({ status: "Occupied" }).eq("unit_number", targetLease.unit);
+        void db.from("leases").update({ status: "active" }).eq("id", targetLease.id);
+        void db.from("units").update({ status: "Occupied" }).eq("unit_number", targetLease.unit);
       } catch (e) {
-        console.warn("Lease approval Supabase sync:", e);
+        console.warn("Lease approval DB sync:", e);
       }
     }
 
@@ -1641,7 +1642,7 @@ function LeasingPage() {
 
     // Persist renewal PDCs to persistent browser storage so they are immediately available in PDC Management
     try {
-      const existingRaw = localStorage.getItem("pms_renewal_pdcs");
+      const existingRaw = kvStore.getItem("pms_renewal_pdcs");
       const existingList: any[] = existingRaw ? JSON.parse(existingRaw) : [];
       const updatedList = [
         ...renewalPdcs.map(rp => ({
@@ -1655,12 +1656,12 @@ function LeasingPage() {
         })),
         ...existingList.filter(item => item.leaseId !== renewed.id && !renewalPdcs.some(rp => rp.chequeNo === item.chequeNo && rp.unit === item.unit)),
       ];
-      localStorage.setItem("pms_renewal_pdcs", JSON.stringify(updatedList));
+      kvStore.setItem("pms_renewal_pdcs", JSON.stringify(updatedList));
     } catch (e) {
-      console.warn("Error storing renewal PDCs to localStorage:", e);
+      console.warn("Error storing renewal PDCs to kvStore:", e);
     }
 
-    // Persist renewal PDCs directly to Supabase pdcs and fin_pdc_register
+    // Persist renewal PDCs directly to DB pdcs and fin_pdc_register
     try {
       const dbPdcs = renewalPdcs.map(p => ({
         cheque_number: p.chequeNo,
@@ -1678,7 +1679,7 @@ function LeasingPage() {
         rent_to_date: p.tenureEnd,
         lease_id: renewed.id,
       }));
-      void supabase.from("pdcs").insert(dbPdcs).then(({ error }) => {
+      void db.from("pdcs").insert(dbPdcs).then(({ error }) => {
         if (error) console.warn("[renewLease] pdcs insert note:", error.message);
         else console.log("[renewLease] PDCs inserted into pdcs table successfully");
       });
@@ -1693,11 +1694,11 @@ function LeasingPage() {
         property_name: oldLease.property,
         tenant_name: oldLease.tenantName,
       }));
-      void supabase.from("fin_pdc_register").insert(dbFinPdcs).then(({ error }) => {
+      void db.from("fin_pdc_register").insert(dbFinPdcs).then(({ error }) => {
         if (error) console.warn("[renewLease] fin_pdc_register insert note:", error.message);
       });
     } catch (e) {
-      console.warn("Error persisting renewal PDCs to Supabase:", e);
+      console.warn("Error persisting renewal PDCs to Db:", e);
     }
 
     window.dispatchEvent(new CustomEvent("pdcs_updated"));
@@ -2017,11 +2018,11 @@ function LeasingPage() {
       };
       newVouchers.push(rentVoucher);
 
-      // Post GL to Supabase fin_vouchers
+      // Post GL to DB fin_vouchers
       const drCode = isPdc ? "12900001" : isCash ? "12100001" : "12000001";
       const drName = isPdc ? "Rent PDC In Hand" : isCash ? "Cash in Hand / Operating Cash" : "Bank Operating Account (QNB)";
       const postingDate = renewalResponseForm.rentPaymentDate || today.toISOString().split("T")[0];
-      void supabase.from("fin_vouchers").insert({
+      void db.from("fin_vouchers").insert({
         voucher_number: `VCH-RENT-${rentRef}`,
         voucher_date: postingDate,
         voucher_type: "RV",
@@ -2031,7 +2032,7 @@ function LeasingPage() {
         posted_at: new Date().toISOString(),
       }).select("id").single().then(({ data: vData, error: vErr }) => {
         if (!vErr && vData?.id) {
-          void supabase.from("fin_voucher_lines").insert([
+          void db.from("fin_voucher_lines").insert([
             { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: rentAmt, credit: 0, description: `Rent Differential — ${oldLease.tenantName}` },
             { voucher_id: vData.id, account_code: "41100001", account_name: "Rental Revenue", debit: 0, credit: rentAmt, description: `Rent Differential — ${oldLease.tenantName}` },
           ]);
@@ -2075,11 +2076,11 @@ function LeasingPage() {
         ]);
       }
 
-      // Post GL to Supabase fin_vouchers
+      // Post GL to DB fin_vouchers
       const drCode = isPdc ? "12900001" : isCash ? "12100001" : "12000001";
       const drName = isPdc ? "Rent PDC In Hand" : isCash ? "Cash in Hand / Operating Cash" : "Bank Operating Account (QNB)";
       const postingDate = renewalResponseForm.securityChequeDate || today.toISOString().split("T")[0];
-      void supabase.from("fin_vouchers").insert({
+      void db.from("fin_vouchers").insert({
         voucher_number: `VCH-SD-${sdRef}`,
         voucher_date: postingDate,
         voucher_type: "RV",
@@ -2089,7 +2090,7 @@ function LeasingPage() {
         posted_at: new Date().toISOString(),
       }).select("id").single().then(({ data: vData, error: vErr }) => {
         if (!vErr && vData?.id) {
-          void supabase.from("fin_voucher_lines").insert([
+          void db.from("fin_voucher_lines").insert([
             { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: depositTopUp, credit: 0, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
             { voucher_id: vData.id, account_code: "21500001", account_name: "Security Deposit Liability", debit: 0, credit: depositTopUp, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
           ]);
@@ -2153,14 +2154,14 @@ function LeasingPage() {
       output: `Refund processed, lease closed, unit updated to ${settlement.unitDisposition || "Available"}, full history retained`,
     });
 
-    // -- Persist checkout to Supabase so occupancy survives page refresh
+    // -- Persist checkout to DB so occupancy survives page refresh
     if (lease) {
       const dbUnitStatus = (settlement.unitDisposition || "Available").toLowerCase().includes("maintenance")
         ? "Vacant - Under Maintenance"
         : "Available";
       const matchedUnit = units.find((u) => u.unit === lease.unit);
       if (matchedUnit?.id) {
-        supabase
+        db
           .from("units")
           .update({
             status: dbUnitStatus,
@@ -2185,7 +2186,7 @@ function LeasingPage() {
           ? lease.id
           : null;
       if (leaseDbId) {
-        supabase
+        db
           .from("leases")
           .update({ lease_status: "CLOSED", updated_at: new Date().toISOString() } as any)
           .eq("id", leaseDbId)
@@ -2400,7 +2401,7 @@ function LeasingPage() {
       ? "Vacant - Under Maintenance"
       : "Available") as Unit["status"];
     setUnits((items) => items.map((item) => (item.unit === lease.unit ? { ...item, status: releasedStatus } : item)));
-    void supabase
+    void db
       .from("units")
       .update({
         status: releasedStatus,

@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type ThreeWayMatchResult = {
   status: 'PASSED' | 'FAILED' | 'OVERRIDE';
@@ -18,7 +18,7 @@ export type LifecycleValidation = {
 };
 
 export async function runThreeWayMatch(invoiceId: string, toleranceAmount = 0.01): Promise<ThreeWayMatchResult> {
-  const { data, error } = await supabase.rpc('proc_run_three_way_match', {
+  const { data, error } = await db.rpc('proc_run_three_way_match', {
     p_invoice_id: invoiceId,
     p_tolerance_amount: toleranceAmount,
   });
@@ -27,7 +27,7 @@ export async function runThreeWayMatch(invoiceId: string, toleranceAmount = 0.01
 }
 
 export async function allocateLandedCost(landedCostId: string) {
-  const { data, error } = await supabase.rpc('proc_allocate_landed_cost', {
+  const { data, error } = await db.rpc('proc_allocate_landed_cost', {
     p_landed_cost_id: landedCostId,
   });
   if (error) throw error;
@@ -35,19 +35,19 @@ export async function allocateLandedCost(landedCostId: string) {
 }
 
 export async function validateProcurementLifecycle(purchaseOrderId: string): Promise<LifecycleValidation> {
-  const { data, error } = await supabase.rpc('proc_validate_lifecycle', { p_po_id: purchaseOrderId });
+  const { data, error } = await db.rpc('proc_validate_lifecycle', { p_po_id: purchaseOrderId });
   if (error) throw error;
   return data as LifecycleValidation;
 }
 
 export async function finalizePurchase(purchaseId: string) {
-  const { data, error } = await supabase.rpc('proc_finalize_purchase', { p_purchase_id: purchaseId });
+  const { data, error } = await db.rpc('proc_finalize_purchase', { p_purchase_id: purchaseId });
   if (error) throw error;
   return data as { purchase_id: string; status: string; ready_for_capitalization: boolean };
 }
 
 export async function getThreeWayMatch(invoiceId: string) {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('proc_three_way_matches')
     .select('*')
     .eq('payable_invoice_id', invoiceId)

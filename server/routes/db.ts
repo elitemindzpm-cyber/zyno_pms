@@ -1,13 +1,125 @@
 // server/routes/db.ts
 // Universal REST query proxy for Prisma models
-// Powers the frontend REST-backed Supabase proxy with 100% MariaDB execution
+// Powers the frontend REST-backed DB proxy with 100% MariaDB execution
 
-import { Router, Request, Response } from 'express';
+import { Router, Request, Response, NextFunction } from 'express';
 import prisma from '../lib/prisma';
+import { txn } from '../lib/prisma';
+import { coerceForModel, buildIncludeFromSelect } from '../lib/coerce';
+import { postAccountingEvent, resolveUnitSl, refreshEventTotals, validateEventBalance, manualPdcStatusUpdate, nextCustomerCode } from '../lib/finance-rpc';
+import { HttpError, sendDbError } from '../lib/errors';
+import { dbAllowed, ruleFor, rpcAllowed, type Op } from '../lib/db-policy';
+import { createLease, terminateLease, insertPdc, isTerminatedLease } from '../services/leases';
+import { createUnit, createCustomer, createReservation, assertPropertyDeletable } from '../services/property';
+
+// Tables whose inserts run the shared business rules (the same functions the dedicated routes use).
+const DOMAIN_INSERT: Record<string, (row: any) => Promise<any>> = {
+  leases: createLease,
+  reservations: createReservation,
+  units: createUnit,
+  customers: createCustomer,
+  fin_pdc_register: insertPdc,   // the "pdcs" table name is an alias for fin_pdc_register
+};
+import { isTenant, tenantLeaseWhere } from '../lib/tenant-policy';
+
+// Tenant ticket rule: the unit must be on an active lease held by this tenant.
+async function tenantHoldsActiveLeaseForUnitRef(claims: { sub: string; email?: string }, unitRef: string | null) {
+  if (!unitRef) return false;
+  const units = await prisma.units.findMany({ where: { unit_ref: unitRef }, select: { id: true } });
+  if (!units.length) return false;
+  const lease = await prisma.leases.findFirst({
+    where: {
+      AND: [
+        tenantLeaseWhere(claims),
+        { unit_id: { in: units.map((u) => u.id) } },
+        { lease_status: { in: ['ACTIVE', 'Active', 'active'] } },
+      ],
+    },
+    select: { id: true },
+  });
+  return !!lease;
+}
+
+// Stock is consumed with a conditional update, so on-hand quantity can never go negative.
+async function recordMaterialUsage(usage: any) {
+  return txn(async (tx) => {
+    const qty = Number(usage.quantity);
+    if (!Number.isInteger(qty) || qty <= 0) throw new HttpError(400, 'Quantity must be a positive whole number');
+    if (usage.part_id) {
+      const parts = await tx.$queryRaw<{ id: string; name: string; quantity_on_hand: number }[]>`
+        SELECT id, name, quantity_on_hand FROM inventory_parts WHERE id = ${usage.part_id} FOR UPDATE`;
+      if (!parts.length) throw new HttpError(404, `Part ${usage.part_id} was not found`);
+      const part = parts[0];
+      if (Number(part.quantity_on_hand) < qty) {
+        throw new HttpError(400,
+          `Insufficient stock available for part ${part.name}. Available: ${part.quantity_on_hand}, Requested: ${qty}`);
+      }
+      await tx.$executeRaw`UPDATE inventory_parts SET quantity_on_hand = quantity_on_hand - ${qty}
+        WHERE id = ${part.id} AND quantity_on_hand >= ${qty}`;
+    }
+    return tx.material_usage.create({ data: usage });
+  });
+}
+
+// Leave: the request must fit within the employee's remaining balance (balance minus pending) for that year.
+async function recordLeaveApplication(app: any) {
+  return txn(async (tx) => {
+    const requested = Number(app.days_count);
+    const year = new Date(app.start_date).getUTCFullYear();
+    if (app.employee_id && app.leave_type_id) {
+      const bal = await tx.hrms_leave_balances.findFirst({
+        where: { employee_id: app.employee_id, leave_type_id: app.leave_type_id, year },
+      });
+      if (bal) {
+        const available = Number(bal.balance ?? 0) - Number(bal.pending ?? 0);
+        if (requested > available) {
+          throw new HttpError(422, `Insufficient leave balance. Available: ${available} days, Requested: ${requested} days`);
+        }
+        await tx.hrms_leave_balances.update({ where: { id: bal.id }, data: { pending: { increment: requested } } });
+      }
+    }
+    return tx.hrms_leave_applications.create({ data: app });
+  });
+}
+
+// Next number from proc_document_sequences (shared by document numbering and entity codes).
+export async function nextSequenceNumber(docType: string, fiscalYear: number, prefix: string): Promise<string> {
+  const row = await txn(async (tx) => {
+    await tx.$executeRaw`INSERT INTO proc_document_sequences (document_type, prefix, current_number, padding_length, fiscal_year)
+      VALUES (${docType}, ${prefix}, 1, 6, ${fiscalYear})
+      ON DUPLICATE KEY UPDATE current_number = current_number + 1`;
+    const rows = await tx.$queryRaw<{ prefix: string; current_number: bigint; padding_length: number }[]>`
+      SELECT prefix, current_number, padding_length FROM proc_document_sequences
+      WHERE document_type = ${docType} AND fiscal_year = ${fiscalYear}`;
+    return rows[0];
+  });
+  const pad = Number(row.padding_length) || 6;
+  return `${row.prefix || prefix}-${String(Number(row.current_number)).padStart(pad, '0')}`;
+}
 
 const router = Router();
 
-// Table aliases for backwards compatibility with legacy Supabase code
+// Permission check for every /api/db request, before any handler runs. Deny by default.
+const OP_FOR_ROUTE: Record<string, Op> = { query: 'read', insert: 'write', upsert: 'write', update: 'write', delete: 'delete' };
+router.use((req: Request, res: Response, next: NextFunction) => {
+  const role = (req as any).user?.role as string | undefined;
+  const parts = req.path.split('/').filter(Boolean);   // ['<table>', '<op>']  or  ['rpc', '<fn>']
+  if (parts[0] === 'rpc') {
+    if (!rpcAllowed(role, parts[1] ?? '')) return res.status(403).json({ data: null, error: 'INSUFFICIENT_PERMISSIONS' });
+    return next();
+  }
+  const [table, route] = parts;
+  const op = OP_FOR_ROUTE[route ?? ''];
+  if (!table || !op) return next();                     // unknown route: falls through to 404
+  const model = resolveModelName(table);
+  if (!dbAllowed(role, model, op)) {
+    return res.status(403).json({ data: null, error: 'INSUFFICIENT_PERMISSIONS', requiredRole: ruleFor(model)[op] });
+  }
+  next();
+});
+const ACCOUNT_LINE_TABLES = new Set(['fin_accounting_event_lines', 'fin_voucher_lines']);
+
+// Table aliases for backwards compatibility with legacy DB code
 const TABLE_ALIASES: Record<string, string> = {
   pdcs: 'fin_pdc_register',
   gl_accounts: 'fin_coa_accounts',
@@ -37,7 +149,7 @@ function resolveModelName(table: string): string {
 // ── Query (findMany / findFirst / count) ──────────────────────────────────────
 router.post('/:table/query', async (req: Request, res: Response) => {
   try {
-    const table = req.params.table;
+    const table = req.params.table as string;
     const modelName = resolveModelName(table);
     const model = (prisma as any)[modelName];
 
@@ -56,7 +168,9 @@ router.post('/:table/query', async (req: Request, res: Response) => {
       single = false,
       maybeSingle = false,
       countOnly = false,
+      select,
     } = req.body;
+    const include = buildIncludeFromSelect(modelName, select);
 
     // Filter out unsupported columns or format conditions
     const cleanWhere: Record<string, any> = {};
@@ -64,6 +178,10 @@ router.post('/:table/query', async (req: Request, res: Response) => {
       if (val !== undefined) {
         cleanWhere[key] = val;
       }
+    }
+    // Tenants see only their own tickets, whatever the request asks for.
+    if (isTenant(req) && modelName === 'maintenance_tickets') {
+      cleanWhere.tenant_id = (req as any).user.tenant_id;
     }
 
     if (countOnly) {
@@ -75,6 +193,7 @@ router.post('/:table/query', async (req: Request, res: Response) => {
       const item = await model.findFirst({
         where: cleanWhere,
         orderBy,
+        ...(include ? { include } : {}),
       });
 
       if (single && !item) {
@@ -89,6 +208,7 @@ router.post('/:table/query', async (req: Request, res: Response) => {
     const queryOptions: any = {
       where: cleanWhere,
     };
+    if (include) queryOptions.include = include;
     if (orderBy) queryOptions.orderBy = orderBy;
     if (typeof skip === 'number') queryOptions.skip = skip;
     if (typeof take === 'number') queryOptions.take = take;
@@ -97,14 +217,118 @@ router.post('/:table/query', async (req: Request, res: Response) => {
     return res.json({ data: items, error: null, count: items.length });
   } catch (err: any) {
     console.error(`[db-proxy query error on ${req.params.table}]`, err.message);
-    return res.status(500).json({ data: null, error: err.message });
+    return sendDbError(res, err, 'db-proxy');
+  }
+});
+
+// ── RPC: database functions the app calls by name ─────────────────────────────
+// Only functions that are ported are implemented. Anything else returns an explicit error.
+router.post('/rpc/:fn', async (req: Request, res: Response) => {
+  const fn = req.params.fn as string;
+  try {
+    if (fn === 'proc_next_document_number') {
+      const docType = String(req.body?.p_doc_type || '').toUpperCase();
+      const fiscalYear = Number(req.body?.p_fiscal_year);
+      if (!docType || !Number.isInteger(fiscalYear)) {
+        return res.status(400).json({ data: null, error: 'p_doc_type and p_fiscal_year are required' });
+      }
+      const row = await txn(async (tx) => {
+        await tx.$executeRaw`INSERT INTO proc_document_sequences (document_type, prefix, current_number, padding_length, fiscal_year)
+          VALUES (${docType}, ${docType}, 1, 6, ${fiscalYear})
+          ON DUPLICATE KEY UPDATE current_number = current_number + 1`;
+        const rows = await tx.$queryRaw<{ prefix: string; current_number: bigint; padding_length: number }[]>`
+          SELECT prefix, current_number, padding_length FROM proc_document_sequences
+          WHERE document_type = ${docType} AND fiscal_year = ${fiscalYear}`;
+        return rows[0];
+      });
+      const pad = Number(row.padding_length) || 6;
+      const docNo = `${row.prefix || docType}-${fiscalYear}-${String(Number(row.current_number)).padStart(pad, '0')}`;
+      return res.json({ data: docNo, error: null });
+    }
+    if (fn === 'post_accounting_event_atomic') {
+      const data = await postAccountingEvent(String(req.body?.p_event_id || ''));
+      return res.json({ data, error: null });
+    }
+    if (fn === 'fin_resolve_unit_sl') {
+      const data = await resolveUnitSl(
+        String(req.body?.p_unit_id || ''),
+        String(req.body?.p_property_id || ''),
+        String(req.body?.p_gl_code || ''),
+        req.body?.p_unit_name ?? null,
+      );
+      return res.json({ data, error: null });
+    }
+    if (fn === 'fin_refresh_event_totals') {
+      await refreshEventTotals(String(req.body?.p_event_id || ''));
+      return res.json({ data: null, error: null });
+    }
+    if (fn === 'fin_validate_event_balance') {
+      const data = await validateEventBalance(String(req.body?.p_event_id || ''));
+      return res.json({ data, error: null });
+    }
+    if (fn === 'fin_manual_pdc_status_update') {
+      const b = req.body || {};
+      const data = await manualPdcStatusUpdate({
+        pdcId: b.p_pdc_id,
+        status: b.p_status,
+        depositDate: b.p_deposit_date ?? null,
+        clearedDate: b.p_cleared_date ?? null,
+        returnedDate: b.p_returned_date ?? null,
+        bankId: b.p_bank_id ?? null,
+        overrideCode: b.p_override_code ?? null,
+      });
+      return res.json({ data, error: null });
+    }
+    return res.status(501).json({ data: null, error: `Database function '${fn}' is not available in this system yet` });
+  } catch (err: any) {
+    console.error(`[db-proxy rpc error on ${fn}]`, err.message);
+    return sendDbError(res, err, 'db-proxy');
+  }
+});
+
+// ── Upsert (insert, or update the row that matches the onConflict columns) ───
+router.post('/:table/upsert', async (req: Request, res: Response) => {
+  try {
+    const table = req.params.table as string;
+    const modelName = resolveModelName(table);
+    const model = (prisma as any)[modelName];
+    if (!model) {
+      return res.status(404).json({ data: null, error: `Model '${table}' not found in Prisma client` });
+    }
+    const { onConflict } = req.body;
+    const data = coerceForModel(modelName, req.body.data);
+    if (!data) return res.status(400).json({ data: null, error: 'No data provided for upsert' });
+
+    const keys: string[] = onConflict ? String(onConflict).split(',').map((k) => k.trim()).filter(Boolean) : ['id'];
+    const items: any[] = Array.isArray(data) ? data : [data];
+    const saved: any[] = [];
+    for (const item of items) {
+      const where: Record<string, any> = {};
+      for (const k of keys) {
+        if (item[k] !== undefined) where[k] = item[k];
+      }
+      const existing = Object.keys(where).length
+        ? await model.findFirst({ where })
+        : null;
+      if (existing) {
+        const { id: _ignored, ...changes } = item;
+        const updated = await model.update({ where: { id: existing.id }, data: changes });
+        saved.push(updated);
+      } else {
+        saved.push(await model.create({ data: item }));
+      }
+    }
+    return res.json({ data: Array.isArray(data) ? saved : saved[0], error: null });
+  } catch (err: any) {
+    console.error(`[db-proxy upsert error on ${req.params.table}]`, err.message);
+    return sendDbError(res, err, 'db-proxy');
   }
 });
 
 // ── Insert ───────────────────────────────────────────────────────────────────
 router.post('/:table/insert', async (req: Request, res: Response) => {
   try {
-    const table = req.params.table;
+    const table = req.params.table as string;
     const modelName = resolveModelName(table);
     const model = (prisma as any)[modelName];
 
@@ -115,9 +339,56 @@ router.post('/:table/insert', async (req: Request, res: Response) => {
       });
     }
 
-    const { data } = req.body;
+    const data = coerceForModel(modelName, req.body.data);
+    if (ACCOUNT_LINE_TABLES.has(table)) {
+      const rowsToCheck = Array.isArray(data) ? data : [data];
+      for (const row of rowsToCheck) {
+        if (!row || !row.account_code) continue;
+        const found = await prisma.$queryRaw<{ id: string }[]>`SELECT id FROM fin_coa_accounts
+          WHERE account_code = ${String(row.account_code)} AND is_active = TRUE LIMIT 1`;
+        if (!found.length) {
+          return res.status(400).json({ data: null, error: `${table}.account_code "${row.account_code}" does not resolve to an active row in fin_coa_accounts. All accounting events must be composed through the Account Resolver.` });
+        }
+      }
+    }
     if (!data) {
       return res.status(400).json({ data: null, error: 'No data provided for insert' });
+    }
+
+    if (modelName === 'customers') {
+      const rows = Array.isArray(data) ? data : [data];
+      for (const row of rows) {
+        if (!row.customer_code) row.customer_code = await nextCustomerCode();
+      }
+    }
+
+    if (DOMAIN_INSERT[modelName]) {
+      const rows = Array.isArray(data) ? data : [data];
+      const out: any[] = [];
+      for (const row of rows) out.push(await DOMAIN_INSERT[modelName](row));
+      return res.json({ data: Array.isArray(data) ? out : out[0], error: null });
+    }
+
+    // Tenant maintenance tickets: each unit must be on this tenant's active lease, and the tenant is forced.
+    if (modelName === 'maintenance_tickets' && isTenant(req)) {
+      const claims = (req as any).user;
+      const rowsT = Array.isArray(data) ? data : [data];
+      for (const r of rowsT) {
+        const unitRef = r?.unit_ref ?? null;
+        if (!(await tenantHoldsActiveLeaseForUnitRef(claims, unitRef))) {
+          throw new HttpError(403, `User does not hold an active lease for Unit ${unitRef ?? '(none)'}`);
+        }
+        r.tenant_id = claims.tenant_id;
+      }
+    }
+
+    if (modelName === 'material_usage' && !Array.isArray(data)) {
+      const created = await recordMaterialUsage(data);
+      return res.json({ data: created, error: null });
+    }
+    if (modelName === 'hrms_leave_applications' && !Array.isArray(data)) {
+      const created = await recordLeaveApplication(data);
+      return res.json({ data: created, error: null });
     }
 
     if (Array.isArray(data)) {
@@ -134,45 +405,14 @@ router.post('/:table/insert', async (req: Request, res: Response) => {
     }
   } catch (err: any) {
     console.error(`[db-proxy insert error on ${req.params.table}]`, err.message);
-    return res.status(500).json({ data: null, error: err.message });
+    return sendDbError(res, err, 'db-proxy');
   }
 });
 
 // ── Update ───────────────────────────────────────────────────────────────────
 router.post('/:table/update', async (req: Request, res: Response) => {
   try {
-    const table = req.params.table;
-    const modelName = resolveModelName(table);
-    const model = (prisma as any)[modelName];
-
-    if (!model) {
-      return res.status(404).json({
-        data: null,
-        error: `Model '${table}' not found in Prisma client`,
-      });
-    }
-
-    const { where = {}, data } = req.body;
-    if (!data) {
-      return res.status(400).json({ data: null, error: 'No data provided for update' });
-    }
-
-    const result = await model.updateMany({
-      where,
-      data,
-    });
-
-    return res.json({ data: result, error: null });
-  } catch (err: any) {
-    console.error(`[db-proxy update error on ${req.params.table}]`, err.message);
-    return res.status(500).json({ data: null, error: err.message });
-  }
-});
-
-// ── Delete ───────────────────────────────────────────────────────────────────
-router.post('/:table/delete', async (req: Request, res: Response) => {
-  try {
-    const table = req.params.table;
+    const table = req.params.table as string;
     const modelName = resolveModelName(table);
     const model = (prisma as any)[modelName];
 
@@ -184,6 +424,58 @@ router.post('/:table/delete', async (req: Request, res: Response) => {
     }
 
     const { where = {} } = req.body;
+    const data = coerceForModel(modelName, req.body.data);
+    if (!data) {
+      return res.status(400).json({ data: null, error: 'No data provided for update' });
+    }
+
+    if (modelName === 'leases' && isTerminatedLease(data.lease_status)) {
+      const targets = await model.findMany({ where, select: { id: true } });
+      const results: any[] = [];
+      for (const t of targets) results.push(await terminateLease(t.id, data));
+      return res.json({ data: { count: results.length, settlements: results }, error: null });
+    }
+
+    const result = await model.updateMany({
+      where,
+      data,
+    });
+
+    return res.json({ data: result, error: null });
+  } catch (err: any) {
+    console.error(`[db-proxy update error on ${req.params.table}]`, err.message);
+    return sendDbError(res, err, 'db-proxy');
+  }
+});
+
+// ── Delete ───────────────────────────────────────────────────────────────────
+router.post('/:table/delete', async (req: Request, res: Response) => {
+  try {
+    const table = req.params.table as string;
+    const modelName = resolveModelName(table);
+    const model = (prisma as any)[modelName];
+
+    if (!model) {
+      return res.status(404).json({
+        data: null,
+        error: `Model '${table}' not found in Prisma client`,
+      });
+    }
+
+    const { where = {} } = req.body;
+    if (modelName === 'properties') {
+      const targets = await model.findMany({ where, select: { id: true } });
+      for (const t of targets) await assertPropertyDeletable(t.id);
+    }
+    // Posted financial records are never deleted; they are reversed instead.
+    if (modelName === 'fin_vouchers' || modelName === 'fin_accounting_events') {
+      const rows = await model.findMany({ where, select: { id: true, status: true } });
+      if (rows.some((r: any) => String(r.status).toUpperCase() === 'POSTED')) {
+        throw new HttpError(400, modelName === 'fin_vouchers'
+          ? 'Posted vouchers cannot be deleted. You must post a Reversal Voucher'
+          : 'Posted accounting events cannot be deleted. Reverse the event instead');
+      }
+    }
     const result = await model.deleteMany({
       where,
     });
@@ -191,7 +483,7 @@ router.post('/:table/delete', async (req: Request, res: Response) => {
     return res.json({ data: result, error: null });
   } catch (err: any) {
     console.error(`[db-proxy delete error on ${req.params.table}]`, err.message);
-    return res.status(500).json({ data: null, error: err.message });
+    return sendDbError(res, err, 'db-proxy');
   }
 });
 

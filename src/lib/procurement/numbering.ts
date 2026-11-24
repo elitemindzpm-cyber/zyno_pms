@@ -1,8 +1,8 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export async function nextProcurementDocumentNumber(docType: string, date = new Date()): Promise<string> {
   const fiscalYear = date.getMonth() >= 3 ? date.getFullYear() : date.getFullYear() - 1;
-  const { data, error } = await supabase.rpc('proc_next_document_number', {
+  const { data, error } = await db.rpc('proc_next_document_number', {
     p_doc_type: docType,
     p_fiscal_year: fiscalYear,
   });

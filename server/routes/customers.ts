@@ -2,6 +2,8 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../lib/prisma';
 import { parsePagination, paginatedResponse } from '../lib/middleware';
+import { createCustomer } from '../services/property';
+import { HttpError, sendDbError } from '../lib/errors';
 
 const router = Router();
 
@@ -28,11 +30,14 @@ router.get('/:id', async (req: Request, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /api/customers — rules in services/property.ts (KYC by customer type, no duplicate IDs).
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const item = await prisma.customers.create({ data: req.body });
+    const item = await createCustomer(req.body || {});
     res.status(201).json(item);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    sendDbError(res, e, 'customers.create');
+  }
 });
 
 router.patch('/:id', async (req: Request, res: Response) => {

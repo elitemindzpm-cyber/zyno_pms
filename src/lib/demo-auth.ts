@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import type { AppRole } from "@/lib/rbac";
 
 const DEMO_SESSION_KEY = "zyno-demo-session";
@@ -97,24 +98,24 @@ export function createDemoSession(role: AppRole) {
 
 export function setDemoSession(role: AppRole) {
   if (typeof window === "undefined") return;
-  window.localStorage.setItem(DEMO_SESSION_KEY, JSON.stringify(createDemoSession(role)));
+  kvStore.setItem(DEMO_SESSION_KEY, JSON.stringify(createDemoSession(role)));
 }
 
 export function getDemoSession() {
   if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(DEMO_SESSION_KEY);
+  const raw = kvStore.getItem(DEMO_SESSION_KEY);
   if (!raw) return null;
 
   try {
     return JSON.parse(raw) as DemoSession;
   } catch {
-    window.localStorage.removeItem(DEMO_SESSION_KEY);
+    kvStore.removeItem(DEMO_SESSION_KEY);
     return null;
   }
 }
 
 export function clearDemoSession() {
   if (typeof window === "undefined") return;
-  window.localStorage.removeItem(DEMO_SESSION_KEY);
+  kvStore.removeItem(DEMO_SESSION_KEY);
 }
 

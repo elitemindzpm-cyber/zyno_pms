@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type ProcurementGovernance = {
   suite: 'PROCUREMENT_GOVERNANCE_DASHBOARD';
@@ -19,7 +19,7 @@ export type ProcurementGovernance = {
 };
 
 export async function getProcurementGovernance(days = 90, poApprovalThreshold = 100000, vendorConcentrationPct = 50, limit = 25): Promise<ProcurementGovernance> {
-  const { data, error } = await supabase.rpc('proc_governance_dashboard', {
+  const { data, error } = await db.rpc('proc_governance_dashboard', {
     p_days: days,
     p_po_approval_threshold: poApprovalThreshold,
     p_vendor_concentration_pct: vendorConcentrationPct,

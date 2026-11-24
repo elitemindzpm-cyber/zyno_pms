@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { useRouterState, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { ExcelImportEmbedded } from "@/components/excel-import-embedded";
@@ -21,8 +22,7 @@ import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { useAppData } from "@/lib/app-data-context";
 import { buildUnitTenantCustomers } from "@/lib/unit-tenant-customers";
-import { fetchAssets, updateAsset, supabase, type Asset as SupabaseAsset } from "@/lib/supabase";
-import { generateLeaseAgreementBlob, printBilingualLeaseContract } from "@/components/lease-agreement-template";
+import { fetchAssets, updateAsset, db, type Asset as DbAsset } from "@/lib/db";
 import { getTodayIST, getCurrentISTDate, formatDateDDMMYYYY } from "@/lib/date-utils";
 import { DynamicMastersService } from "@/lib/dynamic-masters-service";
 import { DEFAULT_COMPANY_BANK_ACCOUNTS } from "@/lib/finance/bankAccounts";
@@ -103,10 +103,6 @@ import { getDocumentBranding } from "@/lib/document-branding";
 import { getImpersonationSession } from "@/lib/impersonation";
 import { getCurrentProfile } from "@/lib/auth-guards";
 import { exportToExcel } from "@/lib/excel-export";
-import {
-  AL_AMEEN_PAGE1_HEADER_BASE64,
-  AL_AMEEN_PAGE2_PLUS_HEADER_BASE64,
-} from "@/lib/header-banner-base64";
 
 
 type ReservationStatus = "reserved" | "converted" | "expired" | "released";
@@ -530,7 +526,7 @@ function createSampleAssetsForUnits(units: Unit[]) {
         assigned_unit_code: unit.unit,
         created_at: today.toISOString(),
         updated_at: today.toISOString(),
-      } as SupabaseAsset;
+      } as DbAsset;
     });
     return list;
   });
@@ -695,7 +691,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
   const [renewals, setRenewals] = useState<RenewalCase[]>([]);
   const [checkouts, setCheckouts] = useState<CheckoutCase[]>(() => {
     try {
-      const saved = localStorage.getItem("pms_checkout_cases_v3");
+      const saved = kvStore.getItem("pms_checkout_cases_v3");
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -705,7 +701,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
   });
   const [settlements, setSettlements] = useState<Settlement[]>(() => {
     try {
-      const saved = localStorage.getItem("pms_settlement_cases_v3");
+      const saved = kvStore.getItem("pms_settlement_cases_v3");
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -747,10 +743,10 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
   useEffect(() => {
     async function fetchRealUnits() {
       try {
-        const { supabase } = await import('@/lib/supabase');
+        const { db } = await import('@/lib/db');
         const [{ data: props }, { data: uns }] = await Promise.all([
-          supabase.from('properties').select('id, title, property_code').order('title'),
-          supabase.from('units').select('id, unit_ref, unit_name, status, lease_status, current_tenant, contract_end_date, price, property_id').limit(1000)
+          db.from('properties').select('id, title, property_code').order('title'),
+          db.from('units').select('id, unit_ref, unit_name, status, lease_status, current_tenant, contract_end_date, price, property_id').limit(1000)
         ]);
         if (props) {
           const propDisplayList = props.map((p: any) => (p.title || '').trim()).filter(Boolean);
@@ -896,9 +892,9 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     if (currentAuthProfile?.role === "ADMIN" || currentAuthProfile?.role === "SUPER_ADMIN") return true;
     if (typeof window !== "undefined") {
       try {
-        const uRole = (localStorage.getItem("zyno_user_role") || localStorage.getItem("userRole") || "").toUpperCase();
+        const uRole = (kvStore.getItem("zyno_user_role") || kvStore.getItem("userRole") || "").toUpperCase();
         if (uRole === "ADMIN" || uRole === "SUPER_ADMIN" || uRole === "SUPERADMIN") return true;
-        const demo = JSON.parse(localStorage.getItem("zyno_demo_session") || "{}");
+        const demo = JSON.parse(kvStore.getItem("zyno_demo_session") || "{}");
         if (demo.role && (demo.role.toUpperCase() === "ADMIN" || demo.role.toUpperCase() === "SUPER_ADMIN")) return true;
       } catch { }
     }
@@ -970,12 +966,12 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
 
       // 1. Fetch from pdcs table with full pagination (all 1,809 PDCs with property, unit, tenant)
       const pdcsTableData = await fetchAllRows((from, to) =>
-        supabase.from("pdcs").select("*").order("maturity_date", { ascending: false }).range(from, to)
+        db.from("pdcs").select("*").order("cheque_date", { ascending: false }).range(from, to)
       );
 
       // 2. Fetch all 341 Security Deposits from fin_vouchers
       const sdVouchersData = await fetchAllRows((from, to) =>
-        supabase
+        db
           .from("fin_vouchers")
           .select("*")
           .or("source_type.eq.SECURITY_DEPOSIT,voucher_number.ilike.VCH-SD-%")
@@ -1146,12 +1142,12 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     const path = `vouchers/${prefix}_${Date.now()}.${ext}`;
 
     try {
-      const { data, error } = await supabase.storage
+      const { data, error } = await db.storage
         .from("pdc-cheques")
         .upload(path, file, { upsert: true });
 
       if (!error && data?.path) {
-        const { data: pubData } = supabase.storage
+        const { data: pubData } = db.storage
           .from("pdc-cheques")
           .getPublicUrl(data.path);
         if (pubData?.publicUrl) {
@@ -1159,7 +1155,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         }
       }
     } catch (storageErr) {
-      console.warn("[uploadChequeFile] Supabase Storage upload failed, using Data URL fallback:", storageErr);
+      console.warn("[uploadChequeFile] DB Storage upload failed, using Data URL fallback:", storageErr);
     }
 
     return new Promise((resolve, reject) => {
@@ -1217,9 +1213,9 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       };
 
       if (editPdcForm.pdcId) {
-        await supabase.from("pdcs").update(pdcUpdate).eq("id", editPdcForm.pdcId);
+        await db.from("pdcs").update(pdcUpdate).eq("id", editPdcForm.pdcId);
       } else {
-        await supabase.from("pdcs").update(pdcUpdate).eq("cheque_number", editPdcForm.originalChequeNumber);
+        await db.from("pdcs").update(pdcUpdate).eq("cheque_number", editPdcForm.originalChequeNumber);
       }
 
       // 3. Update fin_pdc_register table (status strictly In Hand; reset any previous clearance/deposit dates)
@@ -1236,13 +1232,13 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       };
 
       if (editPdcForm.pdcId) {
-        await supabase.from("fin_pdc_register").update(finUpdate).eq("original_pdc_id", editPdcForm.pdcId);
+        await db.from("fin_pdc_register").update(finUpdate).eq("original_pdc_id", editPdcForm.pdcId);
       }
-      await supabase.from("fin_pdc_register").update(finUpdate).eq("cheque_number", editPdcForm.originalChequeNumber);
+      await db.from("fin_pdc_register").update(finUpdate).eq("cheque_number", editPdcForm.originalChequeNumber);
 
       // 4. Update fin_vouchers if matched
       try {
-        await supabase.from("fin_vouchers")
+        await db.from("fin_vouchers")
           .update({
             voucher_date: editPdcForm.maturityDate,
             total_amount: Number(editPdcForm.amount),
@@ -1367,11 +1363,11 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       try {
         // Fetch from customers table, units table, pdc tables, and leases in parallel
         const [customersRes, finPdcRes, pdcRes, leasesRes, unitsRes] = await Promise.all([
-          supabase.from("customers").select("*"),
-          supabase.from("fin_pdc_register").select("id, tenant_name, drawer_name").limit(1000),
-          supabase.from("pdcs").select("id, tenant_name, drawer_name").limit(1000),
-          supabase.from("leases").select("id, tenant_name, customers:customer_id(full_name, name)"),
-          supabase.from("units").select("id, current_tenant").limit(1000),
+          db.from("customers").select("*"),
+          db.from("fin_pdc_register").select("id, tenant_name, drawer_name").limit(1000),
+          db.from("pdcs").select("id, tenant_name, drawer_name").limit(1000),
+          db.from("leases").select("id, tenant_name, customers:customer_id(full_name, name)"),
+          db.from("units").select("id, current_tenant").limit(1000),
         ]);
 
         const dbCustomerMap = new Map<string, any>();
@@ -1723,16 +1719,16 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       const rawStatus = String(l.status || (l as any).lease_status || "").toLowerCase();
       if (rawStatus === "renewed") return true;
 
-      // Check persistent localStorage overrides
+      // Check persistent kvStore overrides
       try {
-        const stored = JSON.parse(localStorage.getItem("pms_custom_lease_overrides") || "{}");
+        const stored = JSON.parse(kvStore.getItem("pms_custom_lease_overrides") || "{}");
         const ov = stored[l.id] || stored[l.contractNumber || ""] || stored[(l as any).lease_number || ""];
         if (ov?.lease_status?.toUpperCase() === "RENEWED" || ov?.status?.toLowerCase() === "renewed") return true;
       } catch {}
 
       // Check renewed leases register
       try {
-        const renList = JSON.parse(localStorage.getItem("pms_renewed_leases_v1") || "[]");
+        const renList = JSON.parse(kvStore.getItem("pms_renewed_leases_v1") || "[]");
         if (renList.some((r: any) => r.oldLeaseId === l.id || r.oldLeaseNumber === l.contractNumber || r.unit_name === l.unit || r.unit === l.unit)) {
           return true;
         }
@@ -1873,7 +1869,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         }
       });
       if (changed) {
-        try { localStorage.setItem("pms_checkout_cases_v3", JSON.stringify(updated)); } catch { }
+        try { kvStore.setItem("pms_checkout_cases_v3", JSON.stringify(updated)); } catch { }
       }
       return changed ? updated : prev;
     });
@@ -1915,18 +1911,18 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         }
       });
       if (changed) {
-        try { localStorage.setItem("pms_settlement_cases_v3", JSON.stringify(updated)); } catch { }
+        try { kvStore.setItem("pms_settlement_cases_v3", JSON.stringify(updated)); } catch { }
       }
       return changed ? updated : prev;
     });
   }, [leases]);
 
 
-  // Supabase Realtime: subscribe to lease status changes from any session.
+  // DB Realtime: subscribe to lease status changes from any session.
   useEffect(() => {
     let channel: any = null;
-    import('@/lib/supabase').then(({ supabase }) => {
-      channel = supabase
+    import('@/lib/db').then(({ db }) => {
+      channel = db
         .channel(`leasing-page:leases:${Math.random().toString(36).substring(2, 9)}`)
         .on(
           "postgres_changes" as any,
@@ -1934,7 +1930,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           (payload: any) => {
             const updated = payload.new;
             if (!updated?.lease_number) return;
-            // Map the Supabase lease_status back into the local context lease.
+            // Map the DB lease_status back into the local context lease.
             setLeases(prev => prev.map(l =>
               l.id === updated.lease_number
                 ? { ...l, status: updated.lease_status ?? l.status }
@@ -1946,8 +1942,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     });
     return () => {
       if (channel) {
-        import('@/lib/supabase').then(({ supabase }) => {
-          supabase.removeChannel(channel);
+        import('@/lib/db').then(({ db }) => {
+          db.removeChannel(channel);
         });
       }
     };
@@ -2140,8 +2136,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       });
       setPdcs(prev => [...newItems, ...prev]);
       try {
-        const existingStored = JSON.parse(localStorage.getItem("pms_renewal_pdcs") || "[]");
-        localStorage.setItem("pms_renewal_pdcs", JSON.stringify([...newItems, ...existingStored]));
+        const existingStored = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
+        kvStore.setItem("pms_renewal_pdcs", JSON.stringify([...newItems, ...existingStored]));
         window.dispatchEvent(new Event("pdcs_updated"));
       } catch { /* ignore */ }
       toast.success(`Successfully imported ${newItems.length} PDC cheques!`);
@@ -2288,7 +2284,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
 
   // ── Signature Workflow Dialogs ─────────────────────────────────
   const [signatureWorkflowLease, setSignatureWorkflowLease] = useState<Lease | null>(null);
-  const [assets, setAssets] = useState<SupabaseAsset[]>([]);
+  const [assets, setAssets] = useState<DbAsset[]>([]);
   const [assetChanges, setAssetChanges] = useState<Record<string, { condition: string; imageFileName: string }>>({});
   const [assetLoading, setAssetLoading] = useState(false);
 
@@ -2531,11 +2527,23 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
 
   const [handoverOpen, setHandoverOpen] = useState(false);
   const [handoverViewOpen, setHandoverViewOpen] = useState(false);
+  // Letterhead images (large base64) are loaded on demand, only when the handover view is open.
+  const [headerBanners, setHeaderBanners] = useState<{ page1: string; page2: string } | null>(null);
+  useEffect(() => {
+    if (!handoverViewOpen || headerBanners) return;
+    let alive = true;
+    import("@/lib/header-banner-base64").then((m) => {
+      if (alive) setHeaderBanners({ page1: m.AL_AMEEN_PAGE1_HEADER_BASE64, page2: m.AL_AMEEN_PAGE2_PLUS_HEADER_BASE64 });
+    });
+    return () => {
+      alive = false;
+    };
+  }, [handoverViewOpen, headerBanners]);
   const [selectedHandover, setSelectedHandover] = useState<KeyHandover | null>(null);
   const [signedHandoverDocs, setSignedHandoverDocs] = useState<Record<string, { fileName: string; uploadedAt: string; dataUrl?: string }>>(() => {
     if (typeof window !== "undefined") {
       try {
-        const stored = localStorage.getItem("zyno_signed_handover_receipts");
+        const stored = kvStore.getItem("zyno_signed_handover_receipts");
         return stored ? JSON.parse(stored) : {};
       } catch {
         return {};
@@ -2557,7 +2565,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       };
       setSignedHandoverDocs(prev => {
         const next = { ...prev, [handoverKey]: entry };
-        try { localStorage.setItem("zyno_signed_handover_receipts", JSON.stringify(next)); } catch { }
+        try { kvStore.setItem("zyno_signed_handover_receipts", JSON.stringify(next)); } catch { }
         return next;
       });
       toast.success(`Signed Handover Receipt uploaded: ${file.name}`);
@@ -3132,7 +3140,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         tenant_name: lease.tenantName,
       });
 
-      void supabase
+      void db
         .from("fin_vouchers")
         .insert({
           voucher_number: cnlVoucherNo,
@@ -3147,7 +3155,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         .single()
         .then(({ data: vData, error: vErr }) => {
           if (!vErr && vData?.id) {
-            void supabase.from("fin_voucher_lines").insert([
+            void db.from("fin_voucher_lines").insert([
               {
                 voucher_id: vData.id,
                 account_code: "21400001",
@@ -3169,21 +3177,21 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         });
     }
 
-    // Update Supabase pdcs and fin_pdc_register tables
+    // Update DB pdcs and fin_pdc_register tables
     try {
       const chqArr = Array.from(chequeNumbers);
       if (chqArr.length > 0) {
-        await supabase
+        await db
           .from("pdcs")
           .update({ status: "cancelled", status_pdc: "Cancelled" } as any)
           .in("cheque_no", chqArr);
-        await supabase
+        await db
           .from("fin_pdc_register")
           .update({ status: "Cancelled" } as any)
           .in("cheque_number", chqArr);
       }
       if (lease.unit) {
-        let q = supabase
+        let q = db
           .from("pdcs")
           .update({ status: "cancelled", status_pdc: "Cancelled" } as any)
           .eq("unit_name", lease.unit)
@@ -3194,7 +3202,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         await q;
       }
     } catch (dbErr) {
-      console.warn("[cancelLeasePdcs] Supabase PDC status update notice:", dbErr);
+      console.warn("[cancelLeasePdcs] DB PDC status update notice:", dbErr);
     }
 
     if (options?.terminateLease) {
@@ -3214,7 +3222,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       );
       setUnits((items) => items.map((u) => (u.unit === lease.unit ? { ...u, status: targetDisp } : u)));
       setRealUnits((items) => items.map((u) => (u.unit === lease.unit ? { ...u, status: targetDisp } : u)));
-      void supabase
+      void db
         .from("units")
         .update({
           status: targetDisp,
@@ -3255,7 +3263,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
   }
 
   async function releaseFuturePdcExposure(lease: Lease, vacateDate: string) {
-    // Always cancel/return unpresented PDCs in local state, FinanceStore, and Supabase first
+    // Always cancel/return unpresented PDCs in local state, FinanceStore, and DB first
     const localCancel = await cancelLeasePdcs(lease, {
       effectiveDate: vacateDate,
       cancelAllUnpresented: true,
@@ -3330,7 +3338,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     const tokReceiptNo = reservationForm.tokenReceiptNo || `RV-HOLD-${unit.unit.replace(/\W/g, "")}-${Date.now().toString().slice(-4)}`;
 
     const reservation: Reservation = {
-      id: `r${reservations.length + 1}`,
+      id: crypto.randomUUID(),
       property: unit.property,
       unit: unit.unit,
       tenantName: reservationForm.tenantName || "Prospective Tenant",
@@ -3356,6 +3364,33 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     };
 
     setReservations((items) => [reservation, ...items]);
+    void (async () => {
+      try {
+        const { data: uRow } = await db.from("units").select("id").eq("unit_ref", unit.unit).maybeSingle();
+        const custRow = customers.find((c) => c.name.toLowerCase().trim() === reservation.tenantName.toLowerCase().trim());
+        const { error: resError } = await db.from("reservations").insert({
+          id: reservation.id,
+          unit_id: uRow?.id ?? null,
+          prospect_name: reservation.tenantName,
+          prospect_contact: custRow?.phone || custRow?.mobile || "-",
+          expected_start_date: reservation.startDate || null,
+          reservation_validity: reservation.validUntil || null,
+          proposed_rental_amount: reservation.rent || null,
+          status: "reserved",
+          special_conditions: JSON.stringify({
+            remarks: reservation.remarks || "",
+            agent: reservation.agent || "",
+            isHold: !!reservation.isHold,
+            tokenAmount: tokAmt,
+            tokenPaymentMode: reservation.tokenPaymentMode || "",
+            tokenReceiptNo: reservation.tokenReceiptNo || "",
+          }),
+        } as any);
+        if (resError) throw resError;
+      } catch (e: any) {
+        toast.error(`Reservation was not saved to the database: ${e?.message || "unknown error"}`);
+      }
+    })();
     setUnits((items) => items.map((item) => (item.id === unit.id ? { ...item, status: "Reserved" } : item)));
     setRealUnits((items) => items.map((item) => (item.id === unit.id ? { ...item, status: "Reserved" } : item)));
 
@@ -3452,6 +3487,9 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
   ) {
     const hasToken = Number(reservation.tokenAmount) > 0 && !reservation.tokenRefunded;
     setReservations((items) => items.map((item) => (item.id === reservation.id ? { ...item, status, tokenRefunded: hasToken ? true : item.tokenRefunded } : item)));
+    void db.from("reservations").update({ status }).eq("id", reservation.id).then(({ error }) => {
+      if (error) toast.error(`Reservation status was not saved: ${error.message}`);
+    });
     setUnits((items) => items.map((item) => (item.unit === reservation.unit ? { ...item, status: "Available" } : item)));
     setRealUnits((items) => items.map((item) => (item.unit === reservation.unit ? { ...item, status: "Available" } : item)));
 
@@ -3629,7 +3667,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
 
     let savedCustomer: { id: string; customer_code: string } | null = null;
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("customers")
         .insert([dbPayload])
         .select("id, customer_code")
@@ -3858,7 +3896,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       )
     );
 
-    // Persist changes to Supabase Database
+    // Persist changes to DB Database
     try {
       const leaseDbUpdate: Record<string, any> = {
         rental_amount: patch.monthlyRent * 12,
@@ -3881,13 +3919,13 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
 
       // If UUID, update database
       if (targetId && !targetId.startsWith("l")) {
-        await supabase
+        await db
           .from("leases")
           .update(leaseDbUpdate)
           .eq("id", targetId);
       }
     } catch (err: any) {
-      console.warn("[submitAgreementTerms] Supabase update warning:", err?.message || err);
+      console.warn("[submitAgreementTerms] DB update warning:", err?.message || err);
     }
 
     toast.success("Lease financials, period, and agreement terms updated successfully!");
@@ -3935,10 +3973,10 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       setLeases(prev => prev.map(l => l.id === targetLease.id ? { ...l, status: "active" as LeaseStatus } : l));
       setUnits(prev => prev.map(u => (u.unit === targetLease.unit || (u as any).unit_number === targetLease.unit) ? { ...u, status: "Occupied" } : u));
       try {
-        void supabase.from("leases").update({ status: "active" }).eq("id", targetLease.id);
-        void supabase.from("units").update({ status: "Occupied" }).eq("unit_number", targetLease.unit);
+        void db.from("leases").update({ status: "active" }).eq("id", targetLease.id);
+        void db.from("units").update({ status: "Occupied" }).eq("unit_number", targetLease.unit);
       } catch (e) {
-        console.warn("Lease approval Supabase sync:", e);
+        console.warn("Lease approval DB sync:", e);
       }
     }
 
@@ -4022,9 +4060,9 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     setLeases((items) => {
       const next = [lease, ...items];
       try {
-        const storedLeases = JSON.parse(localStorage.getItem("pms_leasing_v2_leases") || "[]");
-        localStorage.setItem("pms_leasing_v2_leases", JSON.stringify([lease, ...storedLeases.filter((x: any) => x.id !== lease.id)]));
-        const overrides = JSON.parse(localStorage.getItem("pms_custom_lease_overrides") || "{}");
+        const storedLeases = JSON.parse(kvStore.getItem("pms_leasing_v2_leases") || "[]");
+        kvStore.setItem("pms_leasing_v2_leases", JSON.stringify([lease, ...storedLeases.filter((x: any) => x.id !== lease.id)]));
+        const overrides = JSON.parse(kvStore.getItem("pms_custom_lease_overrides") || "{}");
         if (lease.unit) {
           overrides[lease.unit.toUpperCase().trim()] = {
             tenantName: lease.tenantName,
@@ -4037,7 +4075,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
             contractNumber: lease.contractNumber || lease.id,
             status: "active",
           };
-          localStorage.setItem("pms_custom_lease_overrides", JSON.stringify(overrides));
+          kvStore.setItem("pms_custom_lease_overrides", JSON.stringify(overrides));
         }
       } catch { /* ignore */ }
       return next;
@@ -4062,10 +4100,10 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       status: "pending_approval",
       output: "Lease package forwarded to Property Manager for operational review",
     });
-    // Persist to Supabase using valid schema columns
+    // Persist to DB using valid schema columns
     void (async () => {
       try {
-        const { data: uRow } = await supabase
+        const { data: uRow } = await db
           .from("units")
           .select("id, property_id")
           .or(`unit_ref.eq.${lease.unit},unit_code.eq.${lease.unit},unit_name.eq.${lease.unit}`)
@@ -4077,21 +4115,25 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           ? Math.max(1, Math.round((endMs - startMs) / (1000 * 60 * 60 * 24 * 30)))
           : (lease.pdcCount || 12);
 
-        await supabase.from("leases").insert({
+        const { error: leaseInsertError } = await db.from("leases").insert({
           lease_number: `LS-${lease.id.toUpperCase()}`,
           commencement_date: lease.startDate,
           expiry_date: lease.endDate,
+          lease_period_months: monthsDiff,
           rental_amount: lease.monthlyRent * monthsDiff,
           security_deposit: lease.securityDeposit,
           lease_status: "ACTIVE",
           number_of_pdc: lease.pdcCount || monthsDiff,
+          // Cheques are entered and registered by the PDC flow below; do not create placeholder schedule rows.
+          pdc_schedule: "none",
           payment_frequency: lease.paymentFrequency || "Monthly",
           unit_id: uRow?.id || undefined,
           property_id: uRow?.property_id || undefined,
           customer_id: customer?.id && customer.id.length === 36 ? customer.id : undefined,
         } as any);
+        if (leaseInsertError) throw new Error(leaseInsertError.message || "Lease insert failed");
 
-        await supabase
+        await db
           .from("units")
           .update({
             status: "Occupied",
@@ -4104,17 +4146,17 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           } as any)
           .or(`unit_ref.eq.${lease.unit},unit_code.eq.${lease.unit},unit_name.eq.${lease.unit}`);
 
-        await supabase.from("reservations").update({ status: "converted" }).eq("id", reservation.id);
+        await db.from("reservations").update({ status: "converted" }).eq("id", reservation.id);
         window.dispatchEvent(new Event("pms_data_updated"));
-      } catch (e) {
-        console.warn("Supabase lease sync:", e);
+        toast.success(`Lease agreement created successfully for ${lease.tenantName} (${lease.unit})!`);
+      } catch (e: any) {
+        console.warn("DB lease sync:", e);
+        toast.error(`Lease was not saved to the database: ${e?.message || "unknown error"}`);
       }
     })();
 
-    toast.success(`Lease agreement created successfully for ${lease.tenantName} (${lease.unit})!`);
-
     if (customer.email) {
-      void supabase.auth.getSession().then(({ data }) => {
+      void db.auth.getSession().then(({ data }) => {
         const accessToken = data.session?.access_token;
         if (!accessToken) return;
         return fetch("/api/provision-tenant", {
@@ -4130,7 +4172,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           if (!response) return;
           if (response.ok) {
             const result = await response.json().catch(() => ({}));
-            toast.success(`Tenant login created for ${result.email || customer.email}. Initial password: Mindz@007`);
+            toast.success(`Tenant login created for ${result.email || customer.email}.`);
           } else {
             console.info("Tenant portal auto-provisioning skipped or pending manual invite.");
           }
@@ -4469,8 +4511,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       const leaseIdValue = String(lease.id);
       const isLeaseUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(leaseIdValue);
       const leaseLookup = isLeaseUuid
-        ? supabase.from("leases").select("id, customer_id, property_id, unit_id").eq("id", leaseIdValue).maybeSingle()
-        : supabase.from("leases").select("id, customer_id, property_id, unit_id").eq("lease_number", leaseIdValue).maybeSingle();
+        ? db.from("leases").select("id, customer_id, property_id, unit_id").eq("id", leaseIdValue).maybeSingle()
+        : db.from("leases").select("id, customer_id, property_id, unit_id").eq("lease_number", leaseIdValue).maybeSingle();
       const { data: financeLease } = await leaseLookup;
 
       if (financeLease?.id && financeLease.customer_id && financeLease.property_id && financeLease.unit_id) {
@@ -4528,39 +4570,20 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       console.warn("Authoritative finance posting skipped for in-memory/demo record:", err);
     }
 
-    // Publish the PDCs to shared state, localStorage, and Supabase pdcs / fin_pdc_register so PDC Register & Customer SOA always reflect them
+    // Publish the PDCs to shared state, kvStore, and DB pdcs / fin_pdc_register so PDC Register & Customer SOA always reflect them
     if (nextPdcs.length > 0) {
       setPdcs((items) => [...nextPdcs, ...items]);
       try {
-        const existingStored = JSON.parse(localStorage.getItem("pms_renewal_pdcs") || "[]");
-        localStorage.setItem("pms_renewal_pdcs", JSON.stringify([...nextPdcs, ...existingStored]));
+        const existingStored = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
+        kvStore.setItem("pms_renewal_pdcs", JSON.stringify([...nextPdcs, ...existingStored]));
         window.dispatchEvent(new Event("pdcs_updated"));
       } catch { /* ignore */ }
       void (async () => {
-        for (const pdc of nextPdcs) {
-          try {
-            await supabase.from("pdcs").insert({
-              cheque_number: pdc.chequeNo,
-              maturity_date: pdc.date,
-              amount: pdc.amount,
-              property_code: lease.property,
-              unit_name: lease.unit,
-              tenant_name: lease.tenantName,
-              bank: pdc.bank || "Qatar National Bank (QNB)",
-              status: "In Hand",
-            });
-            await supabase.from("fin_pdc_register").insert({
-              cheque_number: pdc.chequeNo,
-              cheque_date: pdc.date,
-              amount: pdc.amount,
-              property_name: lease.property,
-              unit_ref: lease.unit,
-              tenant_name: lease.tenantName,
-              bank_name: pdc.bank || "Qatar National Bank (QNB)",
-              status: "In Hand",
-            });
-          } catch { /* ignore duplicate or schema notice */ }
-        }
+        // The lease row already has its PDC schedule slots (created with the lease). Each cheque is sent with
+        // lease_id so the server fills its slot rather than adding a second row. fin_pdc_register is written
+        // once, by receivePdc above, so it is not written here.
+        // Each cheque is written once: receivePdc (above) registers it in fin_pdc_register and posts its GL entry.
+        // The separate insert into pdcs that repeated each cheque has been removed.
       })();
     }
 
@@ -4741,6 +4764,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         String(lease.unit || "").toUpperCase().trim()
       ) as any;
 
+      // Loaded on demand so the lease contract and its letterhead image stay out of the leasing page bundle.
+      const { printBilingualLeaseContract } = await import("@/lib/qatar-lease-contract");
       printBilingualLeaseContract({
         ...lease,
         contractNumber: lease.contractNumber || String(lease.id || "").toUpperCase(),
@@ -4919,7 +4944,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     const lease = leases.find(l => l.id === leaseId);
     const tenantLabel = lease?.tenantName || lease?.tenant || "Tenant";
     const unitLabel = lease?.unit || lease?.unitRef || "";
-    void supabase.from("fin_vouchers").insert({
+    void db.from("fin_vouchers").insert({
       voucher_number: `VCH-SD-RCV-${voucherRef}`,
       voucher_date: postingDate,
       voucher_type: "RV",
@@ -4929,7 +4954,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       posted_at: new Date().toISOString(),
     }).select("id").single().then(({ data: vData, error: vErr }) => {
       if (!vErr && vData?.id) {
-        void supabase.from("fin_voucher_lines").insert([
+        void db.from("fin_voucher_lines").insert([
           { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: numAmount, credit: 0, description: `Security Deposit — ${tenantLabel}` },
           { voucher_id: vData.id, account_code: "21500001", account_name: "Security Deposit Liability", debit: 0, credit: numAmount, description: `Security Deposit — ${tenantLabel}` },
         ]);
@@ -5195,10 +5220,10 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       ...items.map((item) => (item.id === oldLease.id ? { ...item, status: "renewed" as LeaseStatus } : item)),
     ]);
 
-    // Persist renewal to localStorage (both pms_renewed_leases_v1 and pms_custom_lease_overrides)
+    // Persist renewal to kvStore (both pms_renewed_leases_v1 and pms_custom_lease_overrides)
     try {
       if (typeof window !== "undefined") {
-        const rawRen = localStorage.getItem("pms_renewed_leases_v1");
+        const rawRen = kvStore.getItem("pms_renewed_leases_v1");
         const renList: any[] = rawRen ? JSON.parse(rawRen) : [];
         const renItem = {
           id: renewed.id,
@@ -5218,9 +5243,9 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         };
         const filtered = renList.filter((r) => r.id !== renItem.id && r.lease_number !== renItem.lease_number);
         filtered.unshift(renItem);
-        localStorage.setItem("pms_renewed_leases_v1", JSON.stringify(filtered));
+        kvStore.setItem("pms_renewed_leases_v1", JSON.stringify(filtered));
 
-        const storedOverrides = JSON.parse(localStorage.getItem("pms_custom_lease_overrides") || "{}");
+        const storedOverrides = JSON.parse(kvStore.getItem("pms_custom_lease_overrides") || "{}");
         storedOverrides[renewed.id] = {
           commencement_date: newStartDate,
           expiry_date: newEndDate,
@@ -5248,13 +5273,13 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
             updated_at: new Date().toISOString(),
           };
         }
-        localStorage.setItem("pms_custom_lease_overrides", JSON.stringify(storedOverrides));
+        kvStore.setItem("pms_custom_lease_overrides", JSON.stringify(storedOverrides));
       }
     } catch (e) {
-      console.warn("Could not save renewal to localStorage:", e);
+      console.warn("Could not save renewal to kvStore:", e);
     }
 
-    // Persist renewed lease and update previous lease in PostgreSQL via Supabase REST API
+    // Persist renewed lease and update previous lease in PostgreSQL via DB REST API
     void (async () => {
       try {
         const isOldUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(oldLease.id);
@@ -5262,12 +5287,12 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           ? `id.eq.${oldLease.id},lease_number.eq.${oldLease.id},lease_number.eq.${oldLease.contractNumber || ''}`
           : `lease_number.eq.${oldLease.id},lease_number.eq.${oldLease.contractNumber || ''}`;
 
-        await supabase
+        await db
           .from("leases")
           .update({ lease_status: "renewed" })
           .or(oldFilter);
 
-        const { data: uRow } = await supabase
+        const { data: uRow } = await db
           .from("units")
           .select("id, property_id")
           .or(`unit_ref.eq.${oldLease.unit},unit_code.eq.${oldLease.unit},unit_name.eq.${oldLease.unit}`)
@@ -5281,6 +5306,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           lease_status: "ACTIVE",
           security_deposit: newSecurityDeposit,
           number_of_pdc: data.pdcs.length,
+          pdc_schedule: "none",
           payment_frequency: data.paymentFrequency || "Monthly",
           grace_period_days: data.gracePeriodDays || 5,
           notice_period_days: data.noticePeriodDays || 60,
@@ -5289,10 +5315,10 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           property_id: uRow?.property_id || undefined,
           customer_id: oldLease.customerId && oldLease.customerId.length === 36 ? oldLease.customerId : undefined,
         };
-        await supabase.from("leases").insert(leasePayload);
+        await db.from("leases").insert(leasePayload);
 
         if (uRow?.id) {
-          await supabase.from("units").update({
+          await db.from("units").update({
             contract_start_date: newStartDate,
             contract_end_date: newEndDate,
             current_rent: agreedRent,
@@ -5332,8 +5358,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     } as any));
     setPdcs((items) => [...renewalPdcs, ...items.filter((item) => item.leaseId !== renewed.id)]);
     try {
-      const existingStored = JSON.parse(localStorage.getItem("pms_renewal_pdcs") || "[]");
-      localStorage.setItem("pms_renewal_pdcs", JSON.stringify([...renewalPdcs, ...existingStored]));
+      const existingStored = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
+      kvStore.setItem("pms_renewal_pdcs", JSON.stringify([...renewalPdcs, ...existingStored]));
       window.dispatchEvent(new Event("pdcs_updated"));
     } catch { /* ignore */ }
 
@@ -5377,11 +5403,11 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         ]);
       }
 
-      // Post GL to Supabase fin_vouchers
+      // Post GL to DB fin_vouchers
       const drCode = isPdc ? "12900001" : isCash ? "12100001" : "12000001";
       const drName = isPdc ? "Rent PDC In Hand" : isCash ? "Cash in Hand / Operating Cash" : "Bank Operating Account (QNB)";
       const postingDate = data.securityDeposit.chequeDate || today.toISOString().split("T")[0];
-      void supabase.from("fin_vouchers").insert({
+      void db.from("fin_vouchers").insert({
         voucher_number: `VCH-SD-${sdRef}`,
         voucher_date: postingDate,
         voucher_type: "RV",
@@ -5391,7 +5417,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         posted_at: new Date().toISOString(),
       }).select("id").single().then(({ data: vData, error: vErr }) => {
         if (!vErr && vData?.id) {
-          void supabase.from("fin_voucher_lines").insert([
+          void db.from("fin_voucher_lines").insert([
             { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: depositTopUp, credit: 0, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
             { voucher_id: vData.id, account_code: "21500001", account_name: "Security Deposit Liability", debit: 0, credit: depositTopUp, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
           ]);
@@ -5547,7 +5573,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       // Persist to local storage
       try {
         if (typeof window !== "undefined") {
-          const rawRen = localStorage.getItem("pms_renewed_leases_v1");
+          const rawRen = kvStore.getItem("pms_renewed_leases_v1");
           const renList: any[] = rawRen ? JSON.parse(rawRen) : [];
           const renItem = {
             id: renewed.id,
@@ -5567,9 +5593,9 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           };
           const filtered = renList.filter((r) => r.id !== renItem.id && r.lease_number !== renItem.lease_number);
           filtered.unshift(renItem);
-          localStorage.setItem("pms_renewed_leases_v1", JSON.stringify(filtered));
+          kvStore.setItem("pms_renewed_leases_v1", JSON.stringify(filtered));
 
-          const storedOverrides = JSON.parse(localStorage.getItem("pms_custom_lease_overrides") || "{}");
+          const storedOverrides = JSON.parse(kvStore.getItem("pms_custom_lease_overrides") || "{}");
           storedOverrides[renewed.id] = {
             commencement_date: newStartDate,
             expiry_date: newEndDate,
@@ -5596,13 +5622,13 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
               updated_at: new Date().toISOString(),
             };
           }
-          localStorage.setItem("pms_custom_lease_overrides", JSON.stringify(storedOverrides));
+          kvStore.setItem("pms_custom_lease_overrides", JSON.stringify(storedOverrides));
         }
       } catch (e) {
-        console.warn("Could not save renewal to localStorage:", e);
+        console.warn("Could not save renewal to kvStore:", e);
       }
 
-      // Persist to Supabase asynchronously
+      // Persist to DB asynchronously
       void (async () => {
         try {
           const isOldUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(oldLease.id);
@@ -5610,9 +5636,9 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
             ? `id.eq.${oldLease.id},lease_number.eq.${oldLease.id},lease_number.eq.${oldLease.contractNumber || ''}`
             : `lease_number.eq.${oldLease.id},lease_number.eq.${oldLease.contractNumber || ''}`;
 
-          await supabase.from("leases").update({ lease_status: "renewed" }).or(oldFilter);
+          await db.from("leases").update({ lease_status: "renewed" }).or(oldFilter);
 
-          const { data: uRow } = await supabase
+          const { data: uRow } = await db
             .from("units")
             .select("id, property_id")
             .or(`unit_ref.eq.${oldLease.unit},unit_code.eq.${oldLease.unit},unit_name.eq.${oldLease.unit}`)
@@ -5626,6 +5652,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
             lease_status: "ACTIVE",
             security_deposit: newSecurityDeposit,
             number_of_pdc: pdcCount,
+            pdc_schedule: "none",
             payment_frequency: renewalResponseForm.paymentFrequency || "Monthly",
             grace_period_days: Number(renewalResponseForm.gracePeriodDays) || 5,
             notice_period_days: Number(renewalResponseForm.noticePeriodDays) || 60,
@@ -5634,10 +5661,10 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
             property_id: uRow?.property_id || undefined,
             customer_id: oldLease.customerId && oldLease.customerId.length === 36 ? oldLease.customerId : undefined,
           };
-          await supabase.from("leases").insert(leasePayload);
+          await db.from("leases").insert(leasePayload);
 
           if (uRow?.id) {
-            await supabase.from("units").update({
+            await db.from("units").update({
               contract_no: contractNo,
               contract_start_date: newStartDate,
               contract_end_date: newEndDate,
@@ -5715,8 +5742,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       }
       setPdcs((items) => [...renewalPdcs, ...items.filter((item) => item.leaseId !== (renewed ? renewed.id : oldLease.id))]);
       try {
-        const existingStored = JSON.parse(localStorage.getItem("pms_renewal_pdcs") || "[]");
-        localStorage.setItem("pms_renewal_pdcs", JSON.stringify([...renewalPdcs, ...existingStored]));
+        const existingStored = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
+        kvStore.setItem("pms_renewal_pdcs", JSON.stringify([...renewalPdcs, ...existingStored]));
         window.dispatchEvent(new Event("pdcs_updated"));
       } catch { /* ignore */ }
     }
@@ -5743,11 +5770,11 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       };
       newVouchers.push(rentVoucher);
 
-      // Post GL to Supabase fin_vouchers
+      // Post GL to DB fin_vouchers
       const drCode = isPdc ? "12900001" : isCash ? "12100001" : "12000001";
       const drName = isPdc ? "Rent PDC In Hand" : isCash ? "Cash in Hand / Operating Cash" : "Bank Operating Account (QNB)";
       const postingDate = renewalResponseForm.rentPaymentDate || today.toISOString().split("T")[0];
-      void supabase.from("fin_vouchers").insert({
+      void db.from("fin_vouchers").insert({
         voucher_number: `VCH-RENT-${rentRef}`,
         voucher_date: postingDate,
         voucher_type: "RV",
@@ -5757,7 +5784,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         posted_at: new Date().toISOString(),
       }).select("id").single().then(({ data: vData, error: vErr }) => {
         if (!vErr && vData?.id) {
-          void supabase.from("fin_voucher_lines").insert([
+          void db.from("fin_voucher_lines").insert([
             { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: rentAmt, credit: 0, description: `Rent Differential — ${oldLease.tenantName}` },
             { voucher_id: vData.id, account_code: "41100001", account_name: "Rental Revenue", debit: 0, credit: rentAmt, description: `Rent Differential — ${oldLease.tenantName}` },
           ]);
@@ -5803,11 +5830,11 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         ]);
       }
 
-      // Post GL to Supabase fin_vouchers
+      // Post GL to DB fin_vouchers
       const drCode = isPdc ? "12900001" : isCash ? "12100001" : "12000001";
       const drName = isPdc ? "Rent PDC In Hand" : isCash ? "Cash in Hand / Operating Cash" : "Bank Operating Account (QNB)";
       const postingDate = renewalResponseForm.securityChequeDate || today.toISOString().split("T")[0];
-      void supabase.from("fin_vouchers").insert({
+      void db.from("fin_vouchers").insert({
         voucher_number: `VCH-SD-${sdRef}`,
         voucher_date: postingDate,
         voucher_type: "RV",
@@ -5817,7 +5844,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         posted_at: new Date().toISOString(),
       }).select("id").single().then(({ data: vData, error: vErr }) => {
         if (!vErr && vData?.id) {
-          void supabase.from("fin_voucher_lines").insert([
+          void db.from("fin_voucher_lines").insert([
             { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: depositTopUp, credit: 0, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
             { voucher_id: vData.id, account_code: "21500001", account_name: "Security Deposit Liability", debit: 0, credit: depositTopUp, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
           ]);
@@ -6726,7 +6753,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       : "Available") as Unit["status"];
     setUnits((items) => items.map((item) => (item.unit === lease.unit ? { ...item, status: releasedStatus } : item)));
     setRealUnits((items) => items.map((item) => (item.unit === lease.unit ? { ...item, status: releasedStatus } : item)));
-    void supabase
+    void db
       .from("units")
       .update({
         status: releasedStatus,
@@ -8823,7 +8850,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                   ...updatedCustomerFields,
                 } : c));
 
-                // Persist changes directly to Supabase Database
+                // Persist changes directly to DB Database
                 try {
                   const dbUpdatePayload: any = {
                     full_name: finalDisplayName,
@@ -8848,15 +8875,15 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                     trade_licence_no: customerForm.tradeLicenceNo || null,
                     computer_card_no: customerForm.computerCardNo || null,
                   };
-                  supabase.from("customers").update(dbUpdatePayload).eq("id", editCustomerData.id).then(({ error }) => {
+                  db.from("customers").update(dbUpdatePayload).eq("id", editCustomerData.id).then(({ error }) => {
                     if (error) {
-                      console.warn("[editCustomer] Supabase update warning:", error.message);
+                      console.warn("[editCustomer] DB update warning:", error.message);
                     } else {
-                      console.log("[editCustomer] Supabase update successful for id:", editCustomerData.id);
+                      console.log("[editCustomer] DB update successful for id:", editCustomerData.id);
                     }
                   });
                 } catch (err: any) {
-                  console.warn("[editCustomer] Supabase update exception:", err?.message || err);
+                  console.warn("[editCustomer] DB update exception:", err?.message || err);
                 }
 
                 // Synchronize updated documents with the Documents module
@@ -11375,7 +11402,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                     <div class="page-content">
                       <!-- Page 1 Header Banner (100% full edge-to-edge bleed) -->
                       <div class="page1-header-banner">
-                        <img src="${bannerUrl || AL_AMEEN_PAGE1_HEADER_BASE64}" alt="Al Ameen Letterhead" />
+                        <img src="${bannerUrl || headerBanners?.page1 || ""}" alt="Al Ameen Letterhead" />
                       </div>
 
                       <div class="page-body-padded">
@@ -11569,7 +11596,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                       <!-- Page 2+ Header Logo on Right -->
                       <div class="page-header-secondary-wrapper">
                         <div class="page-header-secondary">
-                          <img src="${AL_AMEEN_PAGE2_PLUS_HEADER_BASE64}" alt="Al Ameen Logo" />
+                          <img src="${headerBanners?.page2 || ""}" alt="Al Ameen Logo" />
                         </div>
                       </div>
 
@@ -11704,7 +11731,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                   {/* Official Letterhead Banner */}
                   <div className="w-full overflow-hidden bg-muted/20 border-b">
                     <img
-                      src={bannerUrl || AL_AMEEN_PAGE1_HEADER_BASE64}
+                      src={bannerUrl || headerBanners?.page1 || ""}
                       alt="Al Ameen Letterhead Banner"
                       className="w-full h-auto object-cover max-h-[140px]"
                     />
@@ -12636,7 +12663,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                   <Upload className="h-4 w-4" />
                   <span>Re-upload Cheque Scanned Copy</span>
                 </div>
-                <span className="text-[10px] text-muted-foreground">Scans stored securely in Supabase</span>
+                <span className="text-[10px] text-muted-foreground">Scans stored securely in Db</span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -15234,7 +15261,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                       onValueChange={(val) => {
                         setCustomers((prev) => prev.map((c) => c.id === customer.id ? { ...c, customerStatus: val } : c));
                         setDirectCustomers((prev) => prev.map((c) => c.id === customer.id ? { ...c, customerStatus: val } : c));
-                        supabase.from("customers").update({ customer_status: val }).eq("id", customer.id).then(() => { });
+                        db.from("customers").update({ customer_status: val }).eq("id", customer.id).then(() => { });
                       }}
                     >
                       <SelectTrigger className={`h-7 text-xs w-32 font-semibold border ${(customer?.customerStatus || "Active") === "Active" ? "bg-green-50 text-green-700 border-green-200" :

@@ -5,7 +5,7 @@ import { Badge } from "@/components/ui/badge";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Input } from "@/components/ui/input";
 import { FileCheck, CheckCircle2, XCircle, Clock, AlertTriangle } from "lucide-react";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { approveAndPostVoucher, rejectVoucher, PendingVoucher } from "@/lib/finance/voucher-approval-service";
 import { toast } from "sonner";
 
@@ -28,7 +28,7 @@ export const VoucherApprovalModal: React.FC<VoucherApprovalModalProps> = ({
   const fetchPendingVouchers = async () => {
     setIsLoading(true);
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("fin_vouchers")
         .select(`
           id,

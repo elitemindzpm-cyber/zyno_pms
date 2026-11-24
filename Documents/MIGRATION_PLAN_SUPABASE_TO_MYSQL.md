@@ -264,7 +264,7 @@ flowchart TD
 
 ### Phase 6: Application & ORM Configuration
 - Update `.env` or application configuration with target MySQL connection string:
-  `mysql://pms_user:lite%24%2320@145.223.18.48:3307/pms_db`
+  `mysql://pms_user:<DB_PASSWORD>@145.223.18.48:3307/pms_db`
 - Regenerate ORM client (e.g. `npx prisma db pull` or `drizzle-kit introspect`).
 - Enable application-level tenant isolation middleware.
 

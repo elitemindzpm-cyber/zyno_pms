@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { logSecurityEvent } from "@/lib/security";
 
 export interface ImpersonationSession {
@@ -33,7 +34,7 @@ export function startImpersonation(tenant: {
     startedAt: new Date().toISOString(),
   };
 
-  window.localStorage.setItem(IMPERSONATION_KEY, JSON.stringify(session));
+  kvStore.setItem(IMPERSONATION_KEY, JSON.stringify(session));
 
   logSecurityEvent({
     event_type: "IMPERSONATION_STARTED",
@@ -47,12 +48,12 @@ export function startImpersonation(tenant: {
 
 export function getImpersonationSession(): ImpersonationSession | null {
   if (typeof window === "undefined") return null;
-  const raw = window.localStorage.getItem(IMPERSONATION_KEY);
+  const raw = kvStore.getItem(IMPERSONATION_KEY);
   if (!raw) return null;
   try {
     return JSON.parse(raw) as ImpersonationSession;
   } catch {
-    window.localStorage.removeItem(IMPERSONATION_KEY);
+    kvStore.removeItem(IMPERSONATION_KEY);
     return null;
   }
 }
@@ -70,5 +71,5 @@ export function stopImpersonation() {
       details: { tenant_id: current.tenantId, tenant_key: current.tenantKey },
     });
   }
-  window.localStorage.removeItem(IMPERSONATION_KEY);
+  kvStore.removeItem(IMPERSONATION_KEY);
 }

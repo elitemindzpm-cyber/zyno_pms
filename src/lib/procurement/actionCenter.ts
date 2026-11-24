@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type ProcurementActionItem = {
   id: string;
@@ -31,14 +31,14 @@ export type ProcurementActionCenter = {
 };
 
 export async function refreshProcurementActionCenter(days = 30, dueHours = 24, limit = 100) {
-  const { data, error } = await supabase.rpc('proc_refresh_action_center', { p_days: days, p_due_hours: dueHours, p_limit: limit });
+  const { data, error } = await db.rpc('proc_refresh_action_center', { p_days: days, p_due_hours: dueHours, p_limit: limit });
   if (error) throw error;
-  await supabase.rpc('proc_refresh_exception_actions', { p_limit: limit });
+  await db.rpc('proc_refresh_exception_actions', { p_limit: limit });
   return data;
 }
 
 export async function getProcurementActionCenter(limit = 100): Promise<ProcurementActionCenter> {
-  const { data, error } = await supabase.rpc('proc_action_center', { p_limit: limit });
+  const { data, error } = await db.rpc('proc_action_center', { p_limit: limit });
   if (error) throw error;
   return data as ProcurementActionCenter;
 }
@@ -51,7 +51,7 @@ export async function updateProcurementActionItem(input: {
   resolutionNotes?: string | null;
   evidenceReference?: string | null;
 }) {
-  const { data, error } = await supabase.rpc('proc_update_action_item', {
+  const { data, error } = await db.rpc('proc_update_action_item', {
     p_action_id: input.actionId,
     p_status: input.status,
     p_owner_user_id: input.ownerUserId || null,

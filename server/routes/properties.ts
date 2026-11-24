@@ -2,6 +2,8 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../lib/prisma';
 import { parsePagination, paginatedResponse } from '../lib/middleware';
+import { assertPropertyDeletable } from '../services/property';
+import { HttpError, sendDbError } from '../lib/errors';
 
 const router = Router();
 
@@ -63,14 +65,15 @@ router.patch('/:id', async (req: Request, res: Response) => {
   }
 });
 
-// DELETE /api/properties/:id
+// DELETE /api/properties/:id — rules in services/property.ts (no deletion with occupied units or live leases).
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
+    await assertPropertyDeletable(id);
     await prisma.properties.deleteMany({ where: { id } });
     res.json({ success: true });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    sendDbError(res, e, 'properties.delete');
   }
 });
 

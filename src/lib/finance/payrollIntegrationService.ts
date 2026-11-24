@@ -1,7 +1,8 @@
-import { supabase } from '../supabase';
+import { kvStore } from "@/lib/kv-store";
+import { db } from '../db';
 import { resolveGlOnlyAccount } from './account-resolver';
 import { postVoucher } from './posting-engine';
-import { FinPayrollSyncsApi } from '../supabase-finance';
+import { FinPayrollSyncsApi } from '../db-finance';
 
 /**
  * Payroll Integration Service (Phase 2 — Resolver-driven)
@@ -47,7 +48,7 @@ const BANK_GLS = new Set(['12000', '12000001', '12000002']);
  */
 export async function syncPayrollRun(payload: PayrollSyncPayload) {
   // 1. Check for duplicates
-  const { data: existing } = await supabase
+  const { data: existing } = await db
     .from('fin_payroll_syncs')
     .select('id')
     .eq('payroll_run_id', payload.payroll_run_id)
@@ -163,11 +164,11 @@ export async function syncPayrollRun(payload: PayrollSyncPayload) {
     // 7. Mark as Posted
     await FinPayrollSyncsApi.update(syncRecord.id, { status: 'Posted' });
 
-    // Also persist voucher locally in localStorage so Trial Balance & GL reflect immediately
+    // Also persist voucher locally in kvStore so Trial Balance & GL reflect immediately
     if (typeof window !== 'undefined') {
       try {
         const vKey = 'finance_master_v1-vouchers';
-        const raw = localStorage.getItem(vKey);
+        const raw = kvStore.getItem(vKey);
         const list = raw ? JSON.parse(raw) : [];
         const vNo = `VCH-PAY-${payload.payroll_run_id}`;
         if (!list.some((v: any) => v.voucher_no === vNo)) {
@@ -193,7 +194,7 @@ export async function syncPayrollRun(payload: PayrollSyncPayload) {
               description: vl.description,
             })),
           };
-          localStorage.setItem(vKey, JSON.stringify([newVch, ...list]));
+          kvStore.setItem(vKey, JSON.stringify([newVch, ...list]));
         }
       } catch (storeErr) {
         console.warn('[syncPayrollRun] Local storage sync note:', storeErr);

@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type ProcurementAnalytics = {
   suite: 'PROCUREMENT_ANALYTICS_DASHBOARD';
@@ -25,7 +25,7 @@ export type ProcurementAnalytics = {
 };
 
 export async function getProcurementAnalytics(days = 90, limit = 20): Promise<ProcurementAnalytics> {
-  const { data, error } = await supabase.rpc('proc_analytics_dashboard', { p_days: days, p_limit: limit });
+  const { data, error } = await db.rpc('proc_analytics_dashboard', { p_days: days, p_limit: limit });
   if (error) throw error;
   return data as ProcurementAnalytics;
 }

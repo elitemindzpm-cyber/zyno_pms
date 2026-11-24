@@ -9,7 +9,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/super-admin/analytics")({
@@ -54,11 +54,11 @@ export function AnalyticsPage() {
     setLoading(true);
     try {
       const [propRes, unitRes, leaseRes, profileRes, orgRes] = await Promise.all([
-        supabase.from("properties").select("id, city, is_active"),
-        supabase.from("units").select("id, unit_status"),
-        supabase.from("leases").select("id, lease_status, rental_amount"),
-        supabase.from("profiles").select("id, role"),
-        supabase.from("tenant_organisations").select("id, plan, status, subscription_amount"),
+        db.from("properties").select("id, city, is_active"),
+        db.from("units").select("id, unit_status"),
+        db.from("leases").select("id, lease_status, rental_amount"),
+        db.from("profiles").select("id, role"),
+        db.from("tenant_organisations").select("id, plan, status, subscription_amount"),
       ]);
 
       const props = propRes.data || [];
@@ -67,10 +67,10 @@ export function AnalyticsPage() {
       const profiles = profileRes.data || [];
       const orgs = orgRes.data || [];
 
-      const activeLeases = leases.filter((l) => ["active", "Active", "fully_signed", "Renewed"].includes(l.lease_status));
-      const leaseRevenue = activeLeases.reduce((s, l) => s + (Number(l.rental_amount) || 0), 0);
-      const subMRR = orgs.reduce((s, o) => s + (Number(o.subscription_amount) || 0), 0);
-      const occupiedUnits = units.filter((u) => ["occupied", "Occupied", "leased"].includes(u.unit_status)).length;
+      const activeLeases = leases.filter((l: any) => ["active", "Active", "fully_signed", "Renewed"].includes(l.lease_status));
+      const leaseRevenue = activeLeases.reduce((s: any, l: any) => s + (Number(l.rental_amount) || 0), 0);
+      const subMRR = orgs.reduce((s: any, o: any) => s + (Number(o.subscription_amount) || 0), 0);
+      const occupiedUnits = units.filter((u: any) => ["occupied", "Occupied", "leased"].includes(u.unit_status)).length;
       const occupancyRate = units.length > 0 ? Math.round((occupiedUnits / units.length) * 100) : 0;
 
       setStats({

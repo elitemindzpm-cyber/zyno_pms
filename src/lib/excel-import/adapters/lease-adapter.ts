@@ -1,4 +1,4 @@
-import { supabase, type Lease } from '../../supabase';
+import { db, type Lease } from '../../db';
 import { 
   type EntityImportAdapter, 
   type ColumnDefinition, 
@@ -58,7 +58,7 @@ export const leaseAdapter: EntityImportAdapter = {
     if (keys.length === 0) return map;
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('leases')
         .select('*, customers(id, full_name, qatar_id, passport_number, commercial_registration), properties(id, property_code, title), units(id, unit_code)')
         .in('lease_number', keys);
@@ -190,7 +190,7 @@ export const leaseAdapter: EntityImportAdapter = {
       const custId = normalized['customer_identifier'];
       if (custId) {
         try {
-          const { data: custData } = await supabase
+          const { data: custData } = await db
             .from('customers')
             .select('id, full_name, verification_status')
             .or(`qatar_id.eq.${custId},passport_number.eq.${custId},commercial_registration.eq.${custId}`)
@@ -237,7 +237,7 @@ export const leaseAdapter: EntityImportAdapter = {
 
       if (propCode && unitCode) {
         try {
-          const { data: propData } = await supabase
+          const { data: propData } = await db
             .from('properties')
             .select('id')
             .ilike('property_code', propCode)
@@ -247,7 +247,7 @@ export const leaseAdapter: EntityImportAdapter = {
           if (propData) {
             normalized.property_id = propData.id;
 
-            const { data: unitData } = await supabase
+            const { data: unitData } = await db
               .from('units')
               .select('id, status, lease_status')
               .eq('property_id', propData.id)
@@ -298,8 +298,8 @@ export const leaseAdapter: EntityImportAdapter = {
       try {
         const leaseId = existingRecord.id;
         const [pdcRes, receiptRes] = await Promise.allSettled([
-          supabase.from('pdcs').select('id', { count: 'exact' }).eq('lease_id', leaseId),
-          supabase.from('receipts').select('id', { count: 'exact' }).eq('lease_id', leaseId),
+          db.from('pdcs').select('id', { count: 'exact' }).eq('lease_id', leaseId),
+          db.from('receipts').select('id', { count: 'exact' }).eq('lease_id', leaseId),
         ]);
 
         const pdcCount = pdcRes.status === 'fulfilled' ? (pdcRes.value.count ?? 0) : 0;
@@ -396,12 +396,12 @@ export const leaseAdapter: EntityImportAdapter = {
           special_conditions: data.remarks,
         };
 
-        const { data: created, error } = await supabase.from('leases').insert(payload).select().single();
+        const { data: created, error } = await db.from('leases').insert(payload).select().single();
         if (error) throw error;
 
         // Also update unit status to Occupied if lease is ACTIVE
         if (data.unit_id && (data.lease_status === 'ACTIVE' || data.lease_status === 'RENEWAL_CONFIRMED')) {
-          await supabase.from('units').update({ status: 'Occupied', lease_status: 'ACTIVE' }).eq('id', data.unit_id);
+          await db.from('units').update({ status: 'Occupied', lease_status: 'ACTIVE' }).eq('id', data.unit_id);
         }
 
         return {
@@ -423,7 +423,7 @@ export const leaseAdapter: EntityImportAdapter = {
           updatePayload[change.field] = change.newValue === '[CLEARED]' ? null : change.newValue;
         }
 
-        const { error } = await supabase.from('leases').update(updatePayload).eq('id', existing.id);
+        const { error } = await db.from('leases').update(updatePayload).eq('id', existing.id);
         if (error) throw error;
 
         return {
@@ -436,7 +436,7 @@ export const leaseAdapter: EntityImportAdapter = {
         const existing = record.originalDbData;
         if (!existing?.id) throw new Error('Lease record ID not found');
 
-        const { error } = await supabase.from('leases').update({ lease_status: 'TERMINATED', updated_at: new Date().toISOString() }).eq('id', existing.id);
+        const { error } = await db.from('leases').update({ lease_status: 'TERMINATED', updated_at: new Date().toISOString() }).eq('id', existing.id);
         if (error) throw error;
 
         return {

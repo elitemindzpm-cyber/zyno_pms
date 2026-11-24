@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { PermissionsManager } from "@/components/PermissionsManager";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { resolveTenantContextId } from "@/lib/tenant-context";
 
 export const Route = createFileRoute("/admin/permissions")({
@@ -15,11 +15,11 @@ function AdminPermissions() {
     let mounted = true;
 
     async function loadTenantContext() {
-      const { data } = await supabase.auth.getSession();
+      const { data } = await db.auth.getSession();
       const session = data.session;
       if (!session?.user) return;
 
-      const { data: profile } = await supabase
+      const { data: profile } = await db
         .from("profiles")
         .select("*")
         .eq("id", session.user.id)

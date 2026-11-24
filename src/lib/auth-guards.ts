@@ -1,10 +1,11 @@
+import { kvStore } from "@/lib/kv-store";
 import { redirect } from "@tanstack/react-router";
 import type { ConsoleKey } from "@/lib/console-config";
 import { getLandingRouteForRole } from "@/lib/console-config";
 import { getDemoSession } from "@/lib/demo-auth";
 import { canAccessConsole } from "@/lib/rbac";
 import type { AppRole } from "@/lib/rbac";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { resolveTenantContextId } from "@/lib/tenant-context";
 
 type CurrentProfile = {
@@ -39,11 +40,11 @@ export async function getCurrentProfile(): Promise<CurrentProfile | null> {
 
   // 1. Primary: Real JWT / DB Auth Session
   try {
-    const { data: authData } = await supabase.auth.getSession();
+    const { data: authData } = await db.auth.getSession();
     const session = authData?.session;
 
     if (session?.user) {
-      const { data: profile } = await supabase
+      const { data: profile } = await db
         .from("profiles")
         .select("*")
         .eq("id", session.user.id)
@@ -71,7 +72,7 @@ export async function getCurrentProfile(): Promise<CurrentProfile | null> {
     }
   }
 
-  // 2. Secondary/Testing: Active Demo Session in localStorage
+  // 2. Secondary/Testing: Active Demo Session in kvStore
   const demoSession = getDemoSession();
   if (demoSession) {
     return {

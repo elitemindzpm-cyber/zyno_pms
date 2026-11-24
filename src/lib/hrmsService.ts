@@ -1,4 +1,5 @@
-import { supabase } from "@/lib/supabase";
+import { kvStore } from "@/lib/kv-store";
+import { db } from "@/lib/db";
 import { createAccountingEvent } from "@/lib/finance/accounting-event-engine";
 
 // ── Types ─────────────────────────────────────────────────────────────
@@ -239,7 +240,7 @@ export const isPayrollCycleLocked = (status?: string) => PAYROLL_LOCKED_STATUSES
 function readLocalJson<T>(key: string, fallback: T): T {
   if (typeof window === 'undefined') return fallback;
   try {
-    const raw = window.localStorage.getItem(key);
+    const raw = kvStore.getItem(key);
     return raw ? JSON.parse(raw) : fallback;
   } catch {
     return fallback;
@@ -249,7 +250,7 @@ function readLocalJson<T>(key: string, fallback: T): T {
 function writeLocalJson<T>(key: string, value: T): void {
   if (typeof window === 'undefined') return;
   try {
-    window.localStorage.setItem(key, JSON.stringify(value));
+    kvStore.setItem(key, JSON.stringify(value));
   } catch {}
 }
 
@@ -446,44 +447,44 @@ export interface HrmsHelpdeskTicket {
 export const HrmsApi = {
   // Organizations & Masters
   async getCompanies(): Promise<HrmsCompany[]> {
-    const { data, error } = await supabase.from('hrms_companies').select('*').order('name');
+    const { data, error } = await db.from('hrms_companies').select('*').order('name');
     if (error) console.error("Error fetching companies:", error);
     return data || [];
   },
 
   async createCompany(company: Partial<HrmsCompany>) {
-    return await supabase.from('hrms_companies').insert(company).select().single();
+    return await db.from('hrms_companies').insert(company).select().single();
   },
 
   async getBranches(): Promise<HrmsBranch[]> {
-    const { data, error } = await supabase.from('hrms_branches').select('*').order('name');
+    const { data, error } = await db.from('hrms_branches').select('*').order('name');
     if (error) console.error("Error fetching branches:", error);
     return data || [];
   },
 
   async getDepartments(): Promise<HrmsDepartment[]> {
-    const { data, error } = await supabase.from('departments').select('*').order('name');
+    const { data, error } = await db.from('departments').select('*').order('name');
     if (error) console.error("Error fetching departments:", error);
     return data || [];
   },
 
   async createDepartment(dept: { name: string; description?: string }) {
-    return await supabase.from('departments').insert(dept).select().single();
+    return await db.from('departments').insert(dept).select().single();
   },
 
   async getDesignations(): Promise<HrmsDesignation[]> {
-    const { data, error } = await supabase.from('designations').select('*').order('title');
+    const { data, error } = await db.from('designations').select('*').order('title');
     if (error) console.error("Error fetching designations:", error);
     return data || [];
   },
 
   async createDesignation(desig: { title: string; department_id?: string }) {
-    return await supabase.from('designations').insert(desig).select().single();
+    return await db.from('designations').insert(desig).select().single();
   },
 
   // Employees
   async getEmployees() {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('employees')
       .select(`
         *,
@@ -563,7 +564,7 @@ export const HrmsApi = {
 
   async createEmployee(employeeData: any) {
     const sanitized = this.sanitizeEmployeePayload(employeeData);
-    const res = await supabase.from('employees').insert(sanitized).select().single();
+    const res = await db.from('employees').insert(sanitized).select().single();
     if (!res.error && res.data) {
       saveEmployeeLeaveMeta(res.data.id, employeeData, res.data.employee_id_code || employeeData.employee_id_code);
       res.data = enrichEmployeeWithLeaveMeta(res.data);
@@ -573,13 +574,19 @@ export const HrmsApi = {
     return res;
   },
 
+  async deleteEmployee(id: string) {
+    const res = await db.from('employees').delete().eq('id', id);
+    if (res.error) throw new Error(res.error.message || 'Failed to delete employee');
+    return res;
+  },
+
   async updateEmployee(id: string, employeeData: any) {
     saveEmployeeLeaveMeta(id, employeeData, employeeData?.employee_id_code);
     const sanitized = this.sanitizeEmployeePayload(employeeData);
     if (Object.keys(sanitized).length === 0) {
       return { data: enrichEmployeeWithLeaveMeta({ id, ...employeeData }), error: null } as any;
     }
-    const res = await supabase.from('employees').update({ ...sanitized, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+    const res = await db.from('employees').update({ ...sanitized, updated_at: new Date().toISOString() }).eq('id', id).select().single();
     if (!res.error && res.data) {
       saveEmployeeLeaveMeta(res.data.id, employeeData, res.data.employee_id_code);
       res.data = enrichEmployeeWithLeaveMeta(res.data);
@@ -589,18 +596,18 @@ export const HrmsApi = {
 
   // Workforce & Shifts
   async getShifts(): Promise<HrmsShift[]> {
-    const { data, error } = await supabase.from('hrms_shifts').select('*').order('name');
+    const { data, error } = await db.from('hrms_shifts').select('*').order('name');
     if (error) console.error("Error fetching shifts:", error);
     return data || [];
   },
 
   async createShift(shift: Partial<HrmsShift>) {
-    return await supabase.from('hrms_shifts').insert(shift).select().single();
+    return await db.from('hrms_shifts').insert(shift).select().single();
   },
 
   // Attendance
   async getDailyAttendance(date?: string): Promise<HrmsAttendanceDaily[]> {
-    let query = supabase
+    let query = db
       .from('hrms_attendance_daily')
       .select(`
         *,
@@ -618,7 +625,7 @@ export const HrmsApi = {
   },
 
   async recordAttendance(attendance: Partial<HrmsAttendanceDaily>) {
-    return await supabase
+    return await db
       .from('hrms_attendance_daily')
       .upsert(attendance, { onConflict: 'employee_id,attendance_date' })
       .select()
@@ -669,10 +676,10 @@ export const HrmsApi = {
     }
     for (let i = 0; i < records.length; i += 500) {
       const chunk = records.slice(i, i + 500);
-      let { error } = await supabase.from('hrms_attendance_daily').upsert(chunk, { onConflict: 'employee_id,attendance_date' });
+      let { error } = await db.from('hrms_attendance_daily').upsert(chunk, { onConflict: 'employee_id,attendance_date' });
       if (error) {
         // Column overtime_premium_minutes not deployed yet: save without the premium split.
-        ({ error } = await supabase
+        ({ error } = await db
           .from('hrms_attendance_daily')
           .upsert(chunk.map(({ overtime_premium_minutes, ...rest }) => rest), { onConflict: 'employee_id,attendance_date' }));
       }
@@ -683,18 +690,18 @@ export const HrmsApi = {
 
   // Leaves
   async getLeaveTypes(): Promise<HrmsLeaveType[]> {
-    const { data, error } = await supabase.from('hrms_leave_types').select('*').order('name');
+    const { data, error } = await db.from('hrms_leave_types').select('*').order('name');
     if (error) console.error("Error fetching leave types:", error);
     return data || [];
   },
 
   async createLeaveType(leaveType: Partial<HrmsLeaveType>) {
-    return await supabase.from('hrms_leave_types').insert(leaveType).select().single();
+    return await db.from('hrms_leave_types').insert(leaveType).select().single();
   },
 
   async getLeaveApplications(): Promise<HrmsLeaveApplication[]> {
     const localApps = readLocalJson<HrmsLeaveApplication[]>(HRMS_LEAVE_APPS_LOCAL_KEY, []);
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('hrms_leave_applications')
       .select(`
         *,
@@ -760,7 +767,7 @@ export const HrmsApi = {
       status: 'Pending' as const,
     };
 
-    const res = await supabase.from('hrms_leave_applications').insert(dbPayload).select().single();
+    const res = await db.from('hrms_leave_applications').insert(dbPayload).select().single();
     const recordId = res.data?.id || `lv-local-${Date.now()}`;
     const enrichedRecord: HrmsLeaveApplication = {
       ...(res.data || dbPayload),
@@ -783,7 +790,7 @@ export const HrmsApi = {
 
   // Full-and-Final (FNF) Settlement Edge-Case Engine
   async calculateFnfBreakdown(employeeId: string, resignationId: string, lwd: string) {
-    const { data: emp } = await supabase.from('employees').select('*').eq('id', employeeId).single();
+    const { data: emp } = await db.from('employees').select('*').eq('id', employeeId).single();
     if (!emp) return { error: { message: "Employee record not found" } };
 
     const basicSalary = Number(emp.basic_salary) || 0;
@@ -796,13 +803,13 @@ export const HrmsApi = {
     const unpaidSalary = Math.round((grossSalary / daysInMonth) * dayOfMonth);
 
     // 2. Leave Encashment Balance
-    const { data: leaveBalances } = await supabase
+    const { data: leaveBalances } = await db
       .from('hrms_leave_balances')
       .select('*, hrms_leave_types(is_encashable)')
       .eq('employee_id', employeeId);
 
     let totalEncashableDays = 0;
-    leaveBalances?.forEach(b => {
+    leaveBalances?.forEach((b: any) => {
       if (b.hrms_leave_types?.is_encashable && Number(b.balance) > 0) {
         totalEncashableDays += Number(b.balance);
       }
@@ -821,25 +828,25 @@ export const HrmsApi = {
     }
 
     // 4. Pending Loans or Asset Liabilities
-    const { data: loans } = await supabase
+    const { data: loans } = await db
       .from('hrms_employee_loans')
       .select('remaining_balance')
       .eq('employee_id', employeeId)
       .eq('status', 'Active');
 
-    const totalLoanLiability = loans?.reduce((acc, l) => acc + Number(l.remaining_balance), 0) || 0;
+    const totalLoanLiability = loans?.reduce((acc: any, l: any) => acc + Number(l.remaining_balance), 0) || 0;
 
     // 5. Query assigned assets for asset recovery deduction if any unreturned
     let assetRecoveryDeduction = 0;
     try {
-      const { data: assignedAssets } = await supabase
+      const { data: assignedAssets } = await db
         .from('assets')
         .select('*')
         .eq('assigned_to', employeeId)
         .eq('status', 'In Use');
       if (assignedAssets && assignedAssets.length > 0) {
         // e.g. sum of purchase values or replacement deposits for unreturned items
-        assetRecoveryDeduction = assignedAssets.reduce((sum, a) => sum + (Number(a.purchase_cost) || 0), 0);
+        assetRecoveryDeduction = assignedAssets.reduce((sum: any, a: any) => sum + (Number(a.purchase_cost) || 0), 0);
       }
     } catch {}
 
@@ -863,12 +870,12 @@ export const HrmsApi = {
       status: 'Draft'
     };
 
-    return await supabase.from('hrms_fnf_settlements').insert(fnfPayload).select().single();
+    return await db.from('hrms_fnf_settlements').insert(fnfPayload).select().single();
   },
 
   async deductLeaveBalance(employeeId: string, leaveTypeId: string, daysCount: number, year?: number) {
     const leaveYear = year || new Date().getFullYear();
-    const { data: existing } = await supabase
+    const { data: existing } = await db
       .from('hrms_leave_balances')
       .select('*')
       .eq('employee_id', employeeId)
@@ -879,16 +886,16 @@ export const HrmsApi = {
     if (existing) {
       const newUsed = (Number(existing.used) || 0) + daysCount;
       const newBalance = Math.max(0, (Number(existing.allocated) || 0) - newUsed);
-      return await supabase
+      return await db
         .from('hrms_leave_balances')
         .update({ used: newUsed, balance: newBalance })
         .eq('id', existing.id);
     } else {
       // Upsert default allocation from leave type
-      const { data: lt } = await supabase.from('hrms_leave_types').select('annual_allowance').eq('id', leaveTypeId).single();
+      const { data: lt } = await db.from('hrms_leave_types').select('annual_allowance').eq('id', leaveTypeId).single();
       const annualAllowance = Number(lt?.annual_allowance) || 30;
       const balance = Math.max(0, annualAllowance - daysCount);
-      return await supabase
+      return await db
         .from('hrms_leave_balances')
         .insert({
           employee_id: employeeId,
@@ -907,7 +914,7 @@ export const HrmsApi = {
     review_notes?: string,
     employeeObj?: any
   ) {
-    const res = await supabase
+    const res = await db
       .from('hrms_leave_applications')
       .update({
         status,
@@ -1001,7 +1008,7 @@ export const HrmsApi = {
   async getPayrollCycles(): Promise<HrmsPayrollCycle[]> {
     const localCycles = readLocalJson<HrmsPayrollCycle[]>(HRMS_PAYROLL_CYCLES_LOCAL_KEY, []);
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('hrms_payroll_cycles')
         .select('*')
         .order('cycle_year', { ascending: false })
@@ -1022,7 +1029,7 @@ export const HrmsApi = {
   },
 
   async createPayrollCycle(cycle: Partial<HrmsPayrollCycle>) {
-    const res = await supabase.from('hrms_payroll_cycles').insert(cycle).select().single();
+    const res = await db.from('hrms_payroll_cycles').insert(cycle).select().single();
     const createdCycle: HrmsPayrollCycle = (res.data || {
       id: `pcycle-local-${Date.now()}`,
       name: cycle.name || 'Monthly Payroll',
@@ -1049,7 +1056,7 @@ export const HrmsApi = {
     const localSlipsMap = readLocalJson<Record<string, HrmsPayslip[]>>(HRMS_PAYSLIPS_LOCAL_KEY, {});
     const localSlips = localSlipsMap[cycleId] || [];
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('hrms_payroll_payslips')
         .select(`
           *,
@@ -1074,7 +1081,7 @@ export const HrmsApi = {
       const allCycles = await this.getPayrollCycles();
       let cycle = allCycles.find(c => c.id === cycleId) || null;
       if (!cycle) {
-        const { data: dbCycle } = await supabase
+        const { data: dbCycle } = await db
           .from('hrms_payroll_cycles')
           .select('*')
           .eq('id', cycleId)
@@ -1099,7 +1106,7 @@ export const HrmsApi = {
       };
 
       try {
-        const { data } = await supabase.from('employees').select('*, departments(name), designations(title)');
+        const { data } = await db.from('employees').select('*, departments(name), designations(title)');
         if (data && data.length > 0) {
           emps = data.filter(isValidPersonnel).map((e: any) => enrichEmployeeWithLeaveMeta(e));
         }
@@ -1121,7 +1128,7 @@ export const HrmsApi = {
       const startDate = cycle?.start_date || `${cycle?.cycle_year || new Date().getFullYear()}-${String(cycle?.cycle_month || new Date().getMonth() + 1).padStart(2, '0')}-01`;
       const endDate = cycle?.end_date || new Date().toISOString().split('T')[0];
 
-      const { data: attendanceRows } = await supabase
+      const { data: attendanceRows } = await db
         .from('hrms_attendance_daily')
         .select('*')
         .gte('attendance_date', startDate)
@@ -1130,7 +1137,7 @@ export const HrmsApi = {
       const overrideRows = await this.getPayrollOverrides(cycleId);
       const overrideByEmp = new Map(overrideRows.map(o => [o.employee_id, o]));
 
-      const { data: activeLoans } = await supabase
+      const { data: activeLoans } = await db
         .from('hrms_employee_loans')
         .select('*')
         .eq('status', 'Active');
@@ -1157,7 +1164,7 @@ export const HrmsApi = {
         const otherDeductions = Number(ov?.other_deductions) || 0;
         
         // Real attendance calculation
-        const empAttendance = attendanceRows?.filter(a => a.employee_id === emp.id) || [];
+        const empAttendance = attendanceRows?.filter((a: any) => a.employee_id === emp.id) || [];
         const empApprovedLeaves = approvedLeavesInCycle.filter(l => l.employee_id === emp.id);
         const approvedLeaveDaysInCycle = empApprovedLeaves.reduce((sum, l) => sum + (Number(l.days_count) || 0), 0);
 
@@ -1170,16 +1177,16 @@ export const HrmsApi = {
           return sum + calc.requestedLeaveSalary;
         }, 0);
 
-        const unpaidLeaves = empAttendance.filter(a => a.status === 'ABSENT' || a.status === 'UNPAID_LEAVE').length || 0;
+        const unpaidLeaves = empAttendance.filter((a: any) => a.status === 'ABSENT' || a.status === 'UNPAID_LEAVE').length || 0;
         const paidLeaves = Math.max(
-          empAttendance.filter(a => a.status === 'LEAVE' || a.status === 'PAID_LEAVE').length || 0,
+          empAttendance.filter((a: any) => a.status === 'LEAVE' || a.status === 'PAID_LEAVE').length || 0,
           approvedLeaveDaysInCycle
         );
         const presentDays = empAttendance.length > 0
-          ? empAttendance.filter(a => a.status === 'PRESENT' || a.status === 'HALF_DAY').length
+          ? empAttendance.filter((a: any) => a.status === 'PRESENT' || a.status === 'HALF_DAY').length
           : Math.max(0, 30 - paidLeaves - unpaidLeaves);
-        const overtimeMinutes = empAttendance.reduce((sum, a) => sum + (Number(a.overtime_minutes) || 0), 0);
-        const premiumMinutes = empAttendance.reduce((sum, a) => sum + (Number(a.overtime_premium_minutes) || 0), 0);
+        const overtimeMinutes = empAttendance.reduce((sum: any, a: any) => sum + (Number(a.overtime_minutes) || 0), 0);
+        const premiumMinutes = empAttendance.reduce((sum: any, a: any) => sum + (Number(a.overtime_premium_minutes) || 0), 0);
         const normalOtHours = Math.round((overtimeMinutes / 60) * 10) / 10;
         const premiumOtHours = Math.round((premiumMinutes / 60) * 10) / 10;
         const overtimeHours = Math.round((normalOtHours + premiumOtHours) * 10) / 10;
@@ -1202,7 +1209,7 @@ export const HrmsApi = {
         const employerContribution = isQatari ? Math.round((basic + hra) * GRSA_EMPLOYER_RATE) : 0;
         
         // Loan / Advance deductions
-        const empLoan = activeLoans?.find(l => l.employee_id === emp.id);
+        const empLoan = activeLoans?.find((l: any) => l.employee_id === emp.id);
         const loanDeduction = Number(empLoan?.monthly_deduction) || 0;
 
         const totalDeductions = statutory + loanDeduction + unpaidLeaveDeduction + otherDeductions;
@@ -1257,7 +1264,7 @@ export const HrmsApi = {
       const totalDeductions = payslips.reduce((acc, p) => acc + p.total_deductions, 0);
       const totalNet = payslips.reduce((acc, p) => acc + p.net_salary, 0);
 
-      // Always persist in localStorage overlay so payroll works reliably even if DB insert fails
+      // Always persist in kvStore overlay so payroll works reliably even if DB insert fails
       const localSlipsMap = readLocalJson<Record<string, HrmsPayslip[]>>(HRMS_PAYSLIPS_LOCAL_KEY, {});
       localSlipsMap[cycleId] = payslips;
       writeLocalJson(HRMS_PAYSLIPS_LOCAL_KEY, localSlipsMap);
@@ -1278,14 +1285,14 @@ export const HrmsApi = {
       writeLocalJson(HRMS_PAYROLL_CYCLES_LOCAL_KEY, updatedLocalCycles);
 
       try {
-        await supabase.from('hrms_payroll_payslips').delete().eq('payroll_cycle_id', cycleId);
-        let insertRes = await supabase.from('hrms_payroll_payslips').insert(
+        await db.from('hrms_payroll_payslips').delete().eq('payroll_cycle_id', cycleId);
+        let insertRes = await db.from('hrms_payroll_payslips').insert(
           payslips.map(({ employees, ...p }) => p)
         );
         if (insertRes.error) {
           // Database predates the payroll extension migration: store the core columns only.
           console.warn('Payslip insert with extended columns failed, retrying core columns:', insertRes.error.message);
-          insertRes = await supabase.from('hrms_payroll_payslips').insert(
+          insertRes = await db.from('hrms_payroll_payslips').insert(
             payslips.map(({ employees, ...p }) => {
               const core: any = { ...p };
               PAYSLIP_EXTRA_COLUMNS.forEach(c => delete core[c]);
@@ -1294,7 +1301,7 @@ export const HrmsApi = {
           );
         }
         if (insertRes.error) console.error('Payslip insert failed:', insertRes.error.message);
-        await supabase.from('hrms_payroll_cycles').update({
+        await db.from('hrms_payroll_cycles').update({
           total_gross: totalGross,
           total_deductions: totalDeductions,
           total_net: totalNet,
@@ -1315,7 +1322,7 @@ export const HrmsApi = {
 
   async getPayrollOverrides(cycleId: string): Promise<HrmsPayrollOverride[]> {
     const local = readLocalJson<Record<string, HrmsPayrollOverride[]>>(HRMS_PAYROLL_OVERRIDES_LOCAL_KEY, {})[cycleId] || [];
-    const { data, error } = await supabase.from('hrms_payroll_overrides').select('*').eq('payroll_cycle_id', cycleId);
+    const { data, error } = await db.from('hrms_payroll_overrides').select('*').eq('payroll_cycle_id', cycleId);
     if (error) return local;
     return (data || []) as HrmsPayrollOverride[];
   },
@@ -1323,7 +1330,7 @@ export const HrmsApi = {
   async savePayrollOverrides(cycleId: string, rows: Omit<HrmsPayrollOverride, 'payroll_cycle_id'>[]) {
     if (rows.length === 0) return { error: null };
     const records = rows.map(r => ({ ...r, payroll_cycle_id: cycleId, updated_at: new Date().toISOString() }));
-    const { error } = await supabase
+    const { error } = await db
       .from('hrms_payroll_overrides')
       .upsert(records, { onConflict: 'payroll_cycle_id,employee_id' });
     if (error) {
@@ -1341,20 +1348,20 @@ export const HrmsApi = {
   /** Marks an approved cycle as paid once the WPS / bank transfer is confirmed. */
   async markPayrollPaid(cycleId: string, paymentReference: string) {
     const paidAt = new Date().toISOString();
-    let res: any = await supabase
+    let res: any = await db
       .from('hrms_payroll_cycles')
       .update({ status: 'Paid', paid_at: paidAt, payment_reference: paymentReference })
       .eq('id', cycleId);
     if (res.error) {
-      res = await supabase.from('hrms_payroll_cycles').update({ status: 'Paid' }).eq('id', cycleId);
+      res = await db.from('hrms_payroll_cycles').update({ status: 'Paid' }).eq('id', cycleId);
     }
     if (res.error) return { error: res.error };
-    let slipRes: any = await supabase
+    let slipRes: any = await db
       .from('hrms_payroll_payslips')
       .update({ status: 'Paid', payment_reference: paymentReference, paid_at: paidAt })
       .eq('payroll_cycle_id', cycleId);
     if (slipRes.error) {
-      await supabase
+      await db
         .from('hrms_payroll_payslips')
         .update({ status: 'Paid', payment_reference: paymentReference })
         .eq('payroll_cycle_id', cycleId);
@@ -1372,7 +1379,7 @@ export const HrmsApi = {
     );
     writeLocalJson(HRMS_PAYROLL_CYCLES_LOCAL_KEY, updatedLocal);
 
-    const res = await supabase
+    const res = await db
       .from('hrms_payroll_cycles')
       .update({
         status: 'Approved',
@@ -1532,17 +1539,17 @@ export const HrmsApi = {
 
   // Performance
   async getAppraisalCycles(): Promise<HrmsAppraisalCycle[]> {
-    const { data, error } = await supabase.from('hrms_appraisal_cycles').select('*').order('start_date', { ascending: false });
+    const { data, error } = await db.from('hrms_appraisal_cycles').select('*').order('start_date', { ascending: false });
     if (error) console.error("Error fetching appraisal cycles:", error);
     return data || [];
   },
 
   async createAppraisalCycle(cycle: Partial<HrmsAppraisalCycle>) {
-    return await supabase.from('hrms_appraisal_cycles').insert(cycle).select().single();
+    return await db.from('hrms_appraisal_cycles').insert(cycle).select().single();
   },
 
   async getEmployeeAppraisals(cycleId?: string): Promise<HrmsEmployeeAppraisal[]> {
-    let query = supabase
+    let query = db
       .from('hrms_employee_appraisals')
       .select(`
         *,
@@ -1556,7 +1563,7 @@ export const HrmsApi = {
 
   // Expenses
   async getExpenseClaims(): Promise<HrmsExpenseClaim[]> {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('hrms_expense_claims')
       .select(`
         *,
@@ -1568,18 +1575,18 @@ export const HrmsApi = {
   },
 
   async submitExpenseClaim(claim: Partial<HrmsExpenseClaim>) {
-    return await supabase.from('hrms_expense_claims').insert(claim).select().single();
+    return await db.from('hrms_expense_claims').insert(claim).select().single();
   },
 
   async updateExpenseStatus(id: string, status: 'Approved' | 'Reimbursed' | 'Rejected') {
     const updateObj: any = { status };
     if (status === 'Reimbursed') updateObj.reimbursed_at = new Date().toISOString();
-    return await supabase.from('hrms_expense_claims').update(updateObj).eq('id', id).select().single();
+    return await db.from('hrms_expense_claims').update(updateObj).eq('id', id).select().single();
   },
 
   // Resignations & FNF
   async getResignations(): Promise<HrmsResignation[]> {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('hrms_resignations')
       .select(`
         *,
@@ -1591,11 +1598,11 @@ export const HrmsApi = {
   },
 
   async submitResignation(resignation: Partial<HrmsResignation>) {
-    return await supabase.from('hrms_resignations').insert(resignation).select().single();
+    return await db.from('hrms_resignations').insert(resignation).select().single();
   },
 
   async updateResignationStatus(id: string, status: string, approvedDate?: string) {
-    return await supabase
+    return await db
       .from('hrms_resignations')
       .update({
         status,
@@ -1607,7 +1614,7 @@ export const HrmsApi = {
   },
 
   async getFnfSettlements(): Promise<HrmsFnfSettlement[]> {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('hrms_fnf_settlements')
       .select(`
         *,
@@ -1619,22 +1626,22 @@ export const HrmsApi = {
   },
 
   async createFnfSettlement(fnf: Partial<HrmsFnfSettlement>) {
-    return await supabase.from('hrms_fnf_settlements').insert(fnf).select().single();
+    return await db.from('hrms_fnf_settlements').insert(fnf).select().single();
   },
 
   // Announcements & Help Desk
   async getAnnouncements(): Promise<HrmsAnnouncement[]> {
-    const { data, error } = await supabase.from('hrms_announcements').select('*').order('created_at', { ascending: false });
+    const { data, error } = await db.from('hrms_announcements').select('*').order('created_at', { ascending: false });
     if (error) console.error("Error fetching announcements:", error);
     return data || [];
   },
 
   async createAnnouncement(announcement: Partial<HrmsAnnouncement>) {
-    return await supabase.from('hrms_announcements').insert(announcement).select().single();
+    return await db.from('hrms_announcements').insert(announcement).select().single();
   },
 
   async getHelpdeskTickets(): Promise<HrmsHelpdeskTicket[]> {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('hrms_helpdesk_tickets')
       .select(`
         *,
@@ -1646,7 +1653,7 @@ export const HrmsApi = {
   },
 
   async createHelpdeskTicket(ticket: Partial<HrmsHelpdeskTicket>) {
-    return await supabase.from('hrms_helpdesk_tickets').insert(ticket).select().single();
+    return await db.from('hrms_helpdesk_tickets').insert(ticket).select().single();
   }
 };
 

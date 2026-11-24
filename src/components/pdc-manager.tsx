@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from '@/lib/supabase';
+import { db } from '@/lib/db';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -43,7 +43,7 @@ export function PdcManager({ leaseId }: { leaseId: string }) {
 
   const loadPDCs = async () => {
     setLoading(true);
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('pdcs')
       .select('*')
       .eq('lease_id', leaseId)
@@ -59,7 +59,7 @@ export function PdcManager({ leaseId }: { leaseId: string }) {
 
   const handleSave = async () => {
     setSaving(true);
-    const { error } = await supabase.from('pdcs').insert([{
+    const { error } = await db.from('pdcs').insert([{
       ...formData,
       lease_id: leaseId
     }]);

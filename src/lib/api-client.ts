@@ -1,31 +1,20 @@
 // src/lib/api-client.ts
 // REST API client bridging frontend to PMS Express/Prisma backend
-// Drop-in companion to supabase.ts – replaces .from() data calls with fetch(/api/*)
+// Drop-in companion to db.ts – replaces .from() data calls with fetch(/api/*)
 
-const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3001';
+const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3002';
 
-export function getToken(): string {
-  if (typeof window === 'undefined') return '';
-  return localStorage.getItem('pms_jwt_token') || '';
-}
-
-export function setToken(token: string): void {
-  if (typeof window !== 'undefined') {
-    if (token) localStorage.setItem('pms_jwt_token', token);
-    else localStorage.removeItem('pms_jwt_token');
-  }
-}
+// Auth lives in an httpOnly cookie set by the server, so the page never reads the JWT.
+// The tenant id is kept in memory only (restored from the session on every load).
+const DEFAULT_TENANT_ID = 'a0000000-0000-0000-0000-000000000001';
+let currentTenantId: string = (import.meta.env.VITE_TENANT_ID as string | undefined) || DEFAULT_TENANT_ID;
 
 export function getTenantId(): string {
-  if (typeof window === 'undefined') return 'a0000000-0000-0000-0000-000000000001';
-  return localStorage.getItem('pms_tenant_id') || import.meta.env.VITE_TENANT_ID || 'a0000000-0000-0000-0000-000000000001';
+  return currentTenantId;
 }
 
 export function setTenantId(tenantId: string): void {
-  if (typeof window !== 'undefined') {
-    if (tenantId) localStorage.setItem('pms_tenant_id', tenantId);
-    else localStorage.removeItem('pms_tenant_id');
-  }
+  currentTenantId = tenantId || DEFAULT_TENANT_ID;
 }
 
 export async function request<T = any>(
@@ -33,16 +22,14 @@ export async function request<T = any>(
   options: RequestInit = {}
 ): Promise<T> {
   const tenantId = getTenantId();
-  const token = getToken();
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     ...(tenantId ? { 'x-tenant-id': tenantId } : {}),
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers as Record<string, string>),
   };
 
-  const res = await fetch(`${API_BASE}${path}`, { ...options, headers });
+  const res = await fetch(`${API_BASE}${path}`, { ...options, headers, credentials: 'include' });
   if (!res.ok) {
     const err = await res.json().catch(() => ({ error: res.statusText }));
     throw new Error(err.error || `HTTP ${res.status}`);
@@ -96,6 +83,16 @@ export const dbApi = {
       method: 'POST',
       body: JSON.stringify(options),
     }),
+  rpc: <T = any>(fn: string, params: any) =>
+    request<{ data: T; error: string | null }>(`/api/db/rpc/${fn}`, {
+      method: 'POST',
+      body: JSON.stringify(params ?? {}),
+    }),
+  upsert: <T = any>(table: string, data: any, onConflict?: string) =>
+    request<{ data: T; error: string | null }>(`/api/db/${table}/upsert`, {
+      method: 'POST',
+      body: JSON.stringify({ data, onConflict }),
+    }),
   insert: <T = any>(table: string, data: any) =>
     request<{ data: T; error: string | null }>(`/api/db/${table}/insert`, {
       method: 'POST',
@@ -116,33 +113,25 @@ export const dbApi = {
 // ── Auth API ─────────────────────────────────────────────────────────────────
 export const authApi = {
   login: async (email: string, password: string) => {
-    const res = await request<{ token: string; user: any; profile: any }>('/api/auth/login', {
+    const res = await request<{ user: any; profile: any }>('/api/auth/login', {
       method: 'POST',
       body: JSON.stringify({ email, password }),
     });
-    if (res?.token) {
-      setToken(res.token);
-      if (res.user?.tenant_id) {
-        setTenantId(res.user.tenant_id);
-      }
-    }
+    if (res?.user?.tenant_id) setTenantId(res.user.tenant_id);
     return res;
   },
   getSession: async () => {
-    const token = getToken();
-    if (!token) return { user: null, profile: null };
-    return request<{ user: any; profile: any }>('/api/auth/session').catch(() => ({ user: null, profile: null }));
+    const res = await request<{ user: any; profile: any }>('/api/auth/session').catch(() => ({ user: null, profile: null }));
+    if (res?.user?.tenant_id) setTenantId(res.user.tenant_id);
+    return res;
   },
   logout: async () => {
     try {
       await request('/api/auth/logout', { method: 'POST' }).catch(() => {});
     } finally {
-      setToken('');
       setTenantId('');
     }
   },
-  getToken,
-  setToken,
 };
 
 // ── Domain helpers ───────────────────────────────────────────────────────────

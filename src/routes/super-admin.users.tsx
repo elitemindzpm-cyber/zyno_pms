@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
@@ -19,7 +20,7 @@ import {
   DialogDescription,
   DialogFooter
 } from "@/components/ui/dialog";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { logSecurityEvent } from "@/lib/security";
 import { toast } from "sonner";
 import {
@@ -177,7 +178,7 @@ const LOCAL_PROFILES_KEY = "pms_managed_user_profiles";
 function getLocalProfileOverrides(): Record<string, Partial<UserRow>> {
   if (typeof window === "undefined") return {};
   try {
-    const raw = localStorage.getItem(LOCAL_PROFILES_KEY);
+    const raw = kvStore.getItem(LOCAL_PROFILES_KEY);
     return raw ? JSON.parse(raw) : {};
   } catch {
     return {};
@@ -189,7 +190,7 @@ function saveLocalProfileOverride(userId: string, updates: Partial<UserRow>) {
   try {
     const current = getLocalProfileOverrides();
     current[userId] = { ...(current[userId] || {}), ...updates };
-    localStorage.setItem(LOCAL_PROFILES_KEY, JSON.stringify(current));
+    kvStore.setItem(LOCAL_PROFILES_KEY, JSON.stringify(current));
   } catch (e) {
     console.warn("Failed to persist local profile override", e);
   }
@@ -239,13 +240,13 @@ function UsersPage() {
     setLoading(true);
     try {
       // 1. Fetch real profiles from DB
-      const { data: profileData } = await supabase
+      const { data: profileData } = await db
         .from("profiles")
         .select("id, full_name, role, created_at, avatar_url")
         .order("created_at", { ascending: false });
 
       const overrides = getLocalProfileOverrides();
-      const rawList: UserRow[] = (profileData || []).map((p) => ({
+      const rawList: UserRow[] = (profileData || []).map((p: any) => ({
         id: p.id,
         full_name: p.full_name || "User",
         role: p.role || "ADMIN",
@@ -289,17 +290,17 @@ function UsersPage() {
       // 1. Optimistically & reliably save locally
       saveLocalProfileOverride(selectedUser.id, { role: selectedRole });
 
-      // 2. Best-effort update to Supabase profiles table
-      const { error: dbError } = await supabase
+      // 2. Best-effort update to DB profiles table
+      const { error: dbError } = await db
         .from("profiles")
         .update({ role: selectedRole })
         .eq("id", selectedUser.id);
 
       if (dbError) {
-        console.warn("Supabase profiles update notice:", dbError.message);
+        console.warn("DB profiles update notice:", dbError.message);
       }
 
-      // 3. Log to Immutable Security Audit Trail (Supabase DB + LocalStorage)
+      // 3. Log to Immutable Security Audit Trail (DB DB + LocalStorage)
       await logSecurityEvent({
         event_type: "access_denied",
         severity: selectedRole === "SUPER_ADMIN" ? "critical" : "warning",

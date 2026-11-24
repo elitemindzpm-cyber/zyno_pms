@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import type { ImportBatch, ImportModule, ImportOperation } from './types';
 
 const STORAGE_KEY = 'zyno_pms_import_batches_history_v2';
@@ -6,8 +7,8 @@ const AUDIT_STORAGE_KEY = 'zyno_pms_import_audit_trail_v2';
 // Clean up legacy v1 keys from older sessions
 if (typeof window !== 'undefined') {
   try {
-    localStorage.removeItem('stayhub_import_batches_history_v1');
-    localStorage.removeItem('stayhub_import_audit_trail_v1');
+    kvStore.removeItem('stayhub_import_batches_history_v1');
+    kvStore.removeItem('stayhub_import_audit_trail_v1');
   } catch {}
 }
 
@@ -33,7 +34,7 @@ export interface AuditLogEntry {
 export function getImportBatchHistory(): ImportBatch[] {
   try {
     let parsed: ImportBatch[] = [];
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = kvStore.getItem(STORAGE_KEY);
     if (raw) {
       try {
         parsed = JSON.parse(raw);
@@ -90,7 +91,7 @@ export function saveImportBatch(batch: ImportBatch): void {
 
     // Keep up to 50 historical batches
     const trimmed = existing.slice(0, 50);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(trimmed));
+    kvStore.setItem(STORAGE_KEY, JSON.stringify(trimmed));
   } catch (e) {
     console.error('Failed to save import batch:', e);
   }
@@ -112,13 +113,13 @@ export function updateImportBatchRecord(batchId: string, updater: (batch: Import
 
 export function recordAuditEvent(entry: Omit<AuditLogEntry, 'id'>): void {
   try {
-    const raw = localStorage.getItem(AUDIT_STORAGE_KEY);
+    const raw = kvStore.getItem(AUDIT_STORAGE_KEY);
     const logs: AuditLogEntry[] = raw ? JSON.parse(raw) : [];
     logs.unshift({
       id: crypto.randomUUID(),
       ...entry,
     });
-    localStorage.setItem(AUDIT_STORAGE_KEY, JSON.stringify(logs.slice(0, 200)));
+    kvStore.setItem(AUDIT_STORAGE_KEY, JSON.stringify(logs.slice(0, 200)));
   } catch (e) {
     console.error('Failed to record audit event:', e);
   }
@@ -126,7 +127,7 @@ export function recordAuditEvent(entry: Omit<AuditLogEntry, 'id'>): void {
 
 export function getAuditLogs(batchId?: string): AuditLogEntry[] {
   try {
-    const raw = localStorage.getItem(AUDIT_STORAGE_KEY);
+    const raw = kvStore.getItem(AUDIT_STORAGE_KEY);
     if (!raw) return [];
     const logs: AuditLogEntry[] = JSON.parse(raw);
     if (batchId) {
@@ -141,7 +142,7 @@ export function getAuditLogs(batchId?: string): AuditLogEntry[] {
 /** Remove all import batch history records from storage (all modules). */
 export function clearImportBatchHistory(): void {
   try {
-    localStorage.removeItem(STORAGE_KEY);
+    kvStore.removeItem(STORAGE_KEY);
   } catch (e) {
     console.error('Failed to clear import batch history:', e);
   }
@@ -150,7 +151,7 @@ export function clearImportBatchHistory(): void {
 /** Remove all audit log entries from storage. */
 export function clearAuditLogs(): void {
   try {
-    localStorage.removeItem(AUDIT_STORAGE_KEY);
+    kvStore.removeItem(AUDIT_STORAGE_KEY);
   } catch (e) {
     console.error('Failed to clear audit logs:', e);
   }

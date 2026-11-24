@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 /**
  * document-branding.ts
  * Manages organization branding assets (Header Image / Letterhead, Authorized Signature, Company Stamp, and Legal Document Templates)
@@ -205,12 +206,12 @@ const DEFAULT_BRANDING: DocumentBranding = {
   globalBannerFit: "fill",
   globalBannerStretch: true,
   globalBannerBorderRadius: 0,
-  footerText: "Al Ameen Real Estate W.L.L • Registered in the State of Qatar • CR-90821-QA",
+  footerText: "",
   signatureImageUrl: null,
-  authorizedSignatoryName: "Jithin Abdul Latheef",
-  authorizedSignatoryTitle: "General Manager",
-  authorizedSignatoryNameAr: "جيثين عبد اللطيف",
-  authorizedSignatoryTitleAr: "المدير العام",
+  authorizedSignatoryName: "",
+  authorizedSignatoryTitle: "",
+  authorizedSignatoryNameAr: "",
+  authorizedSignatoryTitleAr: "",
   stampImageUrl: null,
   receiptTerms: DEFAULT_RECEIPT_SUBMODULE.termsAndConditions,
   leaseTerms: DEFAULT_LEASE_SUBMODULE.termsAndConditions,
@@ -228,7 +229,7 @@ const DEFAULT_BRANDING: DocumentBranding = {
 export function getDocumentBranding(): DocumentBranding {
   if (typeof window === "undefined") return DEFAULT_BRANDING;
   try {
-    const raw = localStorage.getItem(BRANDING_STORAGE_KEY) || localStorage.getItem("pms_organization_document_branding_v2") || localStorage.getItem("pms_organization_document_branding_v1");
+    const raw = kvStore.getItem(BRANDING_STORAGE_KEY) || kvStore.getItem("pms_organization_document_branding_v2") || kvStore.getItem("pms_organization_document_branding_v1");
     if (!raw) return DEFAULT_BRANDING;
     const parsed = JSON.parse(raw);
     return {
@@ -260,7 +261,7 @@ export function saveDocumentBranding(branding: Partial<DocumentBranding>): Docum
 
   if (typeof window !== "undefined") {
     try {
-      localStorage.setItem(BRANDING_STORAGE_KEY, JSON.stringify(updated));
+      kvStore.setItem(BRANDING_STORAGE_KEY, JSON.stringify(updated));
     } catch (e) {
       console.warn("Failed to persist branding settings to local storage:", e);
     }

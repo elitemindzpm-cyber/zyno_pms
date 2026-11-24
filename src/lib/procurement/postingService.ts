@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 import { createAccountingEvent, type AccountingEventLine } from '../finance/accounting-event-engine';
 import { postAccountingEvent, type PostingResult } from '../finance/posting-engine';
 import { resolveGlOnlyAccount } from '../finance/account-resolver';
@@ -39,10 +39,10 @@ async function createAndPost(
 }
 
 export async function postGrn(grnId: string) {
-  const { data: grn, error } = await supabase.from('proc_goods_receipts').select('*').eq('id', grnId).single();
+  const { data: grn, error } = await db.from('proc_goods_receipts').select('*').eq('id', grnId).single();
   if (error) throw error;
   if (grn.posting_status === 'POSTED') return grn;
-  const { data: lines, error: lineError } = await supabase.from('proc_grn_lines').select('*').eq('goods_receipt_id', grnId);
+  const { data: lines, error: lineError } = await db.from('proc_grn_lines').select('*').eq('goods_receipt_id', grnId);
   if (lineError) throw lineError;
   const total = Number(grn.total_amount ?? 0);
   const capex = (lines ?? []).filter((l: any) => l.item_type === 'CAPEX').reduce((s: number, l: any) => s + Number(l.line_total || 0), 0);
@@ -84,13 +84,13 @@ export async function postGrn(grnId: string) {
   });
 
   const result = await createAndPost('GRN', grn.id, grn.doc_number, 'Procurement GRN posting', accountingLines, `PROC:GRN:${grn.id}`);
-  const { data: updated, error: updateError } = await supabase.from('proc_goods_receipts').update({ posting_status: 'POSTED', status: 'APPROVED', accounting_event_id: result.eventId }).eq('id', grnId).select().single();
+  const { data: updated, error: updateError } = await db.from('proc_goods_receipts').update({ posting_status: 'POSTED', status: 'APPROVED', accounting_event_id: result.eventId }).eq('id', grnId).select().single();
   if (updateError) throw updateError;
   return updated;
 }
 
 export async function postPayableInvoice(invoiceId: string) {
-  const { data: invoice, error } = await supabase.from('proc_payable_invoices').select('*').eq('id', invoiceId).single();
+  const { data: invoice, error } = await db.from('proc_payable_invoices').select('*').eq('id', invoiceId).single();
   if (error) throw error;
   if (invoice.posting_status === 'POSTED') return invoice;
   if (!invoice.purchase_order_id || !invoice.goods_receipt_id) {
@@ -138,13 +138,13 @@ export async function postPayableInvoice(invoiceId: string) {
   });
 
   const result = await createAndPost('AP_INVOICE', invoice.id, invoice.doc_number, 'Procurement payable invoice posting', lines, `PROC:AP:${invoice.id}`);
-  const { data: updated, error: updateError } = await supabase.from('proc_payable_invoices').update({ posting_status: 'POSTED', status: 'APPROVED', accounting_event_id: result.eventId, outstanding_amount: total }).eq('id', invoiceId).select().single();
+  const { data: updated, error: updateError } = await db.from('proc_payable_invoices').update({ posting_status: 'POSTED', status: 'APPROVED', accounting_event_id: result.eventId, outstanding_amount: total }).eq('id', invoiceId).select().single();
   if (updateError) throw updateError;
   return updated;
 }
 
 export async function postLandedCost(landedCostId: string) {
-  const { data: cost, error } = await supabase.from('proc_landed_costs').select('*').eq('id', landedCostId).single();
+  const { data: cost, error } = await db.from('proc_landed_costs').select('*').eq('id', landedCostId).single();
   if (error) throw error;
   if (cost.posting_status === 'POSTED') return cost;
   const amount = Number(cost.amount || 0);
@@ -181,7 +181,7 @@ export async function postLandedCost(landedCostId: string) {
   ];
 
   const result = await createAndPost('LANDED_COST', cost.id, cost.doc_number, `Procurement landed cost: ${cost.cost_type}`, lines, `PROC:LC:${cost.id}`);
-  const { data: updated, error: updateError } = await supabase.from('proc_landed_costs').update({ posting_status: 'POSTED', status: 'APPROVED', accounting_event_id: result.eventId }).eq('id', landedCostId).select().single();
+  const { data: updated, error: updateError } = await db.from('proc_landed_costs').update({ posting_status: 'POSTED', status: 'APPROVED', accounting_event_id: result.eventId }).eq('id', landedCostId).select().single();
   if (updateError) throw updateError;
   return updated;
 }

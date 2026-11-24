@@ -6,7 +6,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
-import type { ERPVoucher } from "@/lib/supabase";
+import type { ERPVoucher } from "@/lib/db";
 import { postVoucher } from "@/lib/finance/posting-engine";
 import { useAppData } from "@/lib/app-data-context";
 import { Loader2, Plus, ArrowDownLeft, ArrowUpRight, Receipt, Banknote, RotateCcw } from "lucide-react";

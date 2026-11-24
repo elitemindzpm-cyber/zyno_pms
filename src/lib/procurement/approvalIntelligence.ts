@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type ProcurementApprovalIntelligence = {
   suite: 'PROCUREMENT_APPROVAL_INTELLIGENCE';
@@ -37,7 +37,7 @@ export async function getProcurementApprovalIntelligence(
   limit = 20,
   highValueThreshold = 100000,
 ): Promise<ProcurementApprovalIntelligence> {
-  const { data, error } = await supabase.rpc('proc_approval_intelligence_dashboard', {
+  const { data, error } = await db.rpc('proc_approval_intelligence_dashboard', {
     p_days: days,
     p_limit: limit,
     p_high_value_threshold: highValueThreshold,

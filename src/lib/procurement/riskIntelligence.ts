@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type ProcurementRiskIntelligence = {
   suite: 'PROCUREMENT_RISK_INTELLIGENCE';
@@ -24,7 +24,7 @@ export type ProcurementRiskIntelligence = {
 };
 
 export async function getProcurementRiskIntelligence(days = 90, limit = 25, highValueThreshold = 100000) {
-  const { data, error } = await supabase.rpc('proc_approval_risk_intelligence', {
+  const { data, error } = await db.rpc('proc_approval_risk_intelligence', {
     p_days: days,
     p_limit: limit,
     p_high_value_threshold: highValueThreshold,

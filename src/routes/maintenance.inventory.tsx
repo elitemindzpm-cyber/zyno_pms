@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
-import { fetchInventoryParts, createInventoryPart, InventoryPart } from "@/lib/supabase";
+import { fetchInventoryParts, createInventoryPart, InventoryPart } from "@/lib/db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Box, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";

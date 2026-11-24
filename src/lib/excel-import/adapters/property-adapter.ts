@@ -1,4 +1,4 @@
-import { supabase, createProperty, updateProperty, type Property } from '../../supabase';
+import { db, createProperty, updateProperty, type Property } from '../../db';
 import { parseFloors } from '../../utils';
 import { 
   type EntityImportAdapter, 
@@ -76,7 +76,7 @@ export const propertyAdapter: EntityImportAdapter = {
     if (keys.length === 0) return map;
 
     try {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from('properties')
         .select('*')
         .in('property_code', keys);
@@ -266,9 +266,9 @@ export const propertyAdapter: EntityImportAdapter = {
       try {
         const propId = existingRecord.id;
         const [unitsRes, assetsRes, leasesRes] = await Promise.allSettled([
-          supabase.from('units').select('id, unit_code', { count: 'exact' }).eq('property_id', propId),
-          supabase.from('assets').select('id', { count: 'exact' }).eq('assigned_property_id', propId),
-          supabase.from('leases').select('id', { count: 'exact' }).eq('property_id', propId).in('lease_status', ['ACTIVE', 'RENEWAL_CONFIRMED', 'KEY_HANDED_OVER']),
+          db.from('units').select('id, unit_code', { count: 'exact' }).eq('property_id', propId),
+          db.from('assets').select('id', { count: 'exact' }).eq('assigned_property_id', propId),
+          db.from('leases').select('id', { count: 'exact' }).eq('property_id', propId).in('lease_status', ['ACTIVE', 'RENEWAL_CONFIRMED', 'KEY_HANDED_OVER']),
         ]);
 
         const unitCount = unitsRes.status === 'fulfilled' ? (unitsRes.value.count ?? 0) : 0;

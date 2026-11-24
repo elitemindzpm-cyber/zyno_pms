@@ -1033,7 +1033,7 @@ function ConfigPage() {
 
                     <div className="flex items-center justify-between p-2.5 rounded-lg border border-border/40 bg-background">
                       <div>
-                        <p className="text-xs font-semibold">Supabase Storage Buckets</p>
+                        <p className="text-xs font-semibold">DB Storage Buckets</p>
                         <p className="text-[11px] text-muted-foreground font-mono">property-images, receipts, leases</p>
                       </div>
                       <Badge className="bg-emerald-500/15 text-emerald-600">Active (4 Buckets)</Badge>

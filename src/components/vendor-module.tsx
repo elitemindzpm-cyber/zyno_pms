@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { useRouterState } from "@tanstack/react-router";
 import { ExcelImportEmbedded } from "@/components/excel-import-embedded";
@@ -20,8 +21,8 @@ import {
   Upload, History, ShoppingBag, Eye, FileUp, Paperclip, FileCheck, Layers,
   FileSpreadsheet, Download, Loader2
 } from "lucide-react";
-import { supabase } from "@/lib/supabase";
-import { FinVendorsApi, type FinVendor } from "@/lib/supabase-finance";
+import { db } from "@/lib/db";
+import { FinVendorsApi, type FinVendor } from "@/lib/db-finance";
 import { ApInvoicesApi, type ProcApInvoice, type PaymentReceipt } from "@/lib/proc-invoices-api";
 import { PaymentReceiptDialog } from "@/components/payment-receipt-dialog";
 import { ProformaInvoiceDialog } from "@/components/proforma-invoice-dialog";
@@ -94,17 +95,17 @@ function postAdvanceVoucherToGL(params: {
   try {
     const k1 = "zyno-pms-finance-data-v1-vouchers";
     const k2 = "zyno_finance_vouchers";
-    const existing1 = JSON.parse(localStorage.getItem(k1) || "[]");
-    const existing2 = JSON.parse(localStorage.getItem(k2) || "[]");
-    localStorage.setItem(k1, JSON.stringify([newVoucher, ...existing1]));
-    localStorage.setItem(k2, JSON.stringify([newVoucher, ...existing2]));
+    const existing1 = JSON.parse(kvStore.getItem(k1) || "[]");
+    const existing2 = JSON.parse(kvStore.getItem(k2) || "[]");
+    kvStore.setItem(k1, JSON.stringify([newVoucher, ...existing1]));
+    kvStore.setItem(k2, JSON.stringify([newVoucher, ...existing2]));
   } catch (e) {
     console.error("Failed to store voucher locally", e);
   }
 
-  // Also record in supabase if available
+  // Also record in db if available
   try {
-    supabase.from("fin_vouchers").insert({
+    db.from("fin_vouchers").insert({
       voucher_number: pvNo,
       voucher_date: vDate,
       voucher_type: "Payment Voucher",
@@ -231,11 +232,11 @@ export function VendorModule({ role }: { role: "admin" | "prop-mgr" }) {
     try {
       const [vRes, cRes, bRes, qRes, iRes, poRes] = await Promise.all([
         FinVendorsApi.fetchAll().catch(() => []),
-        (async () => { try { const r = await supabase.from("vendor_contacts").select("*").order("is_primary", { ascending: false }); return r.data || []; } catch { return []; } })(),
-        (async () => { try { const r = await supabase.from("vendor_bank_details").select("*"); return r.data || []; } catch { return []; } })(),
-        (async () => { try { const r = await supabase.from("vendor_qualifications").select("*"); return r.data || []; } catch { return []; } })(),
+        (async () => { try { const r = await db.from("vendor_contacts").select("*").order("is_primary", { ascending: false }); return r.data || []; } catch { return []; } })(),
+        (async () => { try { const r = await db.from("vendor_bank_details").select("*"); return r.data || []; } catch { return []; } })(),
+        (async () => { try { const r = await db.from("vendor_qualifications").select("*"); return r.data || []; } catch { return []; } })(),
         ApInvoicesApi.fetchAll().catch(() => []),
-        (async () => { try { const r = await supabase.from("proc_purchase_orders").select("*").order("created_at", { ascending: false }); return r.data || []; } catch { return []; } })(),
+        (async () => { try { const r = await db.from("proc_purchase_orders").select("*").order("created_at", { ascending: false }); return r.data || []; } catch { return []; } })(),
       ]);
       setVendorPos(poRes || []);
       setVendors(vRes || []);
@@ -265,7 +266,7 @@ export function VendorModule({ role }: { role: "admin" | "prop-mgr" }) {
       if (refreshTimer) clearTimeout(refreshTimer);
       refreshTimer = setTimeout(() => loadAll(), 400);
     };
-    const liveChannel = supabase.channel("vendors-live");
+    const liveChannel = db.channel("vendors-live");
     ["fin_vendors", "vendor_contacts", "vendor_bank_details", "vendor_qualifications", "proc_purchase_orders"].forEach((table) => {
       liveChannel.on("postgres_changes" as any, { event: "*", schema: "public", table }, refreshSoon);
     });
@@ -279,7 +280,7 @@ export function VendorModule({ role }: { role: "admin" | "prop-mgr" }) {
       window.removeEventListener("focus", refreshSoon);
       document.removeEventListener("visibilitychange", onVisible);
       if (refreshTimer) clearTimeout(refreshTimer);
-      supabase.removeChannel(liveChannel);
+      db.removeChannel(liveChannel);
     };
   }, [loadAll]);
 
@@ -316,18 +317,18 @@ export function VendorModule({ role }: { role: "admin" | "prop-mgr" }) {
     try {
       const payload = { code: vendorForm.code, name: vendorForm.name, contact_person: vendorForm.contact_person || null, email: vendorForm.email || null, phone: vendorForm.phone || null, tax_number: vendorForm.tax_number || null, address: vendorForm.address || null, city: vendorForm.city || null, country: vendorForm.country, vendor_type: vendorForm.vendor_type, payment_terms: vendorForm.payment_terms, settlement_mode: vendorForm.settlement_mode, currency: vendorForm.currency, status: vendorForm.status, notes: vendorForm.notes || null };
       if (editVendor) {
-        const { error } = await supabase.from("fin_vendors").update(payload).eq("id", editVendor.id);
+        const { error } = await db.from("fin_vendors").update(payload).eq("id", editVendor.id);
         if (error) throw error;
         toast.success(`${vendorForm.name} updated.`);
       } else {
-        const { data: createdVendor, error } = await supabase.from("fin_vendors").insert(payload).select().single();
+        const { data: createdVendor, error } = await db.from("fin_vendors").insert(payload).select().single();
         if (error) throw error;
         const vId = createdVendor.id;
 
         // Auto-insert Step 2 Contact if provided
         if (vendorForm.contact_name.trim()) {
           try {
-            await supabase.from("vendor_contacts").insert({
+            await db.from("vendor_contacts").insert({
               vendor_id: vId,
               name: vendorForm.contact_name,
               role: vendorForm.contact_role || "Primary Contact",
@@ -341,7 +342,7 @@ export function VendorModule({ role }: { role: "admin" | "prop-mgr" }) {
         // Auto-insert Step 3 Qualification if provided
         if (vendorForm.qual_category.trim()) {
           try {
-            await supabase.from("vendor_qualifications").insert({
+            await db.from("vendor_qualifications").insert({
               vendor_id: vId,
               category: vendorForm.qual_category,
               certification: vendorForm.qual_certification || null,
@@ -355,7 +356,7 @@ export function VendorModule({ role }: { role: "admin" | "prop-mgr" }) {
         // Auto-insert Step 4 Bank Details if provided
         if (vendorForm.bank_name.trim() && vendorForm.bank_account_number.trim()) {
           try {
-            await supabase.from("vendor_bank_details").insert({
+            await db.from("vendor_bank_details").insert({
               vendor_id: vId,
               bank_name: vendorForm.bank_name,
               account_name: vendorForm.bank_account_name || vendorForm.name,
@@ -377,7 +378,7 @@ export function VendorModule({ role }: { role: "admin" | "prop-mgr" }) {
   async function handleDeleteVendor(v: FinVendor) {
     if (!confirm(`Delete vendor "${v.name}"?`)) return;
     try {
-      const { error } = await supabase.from("fin_vendors").delete().eq("id", v.id);
+      const { error } = await db.from("fin_vendors").delete().eq("id", v.id);
       if (error) throw error;
       toast.success(`${v.name} deleted.`);
       await loadAll();
@@ -386,7 +387,7 @@ export function VendorModule({ role }: { role: "admin" | "prop-mgr" }) {
   async function handleToggleStatus(v: FinVendor) {
     const ns = v.status === "Active" ? "Inactive" : "Active";
     try {
-      const { error } = await supabase.from("fin_vendors").update({ status: ns }).eq("id", v.id);
+      const { error } = await db.from("fin_vendors").update({ status: ns }).eq("id", v.id);
       if (error) throw error;
       toast.success(`${v.name} → ${ns}`);
       await loadAll();
@@ -467,10 +468,10 @@ async function handleSaveInvoice() {
     const vendorName = vendors.find(v => String(v.id) === String(inv.vendor_id))?.name || String(inv.vendor_id);
     const vendorBank = bankDetails.find(b => String(b.vendor_id) === String(inv.vendor_id));
     const partialKey = `partial_paid_${inv.id}`;
-    const alreadyPaid = Number(localStorage.getItem(partialKey) || "0");
+    const alreadyPaid = Number(kvStore.getItem(partialKey) || "0");
     const outstanding = Number(inv.total_amount || 0) - alreadyPaid;
     const advKey = `vendor_advance_${inv.vendor_id}`;
-    const advBalance = Number(localStorage.getItem(advKey) || "0");
+    const advBalance = Number(kvStore.getItem(advKey) || "0");
     setPaymentTargetInv(inv);
     setVendorPayForm({
       paymentDate: new Date().toISOString().slice(0, 10),
@@ -495,21 +496,21 @@ async function handleSaveInvoice() {
     try {
       const totalDue = Number(paymentTargetInv.total_amount || 0);
       const partialKey = `partial_paid_${paymentTargetInv.id}`;
-      const alreadyPaid = Number(localStorage.getItem(partialKey) || "0");
+      const alreadyPaid = Number(kvStore.getItem(partialKey) || "0");
       const advKey = `vendor_advance_${paymentTargetInv.vendor_id}`;
-      const advBalance = Number(localStorage.getItem(advKey) || "0");
+      const advBalance = Number(kvStore.getItem(advKey) || "0");
       const cashAmount = vendorPayForm.paymentAmount;
       const advApplied = vendorPayForm.applyAdvance ? Math.min(vendorPayForm.advanceAmount, advBalance) : 0;
       const effectivePaid = cashAmount + advApplied;
       const newTotalPaid = alreadyPaid + effectivePaid;
       const isFullySettled = newTotalPaid >= totalDue - 0.01;
-      localStorage.setItem(partialKey, String(newTotalPaid));
+      kvStore.setItem(partialKey, String(newTotalPaid));
       
       // Track advance utilization
       if (advApplied > 0) {
-        localStorage.setItem(advKey, String(advBalance - advApplied));
+        kvStore.setItem(advKey, String(advBalance - advApplied));
         const utilKey = `vendor_adv_util_${paymentTargetInv.vendor_id}`;
-        const prevUtils = JSON.parse(localStorage.getItem(utilKey) || "[]");
+        const prevUtils = JSON.parse(kvStore.getItem(utilKey) || "[]");
         const newUtil = {
           id: `util-${Date.now()}`,
           invoice_id: paymentTargetInv.id,
@@ -521,7 +522,7 @@ async function handleSaveInvoice() {
           reference: vendorPayForm.transactionReference,
           created_at: new Date().toISOString()
         };
-        localStorage.setItem(utilKey, JSON.stringify([newUtil, ...prevUtils]));
+        kvStore.setItem(utilKey, JSON.stringify([newUtil, ...prevUtils]));
 
         // Post Advance Settlement Voucher to GL (Dr. 22100001 Trade Payables / Cr. 12300001 Advance to Vendors)
         const advVchrNo = `PV-SETTLE-ADV-${Date.now().toString().slice(-6)}`;
@@ -553,10 +554,10 @@ async function handleSaveInvoice() {
         try {
           const k1 = "zyno-pms-finance-data-v1-vouchers";
           const k2 = "zyno_finance_vouchers";
-          const e1 = JSON.parse(localStorage.getItem(k1) || "[]");
-          const e2 = JSON.parse(localStorage.getItem(k2) || "[]");
-          localStorage.setItem(k1, JSON.stringify([advanceSettlementVoucher, ...e1]));
-          localStorage.setItem(k2, JSON.stringify([advanceSettlementVoucher, ...e2]));
+          const e1 = JSON.parse(kvStore.getItem(k1) || "[]");
+          const e2 = JSON.parse(kvStore.getItem(k2) || "[]");
+          kvStore.setItem(k1, JSON.stringify([advanceSettlementVoucher, ...e1]));
+          kvStore.setItem(k2, JSON.stringify([advanceSettlementVoucher, ...e2]));
         } catch (e) {
           console.error("Failed to store settlement voucher", e);
         }
@@ -596,10 +597,10 @@ async function handleSaveInvoice() {
         try {
           const k1 = "zyno-pms-finance-data-v1-vouchers";
           const k2 = "zyno_finance_vouchers";
-          const e1 = JSON.parse(localStorage.getItem(k1) || "[]");
-          const e2 = JSON.parse(localStorage.getItem(k2) || "[]");
-          localStorage.setItem(k1, JSON.stringify([paymentVoucher, ...e1]));
-          localStorage.setItem(k2, JSON.stringify([paymentVoucher, ...e2]));
+          const e1 = JSON.parse(kvStore.getItem(k1) || "[]");
+          const e2 = JSON.parse(kvStore.getItem(k2) || "[]");
+          kvStore.setItem(k1, JSON.stringify([paymentVoucher, ...e1]));
+          kvStore.setItem(k2, JSON.stringify([paymentVoucher, ...e2]));
         } catch (e) {
           console.error("Failed to store payment voucher", e);
         }
@@ -771,11 +772,11 @@ async function handleSaveInvoice() {
 
             {(() => {
               const vendorsWithAdvanceData = vendors.map(v => {
-                const advBal = Number(localStorage.getItem(`vendor_advance_${v.id}`) || "0");
+                const advBal = Number(kvStore.getItem(`vendor_advance_${v.id}`) || "0");
                 const vInvoices = apInvoices.filter(i => String(i.vendor_id) === String(v.id));
                 const totalSettled = vInvoices.reduce((a, b) => {
                   const pKey = `partial_paid_${b.id}`;
-                  return a + Number(localStorage.getItem(pKey) || (b.status === "PAID" ? b.total_amount : 0));
+                  return a + Number(kvStore.getItem(pKey) || (b.status === "PAID" ? b.total_amount : 0));
                 }, 0);
                 const totalInvoiced = vInvoices.reduce((a, b) => a + Number(b.total_amount || 0), 0);
                 return { ...v, advBal, totalSettled, totalInvoiced };
@@ -866,7 +867,7 @@ async function handleSaveInvoice() {
                   <TableBody>
                     {apInvoices.map(inv => {
                       const totalDue = Number(inv.total_amount || 0);
-                      const alreadyPaid = Number(localStorage.getItem(`partial_paid_${inv.id}`) || "0");
+                      const alreadyPaid = Number(kvStore.getItem(`partial_paid_${inv.id}`) || "0");
                       const outstanding = totalDue - alreadyPaid;
                       const isPartial = (inv.status as string) === "PARTIAL";
                       return (
@@ -1422,7 +1423,7 @@ async function handleSaveInvoice() {
             <Button variant="outline" onClick={() => setShowContactModal(false)}>Cancel</Button>
             <Button onClick={async () => {
               if (!contactForm.vendorId || !contactForm.name.trim()) return toast.error("Vendor and Name required.");
-              try { const { error } = await supabase.from("vendor_contacts").insert({ vendor_id: contactForm.vendorId, name: contactForm.name, role: contactForm.role, phone: contactForm.phone || null, email: contactForm.email || null, is_primary: contactForm.is_primary }); if (error) throw error; toast.success("Contact added."); setShowContactModal(false); await loadAll(); } catch (e: any) { toast.error(e.message); }
+              try { const { error } = await db.from("vendor_contacts").insert({ vendor_id: contactForm.vendorId, name: contactForm.name, role: contactForm.role, phone: contactForm.phone || null, email: contactForm.email || null, is_primary: contactForm.is_primary }); if (error) throw error; toast.success("Contact added."); setShowContactModal(false); await loadAll(); } catch (e: any) { toast.error(e.message); }
             }}>Add Contact</Button>
           </DialogFooter>
         </DialogContent>
@@ -1449,7 +1450,7 @@ async function handleSaveInvoice() {
             <Button variant="outline" onClick={() => setShowBankModal(false)}>Cancel</Button>
             <Button onClick={async () => {
               if (!bankForm.vendorId || !bankForm.bank_name || !bankForm.account_number) return toast.error("Vendor, Bank Name and Account Number required.");
-              try { const { error } = await supabase.from("vendor_bank_details").insert({ ...bankForm, vendor_id: bankForm.vendorId }); if (error) throw error; toast.success("Bank account added."); setShowBankModal(false); await loadAll(); } catch (e: any) { toast.error(e.message); }
+              try { const { error } = await db.from("vendor_bank_details").insert({ ...bankForm, vendor_id: bankForm.vendorId }); if (error) throw error; toast.success("Bank account added."); setShowBankModal(false); await loadAll(); } catch (e: any) { toast.error(e.message); }
             }}>Save Bank Account</Button>
           </DialogFooter>
         </DialogContent>
@@ -1475,7 +1476,7 @@ async function handleSaveInvoice() {
             <Button variant="outline" onClick={() => setShowQualModal(false)}>Cancel</Button>
             <Button onClick={async () => {
               if (!qualForm.vendorId || !qualForm.category) return toast.error("Vendor and Category required.");
-              try { const { error } = await supabase.from("vendor_qualifications").insert({ vendor_id: qualForm.vendorId, category: qualForm.category, certification: qualForm.certification || null, expiry_date: qualForm.expiry_date || null, status: qualForm.status, notes: qualForm.notes || null }); if (error) throw error; toast.success("Qualification added."); setShowQualModal(false); await loadAll(); } catch (e: any) { toast.error(e.message); }
+              try { const { error } = await db.from("vendor_qualifications").insert({ vendor_id: qualForm.vendorId, category: qualForm.category, certification: qualForm.certification || null, expiry_date: qualForm.expiry_date || null, status: qualForm.status, notes: qualForm.notes || null }); if (error) throw error; toast.success("Qualification added."); setShowQualModal(false); await loadAll(); } catch (e: any) { toast.error(e.message); }
             }}>Add Qualification</Button>
           </DialogFooter>
         </DialogContent>
@@ -1682,8 +1683,8 @@ async function handleSaveInvoice() {
                 const amt = Number(advanceForm.amount);
                 if (amt <= 0) return toast.error("Please specify a valid advance amount.");
                 const advKey = `vendor_advance_${advanceForm.vendorId}`;
-                const curr = Number(localStorage.getItem(advKey) || "0");
-                localStorage.setItem(advKey, String(curr + amt));
+                const curr = Number(kvStore.getItem(advKey) || "0");
+                kvStore.setItem(advKey, String(curr + amt));
                 
                 const targetVendor = vendors.find(v => String(v.id) === String(advanceForm.vendorId));
                 postAdvanceVoucherToGL({
@@ -1717,24 +1718,24 @@ async function handleSaveInvoice() {
           {advanceHistoryVendor && (() => {
             const advKey = `vendor_advance_${advanceHistoryVendor.id}`;
             const utilKey = `vendor_adv_util_${advanceHistoryVendor.id}`;
-            const currentAdvance = Number(localStorage.getItem(advKey) || "0");
+            const currentAdvance = Number(kvStore.getItem(advKey) || "0");
             const vendorInvoices = apInvoices.filter(i => String(i.vendor_id) === String(advanceHistoryVendor.id));
             const totalInvoiced = vendorInvoices.reduce((a, b) => a + Number(b.total_amount || 0), 0);
             const totalPaid = vendorInvoices.reduce((a, b) => {
               const pKey = `partial_paid_${b.id}`;
-              return a + Number(localStorage.getItem(pKey) || (b.status === "PAID" ? b.total_amount : 0));
+              return a + Number(kvStore.getItem(pKey) || (b.status === "PAID" ? b.total_amount : 0));
             }, 0);
             // Gather all utilization entries
-            const explicitUtils: any[] = JSON.parse(localStorage.getItem(utilKey) || "[]");
+            const explicitUtils: any[] = JSON.parse(kvStore.getItem(utilKey) || "[]");
             
             // Auto-detect any invoice settled where advance was applied
             const inferredUtils = vendorInvoices.filter(inv => {
               const pKey = `partial_paid_${inv.id}`;
-              const pPaid = Number(localStorage.getItem(pKey) || (inv.status === "PAID" ? inv.total_amount : 0));
+              const pPaid = Number(kvStore.getItem(pKey) || (inv.status === "PAID" ? inv.total_amount : 0));
               return pPaid > 0 && !explicitUtils.some(u => u.invoice_id === inv.id || u.invoice_number === inv.invoice_number);
             }).map(inv => {
               const pKey = `partial_paid_${inv.id}`;
-              const pPaid = Number(localStorage.getItem(pKey) || (inv.status === "PAID" ? inv.total_amount : 0));
+              const pPaid = Number(kvStore.getItem(pKey) || (inv.status === "PAID" ? inv.total_amount : 0));
               return {
                 id: `util-inf-${inv.id}`,
                 invoice_id: inv.id,
@@ -2048,10 +2049,10 @@ async function handleSaveInvoice() {
                   {(() => {
                     const totalDue = Number(paymentTargetInv.total_amount || 0);
                     const partialKey = `partial_paid_${paymentTargetInv.id}`;
-                    const alreadyPaid = Number(localStorage.getItem(partialKey) || "0");
+                    const alreadyPaid = Number(kvStore.getItem(partialKey) || "0");
                     const outstanding = totalDue - alreadyPaid;
                     const advKey = `vendor_advance_${paymentTargetInv.vendor_id}`;
-                    const advBalance = Number(localStorage.getItem(advKey) || "0");
+                    const advBalance = Number(kvStore.getItem(advKey) || "0");
                     const advApplied = vendorPayForm.applyAdvance ? Math.min(vendorPayForm.advanceAmount, advBalance) : 0;
                     const cashRequired = Math.max(0, outstanding - advApplied);
                     const payingNow = vendorPayForm.paymentAmount;

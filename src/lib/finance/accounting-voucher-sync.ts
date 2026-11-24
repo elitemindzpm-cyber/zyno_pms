@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export async function syncAccountingEventToErp(
     eventId: string,
@@ -7,7 +7,7 @@ export async function syncAccountingEventToErp(
      * 1. Load event
      */
     const { data: event, error: eventError } =
-        await supabase
+        await db
             .from('fin_accounting_events')
             .select('*')
             .eq('id', eventId)
@@ -30,7 +30,7 @@ export async function syncAccountingEventToErp(
      * 2. Load event lines
      */
     const { data: lines, error: linesError } =
-        await supabase
+        await db
             .from('fin_accounting_event_lines')
             .select('*')
             .eq('event_id', eventId)
@@ -48,13 +48,13 @@ export async function syncAccountingEventToErp(
     const accountCodes = [
         ...new Set(
             lines
-                .map((line) => line.account_code)
+                .map((line: any) => line.account_code)
                 .filter(Boolean),
         ),
     ];
 
     const { data: accounts, error: accountsError } =
-        await supabase
+        await db
             .from('erp_chart_of_accounts')
             .select('id, code, name')
             .in('code', accountCodes);
@@ -96,7 +96,7 @@ export async function syncAccountingEventToErp(
         `EVT-${String(event.id).slice(0, 8)}`;
 
     const { data: voucher, error: voucherError } =
-        await supabase
+        await db
             .from('erp_vouchers')
             .insert({
                 voucher_no: voucherNo,
@@ -123,7 +123,7 @@ export async function syncAccountingEventToErp(
     /*
      * 5. Create ERP journal entries.
      */
-    const journalLines = lines.map((line) => {
+    const journalLines = lines.map((line: any) => {
         const account = accountMap.get(
             line.account_code,
         );
@@ -157,7 +157,7 @@ export async function syncAccountingEventToErp(
     });
 
     const { error: journalError } =
-        await supabase
+        await db
             .from('erp_journal_entries')
             .insert(journalLines);
 
@@ -165,7 +165,7 @@ export async function syncAccountingEventToErp(
         /*
          * Cleanup orphan voucher.
          */
-        await supabase
+        await db
             .from('erp_vouchers')
             .delete()
             .eq('id', voucher.id);
@@ -177,7 +177,7 @@ export async function syncAccountingEventToErp(
      * 6. Mark accounting event posted.
      */
     const { error: updateError } =
-        await supabase
+        await db
             .from('fin_accounting_events')
             .update({
                 status: 'POSTED',

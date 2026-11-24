@@ -17,7 +17,7 @@ import {
 } from "@/components/ui/dialog";
 import { Receipt, Banknote, AlertTriangle, CheckCircle2, Building, Building2, User, Home, Calendar, Search, ArrowUpDown, Filter, Hash, Info, Loader2, Plus, ShieldCheck, ArrowDownLeft, ArrowUpRight, BookmarkCheck, Landmark } from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { settleDeposit, collectSecurityDeposit } from "@/lib/finance/depositService";
 import { useAppData } from "@/lib/app-data-context";
 import { useFinanceStore } from "@/lib/finance/finance-store";
@@ -368,7 +368,7 @@ export function DepositsGuarantees() {
 
   useEffect(() => {
     load();
-    const channel = supabase
+    const channel = db
       .channel("deposits-guarantees:live")
       .on(
         "postgres_changes" as any,
@@ -377,7 +377,7 @@ export function DepositsGuarantees() {
       )
       .subscribe();
 
-    return () => { supabase.removeChannel(channel); };
+    return () => { db.removeChannel(channel); };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function load(showLoading = true) {
@@ -386,12 +386,12 @@ export function DepositsGuarantees() {
       let dbData: any[] = [];
       try {
         const [depRes, vchRes] = await Promise.all([
-          supabase.from("fin_deposits").select("*").order("created_at", { ascending: false }),
-          supabase.from("fin_vouchers").select("reference_no, description, voucher_date").like("voucher_number", "VCH-SD-%")
+          db.from("fin_deposits").select("*").order("created_at", { ascending: false }),
+          db.from("fin_vouchers").select("reference_no, description, voucher_date").like("voucher_number", "VCH-SD-%")
         ]);
         if (!depRes.error && depRes.data) {
           const vchByRef = new Map<string, any>();
-          (vchRes.data || []).forEach(v => {
+          (vchRes.data || []).forEach((v: any) => {
             if (v.reference_no) vchByRef.set(v.reference_no, v);
           });
           dbData = depRes.data.map((d: any) => {

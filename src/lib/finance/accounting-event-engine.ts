@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type AccountingEventLine = {
     account_code: string;
@@ -108,7 +108,7 @@ export async function createAccountingEvent(
     /*
      * 1. Check idempotency first.
      */
-    const { data: existing, error: existingError } = await supabase
+    const { data: existing, error: existingError } = await db
         .from('fin_accounting_events')
         .select('*')
         .eq('idempotency_key', payload.idempotency_key)
@@ -125,7 +125,7 @@ export async function createAccountingEvent(
     /*
      * 2. Create accounting event.
      */
-    const { data: event, error: eventError } = await supabase
+    const { data: event, error: eventError } = await db
         .from('fin_accounting_events')
         .insert({
             event_type: payload.event_type,
@@ -169,7 +169,7 @@ export async function createAccountingEvent(
          * Another concurrent request may have inserted
          * the same idempotency key.
          */
-        const { data: concurrent } = await supabase
+        const { data: concurrent } = await db
             .from('fin_accounting_events')
             .select('*')
             .eq('idempotency_key', payload.idempotency_key)
@@ -233,7 +233,7 @@ export async function createAccountingEvent(
     }));
 
     try {
-        const { error: linesError } = await supabase
+        const { error: linesError } = await db
             .from('fin_accounting_event_lines')
             .insert(lines);
 
@@ -247,7 +247,7 @@ export async function createAccountingEvent(
     /*
      * 4. Refresh totals from actual lines.
      */
-    const { error: refreshError } = await supabase.rpc(
+    const { error: refreshError } = await db.rpc(
         'fin_refresh_event_totals',
         {
             p_event_id: event.id,
@@ -261,7 +261,7 @@ export async function createAccountingEvent(
     /*
      * 5. Validate final balance.
      */
-    const { error: balanceError } = await supabase.rpc(
+    const { error: balanceError } = await db.rpc(
         'fin_validate_event_balance',
         {
             p_event_id: event.id,
@@ -276,7 +276,7 @@ export async function createAccountingEvent(
      * 6. Fetch final event.
      */
     const { data: finalEvent, error: finalError } =
-        await supabase
+        await db
             .from('fin_accounting_events')
             .select('*')
             .eq('id', event.id)

@@ -1,5 +1,5 @@
 import { useState, useEffect } from "react";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import {
   Check, X, Shield, Save, ChevronDown, ChevronRight,
   AlertTriangle
@@ -75,7 +75,7 @@ export function PermissionsManager({
 
   async function loadPermissions() {
     setLoading(true);
-    let query = supabase.from("role_permissions").select("*");
+    let query = db.from("role_permissions").select("*");
     
     if (targetTenantId) {
       query = query.or(`tenant_id.eq.${targetTenantId},tenant_id.is.null`);
@@ -122,7 +122,7 @@ export function PermissionsManager({
         tenant_id: targetTenantId
       }));
 
-      const { error } = await supabase.from("role_permissions").upsert(upserts, {
+      const { error } = await db.from("role_permissions").upsert(upserts, {
         onConflict: "role_name,module_id,tenant_id"
       });
 

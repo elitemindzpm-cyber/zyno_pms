@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Plus, Home, Inbox, CalendarIcon, Loader2, BarChart, Package, Users } from "lucide-react";
 import { useEffect, useState } from "react";
-import { fetchAllProperties, supabase, type Property } from "@/lib/supabase";
+import { fetchAllProperties, db, type Property } from "@/lib/db";
 
 export const Route = createFileRoute("/prop-mgr/")({
   component: HostDashboard,
@@ -30,10 +30,10 @@ function HostDashboard() {
   useEffect(() => {
     async function loadDashboard() {
       // Get current user session (for name display if logged in)
-      const { data: { session } } = await supabase.auth.getSession();
+      const { data: { session } } = await db.auth.getSession();
       
       if (session?.user) {
-        const { data: profile } = await supabase
+        const { data: profile } = await db
           .from('profiles')
           .select('full_name')
           .eq('id', session.user.id)
@@ -52,21 +52,21 @@ function HostDashboard() {
 
       // Fetch real stats without host_id filter
       try {
-        const { count: propCount } = await supabase.from('properties').select('*', { count: 'exact', head: true });
-        const { count: unitCount } = await supabase.from('units').select('*', { count: 'exact', head: true });
-        const { count: leaseCount } = await supabase.from('leases').select('*', { count: 'exact', head: true }).or('lease_status.ilike.active,lease_status.ilike.fully_signed,lease_status.ilike.renewed');
-        const { count: occupiedCount } = await supabase.from('units').select('*', { count: 'exact', head: true }).or('status.ilike.occupied,lease_status.ilike.leased');
+        const { count: propCount } = await db.from('properties').select('*', { count: 'exact', head: true });
+        const { count: unitCount } = await db.from('units').select('*', { count: 'exact', head: true });
+        const { count: leaseCount } = await db.from('leases').select('*', { count: 'exact', head: true }).or('lease_status.ilike.active,lease_status.ilike.fully_signed,lease_status.ilike.renewed');
+        const { count: occupiedCount } = await db.from('units').select('*', { count: 'exact', head: true }).or('status.ilike.occupied,lease_status.ilike.leased');
         
-        const { data: propData } = await supabase.from('properties').select('id');
-        const propIds = propData?.map(p => p.id) || [];
+        const { data: propData } = await db.from('properties').select('id');
+        const propIds = propData?.map((p: any) => p.id) || [];
         
         let assetsCount = 0;
         let empIds = new Set();
         if (propIds.length > 0) {
-          const { data: assetsData } = await supabase.from('assets').select('id, assigned_employee_id').in('assigned_property_id', propIds);
+          const { data: assetsData } = await db.from('assets').select('id, assigned_employee_id').in('assigned_property_id', propIds);
           if (assetsData) {
             assetsCount = assetsData.length;
-            assetsData.forEach(a => { if (a.assigned_employee_id) empIds.add(a.assigned_employee_id) });
+            assetsData.forEach((a: any) => { if (a.assigned_employee_id) empIds.add(a.assigned_employee_id) });
           }
         }
         

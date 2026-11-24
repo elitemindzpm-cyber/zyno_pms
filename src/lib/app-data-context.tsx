@@ -1,5 +1,6 @@
+import { kvStore } from "@/lib/kv-store";
 import { createContext, useContext, useEffect, useMemo, useState, useRef, useCallback, type ReactNode } from "react";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { DynamicMastersService } from "@/lib/dynamic-masters-service";
 
 export const GUARANTEE_CHEQUE_DATE = "2036-12-31";
@@ -333,37 +334,37 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         inspectionsData,
       ] = await Promise.all([
         fetchAllRows((from, to) =>
-          supabase
+          db
             .from("units")
             .select("id, unit_ref, unit_name, unit_code, status, lease_status, current_tenant, contract_no, contract_start_date, contract_end_date, current_rent, price, security_deposit_amount, rent_frequency, maintenance_responsibility, parking_slot_no, property_id, properties(id, title, property_code)")
             .range(from, to)
         ),
         fetchAllRows((from, to) =>
-          supabase.from("properties").select("id, title, property_code").range(from, to)
+          db.from("properties").select("id, title, property_code").range(from, to)
         ),
         fetchAllRows((from, to) =>
-          supabase.from("customers").select("*").range(from, to)
+          db.from("customers").select("*").range(from, to)
         ),
         fetchAllRows((from, to) =>
-          supabase.from("leases").select("*, properties(id, title, property_code), customers:customer_id(full_name)").range(from, to)
+          db.from("leases").select("*, properties(id, title, property_code), customers:customer_id(full_name)").range(from, to)
         ),
         fetchAllRows((from, to) =>
-          supabase.from("fin_pdc_register").select("*").range(from, to)
+          db.from("fin_pdc_register").select("*").range(from, to)
         ),
         fetchAllRows((from, to) =>
-          supabase.from("pdcs").select("*").range(from, to)
+          db.from("pdcs").select("*").range(from, to)
         ),
         fetchAllRows((from, to) =>
-          supabase.from("reservations").select("*").range(from, to)
+          db.from("reservations").select("*").range(from, to)
         ),
         fetchAllRows((from, to) =>
-          supabase.from("fin_vouchers").select("*").range(from, to)
+          db.from("fin_vouchers").select("*").range(from, to)
         ),
         fetchAllRows((from, to) =>
-          supabase.from("key_handovers").select("*").range(from, to)
+          db.from("key_handovers").select("*").range(from, to)
         ),
         fetchAllRows((from, to) =>
-          supabase.from("inspection_reports").select("*").range(from, to)
+          db.from("inspection_reports").select("*").range(from, to)
         ),
       ]);
 
@@ -392,16 +393,13 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const mappedUnits: PmsUnit[] = (unitsRes.data || []).map((u: any) => {
         const propTitle = u.properties?.title || propMap.get(u.property_id) || u.property_id || "Property";
         const unitName = u.unit_ref || u.unit_name || u.unit_code || "Unit";
-        const cleanName = unitName.toUpperCase().trim();
-        // OA24-10 is a live, leased unit (Mr. Devadas Pappu) — only OA22-10 remains a vacated test unit.
-        const isVacatedTestUnit = cleanName.includes("OA22-10");
 
         return {
           id: u.id,
           property: propTitle,
           unit: unitName,
           type: u.unit_type || u.type || u.layout || "",
-          status: isVacatedTestUnit ? ("Available" as UnitStatus) : (() => {
+          status: (() => {
             const ls = (u.lease_status || "").toUpperCase();
             const st = (u.status || "").toLowerCase();
             // Units explicitly vacated/closed — always show as Available regardless of stale fields
@@ -412,7 +410,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             if (st.includes("maintenance")) return "Vacant - Under Maintenance" as UnitStatus;
             return (u.status as UnitStatus) || "Available";
           })(),
-          rent: isVacatedTestUnit ? 0 : Number(u.current_rent || u.price || 0),
+          rent: Number(u.current_rent || u.price || 0),
         };
       });
 
@@ -501,9 +499,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         } as any);
       }
 
-      // Also pull any imported customers from localStorage (Excel bulk import)
+      // Also pull any imported customers from kvStore (Excel bulk import)
       try {
-        const rawHistory = localStorage.getItem("zyno_pms_import_batches_history_v2");
+        const rawHistory = kvStore.getItem("zyno_pms_import_batches_history_v2");
         if (rawHistory) {
           const parsedBatches = JSON.parse(rawHistory);
           if (Array.isArray(parsedBatches)) {
@@ -588,24 +586,6 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
       const unitContracts: PmsLease[] = [];
       const mappedLeases: PmsLease[] = [...existingLeases, ...unitContracts];
-
-      // Asynchronously ensure test unit OA22-10 is vacant in Supabase database.
-      // (OA24-10 is a live leased unit and must never be vacated/purged here.)
-      try {
-        void supabase.from("units").update({
-          status: "available",
-          lease_status: "vacant",
-          current_tenant: null,
-          contract_no: null,
-          contract_start_date: null,
-          contract_end_date: null,
-          current_rent: 0,
-        }).or("unit_number.ilike.%OA22-10%,unit_ref.ilike.%OA22-10%");
-
-        void supabase.from("leases").delete().or("lease_number.ilike.%OA2210%");
-      } catch (e) {
-        console.warn("Vacate unit in Supabase:", e);
-      }
 
       // Step A: Primary dataset is pdcs table (authoritative for property, unit, tenant, date, amount)
       // Index fin_pdc_register by original_pdc_id and by cheque_number
@@ -714,7 +694,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
 
       // Merge locally stored renewal PDCs if present
       try {
-        const localRenewalPdcs = JSON.parse(localStorage.getItem("pms_renewal_pdcs") || "[]");
+        const localRenewalPdcs = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
         if (Array.isArray(localRenewalPdcs)) {
           localRenewalPdcs.forEach((lp: any, idx: number) => {
             const chq = String(lp.chequeNo || lp.chequeNumber || lp.cheque_number || "");
@@ -748,17 +728,32 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       // Guarantee Cheques Integration - strict DB data only, zero static fallbacks
 
       // Map raw reservations or synthesize realistic reservations from available units and ALL active/expired leases
-      const rawReservations: PmsReservation[] = (reservationsRes.data || []).map((r: any) => ({
-        id: r.id,
-        property: "Property",
-        unit: r.unit_id || "",
-        tenantName: r.prospect_name || "Prospect",
-        startDate: r.expected_start_date || "",
-        validUntil: r.reservation_validity || "",
-        rent: Number(r.proposed_rental_amount || 0),
-        status: (r.status?.toLowerCase() as any) || "reserved",
-        remarks: r.special_conditions,
-      }));
+      const unitById = new Map<string, any>((unitsRes.data || []).map((u: any) => [u.id, u]));
+      const rawReservations: PmsReservation[] = (reservationsRes.data || []).map((r: any) => {
+        const unitRow = unitById.get(r.unit_id);
+        let details: any = {};
+        try {
+          details = r.special_conditions ? JSON.parse(r.special_conditions) : {};
+        } catch {
+          details = { remarks: r.special_conditions };
+        }
+        return {
+          id: r.id,
+          property: (propMap.get(unitRow?.property_id) as string) || "Property",
+          unit: unitRow?.unit_ref || unitRow?.unit_name || "",
+          tenantName: r.prospect_name || "Prospect",
+          startDate: r.expected_start_date || "",
+          validUntil: r.reservation_validity || "",
+          rent: Number(r.proposed_rental_amount || 0),
+          status: (r.status?.toLowerCase() as any) || "reserved",
+          remarks: details.remarks || "",
+          agent: details.agent || undefined,
+          isHold: !!details.isHold,
+          tokenAmount: Number(details.tokenAmount || 0),
+          tokenPaymentMode: details.tokenPaymentMode || undefined,
+          tokenReceiptNo: details.tokenReceiptNo || undefined,
+        } as PmsReservation;
+      });
 
       const mappedReservations: PmsReservation[] = rawReservations;
 
@@ -847,7 +842,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         auditEvents: [],
       });
     } catch (err) {
-      console.error("Failed to load initial data from Supabase:", err);
+      console.error("Failed to load initial data from Db:", err);
       setAppData(prev => ({
         ...prev,
         // On error, keep whatever was already loaded; fall back to seed reservations only

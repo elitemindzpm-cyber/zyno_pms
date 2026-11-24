@@ -30,7 +30,7 @@
  *     without requiring a full page reload.
  */
 
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export function normalizeUuid(
   value: string | number | null | undefined,
@@ -196,7 +196,7 @@ export const UNIT_SCOPE_REQUIRED_GLS = new Set<string>([
 
 /**
  * TTL for the in-memory rule-table cache. 30s is short enough to pick up
- * admin edits during a working session without hammering Supabase.
+ * admin edits during a working session without hammering Db.
  */
 const RULE_CACHE_TTL_MS = 30_000;
 
@@ -261,7 +261,7 @@ async function resolveUnitSl(
   if (cached) return cached;
 
   try {
-    const { data, error } = await supabase.rpc('fin_resolve_unit_sl', {
+    const { data, error } = await db.rpc('fin_resolve_unit_sl', {
       p_unit_id:     unitId,
       p_property_id: propertyId,
       p_gl_code:     glCode,
@@ -289,7 +289,7 @@ async function resolveUnitSl(
 
   // Fallback: lookup existing SL in fin_coa_accounts or synthesize
   try {
-    const { data: coaRows } = await supabase
+    const { data: coaRows } = await db
       .from('fin_coa_accounts')
       .select('id, account_code, account_name')
       .ilike('account_code', `${glCode}%`)
@@ -332,7 +332,7 @@ async function loadRules(
     return cached.rules;
   }
 
-  const { data: rules, error } = await supabase
+  const { data: rules, error } = await db
     .from('fin_transaction_account_rules')
     .select('*')
     .eq('transaction_type', transactionType)
@@ -388,7 +388,7 @@ export async function validateAccountHierarchy(
   let h: CanonicalHierarchy | null = null;
 
   try {
-    const { data, error } = await supabase.rpc('fin_resolve_gl_sl', {
+    const { data, error } = await db.rpc('fin_resolve_gl_sl', {
       p_account_id: accountId,
     });
 
@@ -411,7 +411,7 @@ export async function validateAccountHierarchy(
 
   // Fallback: direct table query if RPC is missing from Postgres schema cache
   if (!h) {
-    const { data: slRow, error: slError } = await supabase
+    const { data: slRow, error: slError } = await db
       .from('fin_coa_accounts')
       .select('id, account_code, account_name, group_name, class_name, parent_account_id')
       .eq('id', accountId)
@@ -423,7 +423,7 @@ export async function validateAccountHierarchy(
 
     let glRow: { account_code?: string; account_name?: string; group_name?: string; class_name?: string } = slRow;
     if (slRow.parent_account_id) {
-      const { data: parent } = await supabase
+      const { data: parent } = await db
         .from('fin_coa_accounts')
         .select('id, account_code, account_name, group_name, class_name')
         .eq('id', slRow.parent_account_id)
@@ -484,7 +484,7 @@ async function buildResolvedAccount(
   ctx: AccountResolutionContext,
   side: 'debit' | 'credit' = 'debit',
 ): Promise<ResolvedAccount> {
-  const { data: rows, error } = await supabase
+  const { data: rows, error } = await db
     .from('fin_coa_accounts')
     .select('id, account_code, account_name, group_name, class_name, parent_account_id')
     .in('account_code', [glCode, slCode])
@@ -494,7 +494,7 @@ async function buildResolvedAccount(
     throw new Error(`COA lookup failed for GL=${glCode} SL=${slCode}: ${error.message}`);
   }
 
-  const map = new Map((rows ?? []).map((r) => [r.account_code, r]));
+  const map = new Map<string, any>((rows ?? []).map((r: any) => [r.account_code, r] as [string, any]));
 
   const glRow = map.get(glCode);
   const slRow = map.get(slCode);
@@ -898,7 +898,7 @@ export async function resolveGlOnlyAccount(
   let resolvedCode = glCode;
 
   for (const code of lookupCodes) {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from('fin_coa_accounts')
       .select('id, account_code, account_name, group_name, class_name')
       .eq('account_code', code)
@@ -915,7 +915,7 @@ export async function resolveGlOnlyAccount(
   // Name fallback if code lookup did not find an exact active match
   if (!rows) {
     if (glCode === '50100' || glCode === '50100001') {
-      const { data } = await supabase
+      const { data } = await db
         .from('fin_coa_accounts')
         .select('id, account_code, account_name, group_name, class_name')
         .or('account_name.ilike.%Staff Basic Salary%,account_name.ilike.%Staff Cost%,account_name.ilike.%Staff Salary%')
@@ -924,7 +924,7 @@ export async function resolveGlOnlyAccount(
         .maybeSingle();
       if (data) { rows = data; resolvedCode = data.account_code; }
     } else if (glCode === '21900' || glCode === '21900001') {
-      const { data } = await supabase
+      const { data } = await db
         .from('fin_coa_accounts')
         .select('id, account_code, account_name, group_name, class_name')
         .or('account_name.ilike.%Salary Payables%,account_name.ilike.%SALARY PAYABLE%')

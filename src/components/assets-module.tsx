@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouterState, useNavigate } from "@tanstack/react-router";
 import { ExcelImportEmbedded } from "@/components/excel-import-embedded";
@@ -18,7 +19,7 @@ import {
   Eye, Wrench, Clock, CheckCheck, XCircle, ArrowUpRight, ArrowDownLeft, Info, HelpCircle, User, MapPin, Hash, Sparkles,
   Pencil, Search, Shield, FileCheck, Paperclip, ChevronRight, ChevronLeft, Download, FileSpreadsheet
 } from "lucide-react";
-import { fetchAssets, createAsset, updateAsset, deleteAsset, fetchProperties, fetchUnits, type Asset, type Property, type Unit } from "@/lib/supabase";
+import { fetchAssets, createAsset, updateAsset, deleteAsset, fetchProperties, fetchUnits, type Asset, type Property, type Unit } from "@/lib/db";
 import { 
   fetchAssetSubcategories, 
   fetchAssetCategories, 
@@ -32,8 +33,8 @@ import {
   type AssetCondition,
   type AssetStatus,
   type Simplemaster
-} from "@/lib/supabase-masters";
-import { FinVendorsApi, type FinVendor } from "@/lib/supabase-finance";
+} from "@/lib/db-masters";
+import { FinVendorsApi, type FinVendor } from "@/lib/db-finance";
 import { useFinanceStore } from "@/lib/finance/finance-store";
 import { formatDDMMMYYYY, getTodayIST } from "@/lib/date-utils";
 import { DynamicMastersService } from "@/lib/dynamic-masters-service";
@@ -359,42 +360,42 @@ export function AssetManager({ role }: { role: "admin" | "prop-mgr" }) {
   // ── Persistent Sub-module Records (LocalStorage fallback) ──
   const [revaluations, setRevaluations] = useState<AssetRevaluationRecord[]>(() => {
     try {
-      const saved = localStorage.getItem("asset_revaluation_records_v2");
+      const saved = kvStore.getItem("asset_revaluation_records_v2");
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
 
   const [sells, setSells] = useState<AssetSaleRecord[]>(() => {
     try {
-      const saved = localStorage.getItem("asset_sale_records_v2");
+      const saved = kvStore.getItem("asset_sale_records_v2");
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
 
   const [writeoffs, setWriteoffs] = useState<AssetWriteoffRecord[]>(() => {
     try {
-      const saved = localStorage.getItem("asset_writeoff_records_v2");
+      const saved = kvStore.getItem("asset_writeoff_records_v2");
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
 
   const [allocations, setAllocations] = useState<AssetAllocationRecord[]>(() => {
     try {
-      const saved = localStorage.getItem("asset_allocation_records_v2");
+      const saved = kvStore.getItem("asset_allocation_records_v2");
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
 
   const [maintenances, setMaintenances] = useState<AssetMaintenanceRecord[]>(() => {
     try {
-      const saved = localStorage.getItem("asset_maintenance_records_v2");
+      const saved = kvStore.getItem("asset_maintenance_records_v2");
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
 
   const [warranties, setWarranties] = useState<AssetWarrantyRecord[]>(() => {
     try {
-      const saved = localStorage.getItem("asset_warranty_records_v2");
+      const saved = kvStore.getItem("asset_warranty_records_v2");
       return saved ? JSON.parse(saved) : [];
     } catch { return []; }
   });
@@ -1666,7 +1667,7 @@ export function AssetManager({ role }: { role: "admin" | "prop-mgr" }) {
 
     setSaving(true);
     try {
-      // 1. Create the Asset record in Supabase / Local database
+      // 1. Create the Asset record in Db / Local database
       const newAsset = await createAsset({
         asset_name: form.item_name.trim(),
         category: form.category,

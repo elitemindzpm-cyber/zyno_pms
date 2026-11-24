@@ -31,7 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Textarea } from "@/components/ui/textarea";
-import { fetchGuestBookings, type Booking } from "@/lib/supabase";
+import { fetchGuestBookings, type Booking } from "@/lib/db";
 
 export const Route = createFileRoute("/guest")({
   head: () => ({

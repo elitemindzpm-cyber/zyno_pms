@@ -1,4 +1,4 @@
-import { supabase, Customer } from "@/lib/supabase";
+import { db, Customer } from "@/lib/db";
 
 export interface DuplicateCheckResult {
   isDuplicate: boolean;
@@ -20,7 +20,7 @@ export async function checkCustomerDuplicateServer(
   }
 ): Promise<DuplicateCheckResult> {
   try {
-    const { data, error } = await supabase.rpc("check_customer_duplicate", {
+    const { data, error } = await db.rpc("check_customer_duplicate", {
       p_qatar_id: params.qatarId?.trim() || null,
       p_passport_number: params.passportNumber?.trim() || null,
       p_cr_number: params.crNumber?.trim() || null,
@@ -46,7 +46,7 @@ export async function checkCustomerDuplicateServer(
 
   // Fallback to direct client query against database table
   try {
-    let query = supabase.from("customers").select("id, full_name, qatar_id, passport_number, commercial_registration, email_address");
+    let query = db.from("customers").select("id, full_name, qatar_id, passport_number, commercial_registration, email_address");
     if (params.excludeId) {
       query = query.neq("id", params.excludeId);
     }
@@ -79,7 +79,7 @@ export async function checkCustomerDuplicateServer(
  */
 export async function persistCustomerToDb(customerData: Partial<Customer>): Promise<Customer> {
   if (customerData.id && !customerData.id.startsWith("TEMP_") && !customerData.id.startsWith("CUST-")) {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from("customers")
       .update({
         ...customerData,
@@ -95,7 +95,7 @@ export async function persistCustomerToDb(customerData: Partial<Customer>): Prom
     // Insert new customer
     const payload = { ...customerData };
     delete payload.id; // Let DB generate UUID if it's a temp id
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from("customers")
       .insert([payload])
       .select()

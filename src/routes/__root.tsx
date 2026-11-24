@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
   Outlet,
@@ -7,13 +8,16 @@ import {
   HeadContent,
   Scripts,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Toaster } from "sonner";
 
 import appCss from "../styles.css?url";
 import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AppDataProvider } from "../lib/app-data-context";
 import { FinanceProvider } from "../lib/finance/finance-store";
+import { authApi } from "../lib/api-client";
+import { hydrateKv } from "../lib/kv-store";
+import { IdleSessionGuard } from "../components/idle-session-guard";
 
 function NotFoundComponent() {
   return (
@@ -116,37 +120,65 @@ function RootShell({ children }: { children: ReactNode }) {
 }
 
 
-// Immediate cleanup of stale prototype local storage keys
+// The app no longer keeps any data in browser storage. Remove what earlier versions left behind.
 if (typeof window !== "undefined") {
   try {
-    const staleKeys = [
-      "pms_renewed_leases_v1",
-      "pms_custom_lease_overrides",
-      "pms_fin_banks_override_v2",
-      "pms_fin_bank_accounts_override_v2",
-      "pms_posting_periods_cache",
-      "zyno_finance_budget_heads",
-      "pms_leases_cache_v1",
-      "pms_units_cache_v1",
-      "pms_deleted_leases_v1",
-      "pms_leasing_v2_leases",
-      "proc_catalog_items",
-      "zyno-company-bank-accounts-v2",
-    ];
-    staleKeys.forEach(k => localStorage.removeItem(k));
-  } catch {}
+    window.localStorage.clear();
+    window.sessionStorage.clear();
+  } catch {
+    /* storage blocked: nothing to clear */
+  }
+  try {
+    document.cookie = "sidebar_state=; path=/; max-age=0";
+  } catch {
+    /* ignore */
+  }
 }
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
+  const [ready, setReady] = useState(false);
+
+  // Restore the session (tenant id) from the auth cookie, then load this tenant's saved data from the API.
+  useEffect(() => {
+    let alive = true;
+    // Never hold the whole app behind a slow request: give up after a few seconds and render.
+    const withTimeout = (p: Promise<unknown>, ms: number) =>
+      Promise.race([p, new Promise((resolve) => setTimeout(resolve, ms))]);
+    (async () => {
+      try {
+        await withTimeout(authApi.getSession(), 4000);
+      } catch {
+        /* not logged in */
+      }
+      try {
+        await withTimeout(hydrateKv(), 6000);
+      } catch (err) {
+        console.error("[kv] failed to load saved data from the API", err);
+      }
+      if (alive) setReady(true);
+    })();
+    return () => {
+      alive = false;
+    };
+  }, []);
+
+  if (!ready) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">
+        Loading…
+      </div>
+    );
+  }
 
   return (
     <QueryClientProvider client={queryClient}>
-      {/* AppDataProvider — single Supabase-backed real-time store shared across all roles */}
+      {/* AppDataProvider — single Db-backed real-time store shared across all roles */}
       <AppDataProvider>
         <FinanceProvider>
           {/* Required: nested routes render here */}
           <Outlet />
+          <IdleSessionGuard />
           <Toaster position="top-center" richColors />
         </FinanceProvider>
       </AppDataProvider>

@@ -1,5 +1,5 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
-import { supabase, type Lease } from "@/lib/supabase";
+import { db, type Lease } from "@/lib/db";
 
 export interface CreateLeaseInput {
   property_id: string;
@@ -24,7 +24,7 @@ export function useLeases() {
   return useQuery({
     queryKey: ["leases"],
     queryFn: async () => {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("leases")
         .select(`
           *,
@@ -44,7 +44,7 @@ export function useLease(id: string | undefined) {
     queryKey: ["leases", id],
     queryFn: async () => {
       if (!id) return null;
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("leases")
         .select(`
           *,
@@ -66,7 +66,7 @@ export function useCreateLease() {
 
   return useMutation({
     mutationFn: async (payload: CreateLeaseInput) => {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("leases")
         .insert({
           ...payload,
@@ -87,7 +87,7 @@ export function useCreateLease() {
 
       // Update unit status to Reserved or Occupied if unit_id is provided
       if (payload.unit_id) {
-        await supabase
+        await db
           .from("units")
           .update({ status: "Occupied", updated_at: new Date().toISOString() })
           .eq("id", payload.unit_id);
@@ -108,7 +108,7 @@ export function useUpdateLease() {
 
   return useMutation({
     mutationFn: async ({ id, updates }: { id: string; updates: Partial<Lease> }) => {
-      const { data, error } = await supabase
+      const { data, error } = await db
         .from("leases")
         .update({
           ...updates,

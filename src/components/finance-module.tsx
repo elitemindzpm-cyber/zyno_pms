@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useSearch, useNavigate } from "@tanstack/react-router";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -22,19 +23,19 @@ import {
   Home as HomeIcon, User as UserIcon, FolderTree, Folder, FolderOpen, Network
 } from "lucide-react";
 import {
-  supabase,
+  db,
   fetchJournalEntries, fetchARLedgers, fetchGLAccounts,
   createJournalEntry, createAREntry, settleAREntry, createGLAccount,
   fetchERPChartOfAccounts, fetchUnitCOAs, fetchCoaHierarchyTree, fetchPropertyCoaMappings, fetchCoaSLByGL,
   type JournalEntry, type ARLedger, type GLAccount, type ERPChartOfAccount, type UnitCOA,
   type CoaType, type CoaGroup, type CoaClass, type CoaGL, type CoaSL, type PropertyCoaMapping, type UnitCoaMapping
-} from "@/lib/supabase";
+} from "@/lib/db";
 import {
   FinFinancialYearsApi, FinRegionsApi, FinVendorsApi, FinCustomersApi, FinCostCentersApi,
   FinPostingPeriodsApi, FinBanksApi, FinBankAccountsApi, FinBankReconciliationsApi, FinContractsApi,
   type FinFinancialYear, type FinRegion, type FinVendor, type FinCustomer, type FinCostCenter,
   type FinPostingPeriod, type FinBank, type FinBankAccount, type FinBankReconciliation, type FinContract
-} from "@/lib/supabase-finance";
+} from "@/lib/db-finance";
 import { toast } from "sonner";
 import { useAppData } from "@/lib/app-data-context";
 import { PdcManagement } from "./finance/pdc-management";
@@ -72,7 +73,7 @@ export function isDateInClosedPostingPeriod(dateStr?: string): { closed: boolean
   if (!dateStr || typeof window === "undefined") return { closed: false };
   try {
     const ym = dateStr.split("T")[0].slice(0, 7);
-    const raw = localStorage.getItem("pms_posting_periods_cache");
+    const raw = kvStore.getItem("pms_posting_periods_cache");
     if (!raw) return { closed: false };
     const list = JSON.parse(raw) as Array<{ period_name: string; status: string }>;
     const found = list.find(p => p.period_name === ym);
@@ -187,12 +188,12 @@ const FINANCE_NAV = [
       { key: "lease_expiry_report", label: "Lease Expiry & Vacancy Loss", icon: Calendar },
       { key: "utility_recharge_report", label: "Utility Recharge & Recovery", icon: Activity },
       { key: "deposit_reconciliation_report", label: "Deposit & Snagging Reconciliation", icon: ShieldCheck },
+      { key: "property_pnl", label: "Property wise Profit and Loss", icon: Building2 },
+      { key: "vehicle_expense_report", label: "Vehicle-Wise Expense Report", icon: Layers },
       { key: "revenue_generation", label: "Revenue Generation", icon: TrendingUp },
       { key: "trial_balance_simple", label: "Trial Balance (Simple)", icon: Scale },
       { key: "trial_balance", label: "Trial Balance", icon: Scale },
       { key: "profit_and_loss", label: "Profit & Loss", icon: Activity },
-      { key: "property_pnl", label: "Property Profit & Loss", icon: Building2 },
-      { key: "vehicle_expense_report", label: "Vehicle-Wise Expense Report", icon: Layers },
       { key: "balance_sheet", label: "Balance Sheet", icon: Landmark },
       { key: "general_ledger", label: "General Ledger", icon: BookOpen },
       { key: "cash_flow_statement", label: "Cash Flow Statement", icon: DollarSign },
@@ -341,7 +342,7 @@ function FinancialYearSubModule() {
   useEffect(() => { load(); }, []);
   useEffect(() => {
     if (typeof window !== "undefined" && data.length > 0) {
-      try { localStorage.setItem("pms_posting_periods_cache", JSON.stringify(data)); } catch {}
+      try { kvStore.setItem("pms_posting_periods_cache", JSON.stringify(data)); } catch {}
     }
   }, [data]);
   async function load() {
@@ -973,9 +974,9 @@ function BudgetHeadSubModule() {
     description: ""
   });
 
-  // Save to localStorage
+  // Save to kvStore
   useEffect(() => {
-    localStorage.setItem("zyno_finance_budget_heads", JSON.stringify(budgetHeads));
+    kvStore.setItem("zyno_finance_budget_heads", JSON.stringify(budgetHeads));
   }, [budgetHeads]);
 
   // Load Cost Centers
@@ -1823,10 +1824,10 @@ function ChartOfAccountsSubModule() {
         fetchPropertyCoaMappings().catch(() => [])
       ]);
 
-      // ── Merge Custom User-Added COA Accounts from localStorage ──
+      // ── Merge Custom User-Added COA Accounts from kvStore ──
       let customCoas: ERPChartOfAccount[] = [];
       try {
-        const rawCustom = localStorage.getItem("fin_custom_coa_accounts_v1");
+        const rawCustom = kvStore.getItem("fin_custom_coa_accounts_v1");
         if (rawCustom) {
           const parsed = JSON.parse(rawCustom);
           if (Array.isArray(parsed)) customCoas = parsed;
@@ -1958,18 +1959,18 @@ function ChartOfAccountsSubModule() {
       } as ERPChartOfAccount;
 
       try {
-        const rawCustom = localStorage.getItem("fin_custom_coa_accounts_v1");
+        const rawCustom = kvStore.getItem("fin_custom_coa_accounts_v1");
         const existing: ERPChartOfAccount[] = rawCustom ? JSON.parse(rawCustom) : [];
         const filtered = existing.filter(a => a.code !== codeTrimmed);
         filtered.push(newCustomAcc);
-        localStorage.setItem("fin_custom_coa_accounts_v1", JSON.stringify(filtered));
+        kvStore.setItem("fin_custom_coa_accounts_v1", JSON.stringify(filtered));
         window.dispatchEvent(new Event("fin_custom_coa_updated"));
       } catch {}
 
       try {
         await createGLAccount({ code: codeTrimmed, name_en: nameTrimmed, type: form.type.toLowerCase() as any });
       } catch {
-        // Persist in localStorage even if remote DB table constraint rejects custom format
+        // Persist in kvStore even if remote DB table constraint rejects custom format
       }
 
       toast.success(`Ledger Account ${codeTrimmed} - ${nameTrimmed} added to Chart of Accounts!`);
@@ -3085,12 +3086,12 @@ function GrnCostMappingSubModule() {
     setLoading(true);
     try {
       // 1. Fetch GRNs from database
-      const { data: dbGrns } = await supabase.from("proc_goods_receipts").select("*").order("created_at", { ascending: false });
-      const { data: dbPos } = await supabase.from("proc_purchase_orders").select("*");
-      const { data: dbVendors } = await supabase.from("fin_vendors").select("*");
+      const { data: dbGrns } = await db.from("proc_goods_receipts").select("*").order("created_at", { ascending: false });
+      const { data: dbPos } = await db.from("proc_purchase_orders").select("*");
+      const { data: dbVendors } = await db.from("fin_vendors").select("*");
 
       // 2. Load custom mapped GRNs from local storage
-      const stored = localStorage.getItem("grn_cost_mappings_v2");
+      const stored = kvStore.getItem("grn_cost_mappings_v2");
       let localMappings: any[] = [];
       if (stored) {
         try { localMappings = JSON.parse(stored); } catch {}
@@ -3183,7 +3184,7 @@ function GrnCostMappingSubModule() {
 
     const updated = [newEntry, ...grnList.filter(g => g.grn_no !== form.grn_no)];
     setGrnList(updated);
-    localStorage.setItem("grn_cost_mappings_v2", JSON.stringify(updated));
+    kvStore.setItem("grn_cost_mappings_v2", JSON.stringify(updated));
 
     toast.success(`GRN ${form.grn_no} allocated to GL Account [${form.mapped_gl}]. Double-entry journal impact synced.`);
     setOpen(false);
@@ -3504,7 +3505,7 @@ const EXPENSE_GL_ACCOUNTS = [
 function getAvailableExpenseGlAccounts(): string[] {
   const set = new Set<string>(EXPENSE_GL_ACCOUNTS);
   try {
-    const rawCustom = localStorage.getItem("fin_custom_coa_accounts_v1");
+    const rawCustom = kvStore.getItem("fin_custom_coa_accounts_v1");
     if (rawCustom) {
       const parsed: ERPChartOfAccount[] = JSON.parse(rawCustom);
       parsed.forEach(acc => {
@@ -3613,7 +3614,7 @@ function PayableInvoiceSubModule() {
           if (v && v.name) map.set(v.name.toLowerCase(), v);
         });
         try {
-          const rawProcVendors = localStorage.getItem("pms_vendors");
+          const rawProcVendors = kvStore.getItem("pms_vendors");
           if (rawProcVendors) {
             const parsed = JSON.parse(rawProcVendors);
             if (Array.isArray(parsed)) {
@@ -3856,13 +3857,13 @@ function PayableInvoiceSubModule() {
 
       // Update local storage for pms_vendor_invoices
       try {
-        const mntRaw = localStorage.getItem("pms_vendor_invoices");
+        const mntRaw = kvStore.getItem("pms_vendor_invoices");
         if (mntRaw) {
           const mntList: any[] = JSON.parse(mntRaw);
           const updatedMnt = mntList.map((m: any) =>
             m.invoiceNo === payTarget.invoice_no ? { ...m, status: "Approved" } : m
           );
-          localStorage.setItem("pms_vendor_invoices", JSON.stringify(updatedMnt));
+          kvStore.setItem("pms_vendor_invoices", JSON.stringify(updatedMnt));
         }
       } catch {}
 
@@ -3871,13 +3872,13 @@ function PayableInvoiceSubModule() {
         if (typeof markPayableInvoicePaid === "function") {
           markPayableInvoicePaid(payTarget.invoice_no);
         }
-        const finApRaw = localStorage.getItem("zyno-pms-finance-data-v1-ap");
+        const finApRaw = kvStore.getItem("zyno-pms-finance-data-v1-ap");
         if (finApRaw) {
           const finApList: any[] = JSON.parse(finApRaw);
           const updatedFin = finApList.map((f: any) =>
             f.invoice_no === payTarget.invoice_no ? { ...f, status: "Paid" } : f
           );
-          localStorage.setItem("zyno-pms-finance-data-v1-ap", JSON.stringify(updatedFin));
+          kvStore.setItem("zyno-pms-finance-data-v1-ap", JSON.stringify(updatedFin));
         }
       } catch {}
 
@@ -4628,7 +4629,7 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
             property_name: resolveCanonicalPropertyName(l.property || form.property, undefined, l.property || form.property),
             description: l.description || form.name,
           })),
-        }, { skipSupabasePersist: hasRealDbPost });
+        }, { skipDbPersist: hasRealDbPost });
 
         toast.success(`Journal Voucher ${persistedVoucherNo} posted successfully!`);
         setOpen(false);
@@ -4732,7 +4733,7 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
         property_name: effectiveProperty || "Corporate / General",
         unit_ref: selectedReceiptLease?.unit,
         tenant_name: selectedReceiptLease?.tenantName,
-      }, { skipSupabasePersist: hasRealDbPost });
+      }, { skipDbPersist: hasRealDbPost });
 
       toast.success(`${type} ${persistedVoucherNo} posted. Receipt ${result.receipt_number} generated.`);
       setOpen(false);
@@ -5884,12 +5885,12 @@ function BankSubModule() {
           status: updatedBank.status
         });
       } catch (err) {
-        console.warn("Supabase bank update error:", err);
+        console.warn("DB bank update error:", err);
       }
 
       setData(prev => {
         const next = prev.map(b => String(b.id) === String(editingBank.id) ? updatedBank : b);
-        try { localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
+        try { kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
         return next;
       });
       window.dispatchEvent(new Event("banks-updated"));
@@ -5909,12 +5910,12 @@ function BankSubModule() {
           createdBank = { ...res, status: res.status || form.status };
         }
       } catch (err) {
-        console.warn("Supabase bank create error:", err);
+        console.warn("DB bank create error:", err);
       }
 
       setData(prev => {
         const next = [createdBank, ...prev];
-        try { localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
+        try { kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
         return next;
       });
       window.dispatchEvent(new Event("banks-updated"));
@@ -5931,12 +5932,12 @@ function BankSubModule() {
     try {
       await FinBanksApi.update(String(bank.id), { status: newStatus });
     } catch (err) {
-      console.warn("Supabase bank status update error:", err);
+      console.warn("DB bank status update error:", err);
     }
 
     setData(prev => {
       const next = prev.map(b => String(b.id) === String(bank.id) ? updatedBank : b);
-      try { localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
+      try { kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
       return next;
     });
 
@@ -6202,12 +6203,12 @@ function BankAccountSubModule() {
           status: updatedAccount.status
         });
       } catch (err) {
-        console.warn("Supabase account update error:", err);
+        console.warn("DB account update error:", err);
       }
 
       setData(prev => {
         const next = prev.map(a => String(a.id) === String(editingAccount.id) ? updatedAccount : a);
-        try { localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
+        try { kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
         return next;
       });
       toast.success(`Bank account ${updatedAccount.account_number} updated successfully`);
@@ -6228,12 +6229,12 @@ function BankAccountSubModule() {
           createdAccount = { ...res, status: res.status || form.status };
         }
       } catch (err) {
-        console.warn("Supabase account create error:", err);
+        console.warn("DB account create error:", err);
       }
 
       setData(prev => {
         const next = [createdAccount, ...prev];
-        try { localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
+        try { kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
         return next;
       });
       toast.success("Bank account created and mapped to GL Account 12000");
@@ -6249,12 +6250,12 @@ function BankAccountSubModule() {
     try {
       await FinBankAccountsApi.update(String(account.id), { status: newStatus });
     } catch (err) {
-      console.warn("Supabase account status update error:", err);
+      console.warn("DB account status update error:", err);
     }
 
     setData(prev => {
       const next = prev.map(a => String(a.id) === String(account.id) ? updatedAccount : a);
-      try { localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
+      try { kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
       return next;
     });
 
@@ -6268,11 +6269,11 @@ function BankAccountSubModule() {
     try {
       await FinBankAccountsApi.delete(String(account.id));
     } catch (err) {
-      console.warn("Supabase delete account error:", err);
+      console.warn("DB delete account error:", err);
     }
     setData(prev => {
       const next = prev.filter(a => String(a.id) !== String(account.id));
-      try { localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
+      try { kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
       return next;
     });
     window.dispatchEvent(new Event("banks-updated"));
@@ -7021,7 +7022,7 @@ function RevenueGenerationSubModule() {
   const [asOfSearch, setAsOfSearch] = useState<string>("");
   const [savedBatches, setSavedBatches] = useState<RevenueGenerationBatchSummary[]>(() => {
     try {
-      const stored = localStorage.getItem("fin_revenue_generation_batches_v2");
+      const stored = kvStore.getItem("fin_revenue_generation_batches_v2");
       return stored ? JSON.parse(stored) : [];
     } catch {
       return [];
@@ -7061,8 +7062,8 @@ function RevenueGenerationSubModule() {
   useEffect(() => {
     async function fetchPdcRecords() {
       try {
-        const { data: regData } = await supabase.from("fin_pdc_register").select("*");
-        const { data: altData } = await supabase.from("pdcs").select("*");
+        const { data: regData } = await db.from("fin_pdc_register").select("*");
+        const { data: altData } = await db.from("pdcs").select("*");
         const combined = [...(regData || []), ...(altData || [])];
         setDbPdcs(combined);
       } catch {
@@ -7156,7 +7157,7 @@ function RevenueGenerationSubModule() {
       const updated = [newBatch, ...savedBatches];
       setSavedBatches(updated);
       try {
-        localStorage.setItem("fin_revenue_generation_batches_v2", JSON.stringify(updated));
+        kvStore.setItem("fin_revenue_generation_batches_v2", JSON.stringify(updated));
       } catch (e) {
         console.error("Failed to persist revenue batch", e);
       }
@@ -7202,7 +7203,7 @@ function RevenueGenerationSubModule() {
     { code: "41600", label: "Late Payment Penalty",      color: "bg-orange-500",  textColor: "text-orange-700",  border: "border-orange-200",  bg: "bg-orange-50"  },
   ];
 
-  // Combine unified PDCs — sources: DB tables + localStorage context + fin_voucher PDC events
+  // Combine unified PDCs — sources: DB tables + kvStore context + fin_voucher PDC events
   const unifiedRealizedPdcs = useMemo(() => {
     const map = new Map<string, any>();
 
@@ -7227,7 +7228,7 @@ function RevenueGenerationSubModule() {
       map.set(String(chq), { id: String(p.id || chq), chqNo: String(chq), date, property: prop, unit, tenant, amount: amt, status: p.status, source: "PDC" });
     });
 
-    // 2. Context PDCs from localStorage — primary source with real historical cheque dates
+    // 2. Context PDCs from kvStore — primary source with real historical cheque dates
     (contextPdcs || []).forEach((p: any) => {
       const chq    = p.chequeNo || p.cheque_number || p.id;
       const status = (p.status || "").toLowerCase();
@@ -9957,8 +9958,8 @@ function CashBookSubModule() {
       setLoadingDirect(true);
       try {
         const [finRes, evtRes] = await Promise.all([
-          supabase.from("fin_pdc_register").select("id, cheque_number, amount, status, deposit_date, cheque_date").order("cheque_date", { ascending: false }),
-          supabase.from("fin_accounting_events").select("id, event_type, event_date, posting_date, total_debit, total_credit, description, reference_number, metadata").order("event_date", { ascending: false }).limit(300),
+          db.from("fin_pdc_register").select("id, cheque_number, amount, status, deposit_date, cheque_date").order("cheque_date", { ascending: false }),
+          db.from("fin_accounting_events").select("id, event_type, event_date, posting_date, total_debit, total_credit, description, reference_number, metadata").order("event_date", { ascending: false }).limit(300),
         ]);
 
         const synthesized: CashBookEntry[] = [];
@@ -10665,7 +10666,7 @@ function NoteStatusBadge({ status }: { status: NoteStatus }) {
 function DebitNoteSubModule() {
   const LS_KEY = "fin_debit_notes";
   const [notes, setNotes] = useState<DebitNote[]>(() => {
-    try { return JSON.parse(localStorage.getItem(LS_KEY) || "[]"); } catch { return []; }
+    try { return JSON.parse(kvStore.getItem(LS_KEY) || "[]"); } catch { return []; }
   });
   const [showModal, setShowModal] = useState(false);
   const [viewNote, setViewNote] = useState<DebitNote | null>(null);
@@ -10685,7 +10686,7 @@ function DebitNoteSubModule() {
 
   function save(updatedNotes: DebitNote[]) {
     setNotes(updatedNotes);
-    localStorage.setItem(LS_KEY, JSON.stringify(updatedNotes));
+    kvStore.setItem(LS_KEY, JSON.stringify(updatedNotes));
   }
 
   function handlePartyTypeChange(type: "Vendor" | "Customer") {
@@ -11068,7 +11069,7 @@ function DebitNoteSubModule() {
 function CreditNoteSubModule() {
   const LS_KEY = "fin_credit_notes";
   const [notes, setNotes] = useState<CreditNote[]>(() => {
-    try { return JSON.parse(localStorage.getItem(LS_KEY) || "[]"); } catch { return []; }
+    try { return JSON.parse(kvStore.getItem(LS_KEY) || "[]"); } catch { return []; }
   });
   const [showModal, setShowModal] = useState(false);
   const [viewNote, setViewNote] = useState<CreditNote | null>(null);
@@ -11087,7 +11088,7 @@ function CreditNoteSubModule() {
 
   function save(updatedNotes: CreditNote[]) {
     setNotes(updatedNotes);
-    localStorage.setItem(LS_KEY, JSON.stringify(updatedNotes));
+    kvStore.setItem(LS_KEY, JSON.stringify(updatedNotes));
   }
 
   function handlePartyTypeChange(type: "Vendor" | "Tenant") {

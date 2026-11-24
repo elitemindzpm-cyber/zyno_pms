@@ -1,7 +1,7 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 import { resolveAccountingAccounts, normalizeUuid } from './account-resolver';
 import { postVoucher, type PostingResult } from './posting-engine';
-import { FinLegalReceivablesApi } from '../supabase-finance';
+import { FinLegalReceivablesApi } from '../db-finance';
 
 /**
  * Legal Receivable Engine (Phase 2 — Resolver-driven)
@@ -96,7 +96,7 @@ export async function recoverLegalFunds(
   amount: number,
   bankRef: string,
 ): Promise<void> {
-  const { data: legalRec, error } = await supabase
+  const { data: legalRec, error } = await db
     .from('fin_legal_receivables')
     .select('*')
     .eq('id', legalId)

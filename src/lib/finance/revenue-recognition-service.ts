@@ -1,4 +1,4 @@
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { postVoucher } from "@/lib/finance/posting-engine";
 
 export interface MonthEndAccrualResult {
@@ -26,7 +26,7 @@ export async function executeMonthEndRevenueRecognition(
 
   try {
     // 1. Fetch all active leases covering this month
-    const { data: leases, error } = await supabase
+    const { data: leases, error } = await db
       .from("leases")
       .select("id, lease_id, tenant_name, property_id, unit_id, rent_amount, start_date, end_date, lease_status, monthly_rent")
       .in("lease_status", ["active", "fully_signed", "renewal_due"]);
@@ -95,7 +95,7 @@ export async function executeMonthEndRevenueRecognition(
       result.voucherId = postingResult.voucher_id;
 
       // Log the month-end closing run to database
-      await supabase.from("revenue_recognition_logs").insert([
+      await db.from("revenue_recognition_logs").insert([
         {
           closing_month: closingMonth,
           run_by: executedBy || null,

@@ -1,18 +1,18 @@
-﻿import { supabase, type Reservation } from "./supabase";
+﻿import { db, type Reservation } from "./db";
 
 /**
  * Create or update a reservation in the database.
  * Uses the correct table name: lease_reservations
  */
 export async function createReservation(reservation: Reservation): Promise<Reservation> {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from("lease_reservations")
     .upsert(reservation, { onConflict: "id" })
     .select()
     .single();
 
   if (error) {
-    console.error("Supabase error creating reservation:", error);
+    console.error("DB error creating reservation:", error);
     throw error;
   }
 
@@ -48,7 +48,7 @@ export async function getExpiringReservations(daysAhead: number = 7) {
   const toDate = new Date();
   toDate.setDate(toDate.getDate() + daysAhead);
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from("lease_reservations")
     .select("*")
     .gte("valid_until", fromDate.toISOString().split("T")[0])
@@ -72,7 +72,7 @@ export async function updateReservationStatus(
   reservationId: string,
   status: "reserved" | "converted" | "expired" | "released"
 ): Promise<void> {
-  const { error } = await supabase
+  const { error } = await db
     .from("lease_reservations")
     .update({ status, updated_at: new Date().toISOString() })
     .eq("id", reservationId);

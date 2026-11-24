@@ -2,6 +2,8 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../lib/prisma';
 import { parsePagination, paginatedResponse } from '../lib/middleware';
+import { createReservation } from '../services/property';
+import { HttpError, sendDbError } from '../lib/errors';
 
 const router = Router();
 
@@ -31,11 +33,16 @@ router.get('/:id', async (req: Request, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: e.message }); }
 });
 
+// POST /api/reservations
+// Reserving a unit locks it (row lock), refuses it if it is already reserved or leased, and marks it RESERVED.
+// POST /api/reservations — rules in services/property.ts (unit lock, one live reservation per unit).
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const item = await prisma.reservations.create({ data: req.body });
+    const item = await createReservation(req.body || {});
     res.status(201).json(item);
-  } catch (e: any) { res.status(500).json({ error: e.message }); }
+  } catch (e: any) {
+    sendDbError(res, e, 'reservations.create');
+  }
 });
 
 router.patch('/:id', async (req: Request, res: Response) => {

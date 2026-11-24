@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { useState, useEffect, useMemo } from "react";
 import { useSearch } from "@tanstack/react-router";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -35,7 +36,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { openPrintable7DayLegalNotice, openPrintableRdcFilingPack } from "@/lib/qatar-legal-engine";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import {
   depositPdc,
   clearPdc,
@@ -402,17 +403,10 @@ const RECEIPT_HISTORY_STORAGE_KEY = "zyno-pdc-cash-receipts-v2";
 function loadSavedReceiptHistory(): Record<string, TenantReceiptDetails[]> {
   if (typeof window === "undefined") return {};
   try {
-    const raw = localStorage.getItem(RECEIPT_HISTORY_STORAGE_KEY);
+    const raw = kvStore.getItem(RECEIPT_HISTORY_STORAGE_KEY);
     if (!raw) return {};
     const parsed: Record<string, TenantReceiptDetails[]> = JSON.parse(raw);
-    delete parsed["35"];
-    delete parsed["000035"];
-    for (const [k, v] of Object.entries(parsed)) {
-      if (Array.isArray(v) && v.some(r => (r.unitRef && r.unitRef.includes("OA22-10")) || (r.tenantName && r.tenantName.toLowerCase().includes("devadas melitta")))) {
-        delete parsed[k];
-      }
-    }
-    localStorage.setItem(RECEIPT_HISTORY_STORAGE_KEY, JSON.stringify(parsed));
+    kvStore.setItem(RECEIPT_HISTORY_STORAGE_KEY, JSON.stringify(parsed));
     return parsed;
   } catch {
     return {};
@@ -422,7 +416,7 @@ function loadSavedReceiptHistory(): Record<string, TenantReceiptDetails[]> {
 function saveReceiptHistory(history: Record<string, TenantReceiptDetails[]>) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(RECEIPT_HISTORY_STORAGE_KEY, JSON.stringify(history));
+    kvStore.setItem(RECEIPT_HISTORY_STORAGE_KEY, JSON.stringify(history));
   } catch { /* ignore */ }
 }
 
@@ -549,7 +543,7 @@ export function PdcManagement() {
     window.addEventListener("pdcs_updated", handleSync);
     window.addEventListener("finance_vouchers_updated", handleSync);
 
-    const channel = supabase
+    const channel = db
       .channel("pdc-management:live")
       .on(
         "postgres_changes" as any,
@@ -569,7 +563,7 @@ export function PdcManagement() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      db.removeChannel(channel);
       window.removeEventListener("pdcs_updated", handleSync);
       window.removeEventListener("finance_vouchers_updated", handleSync);
     };
@@ -603,22 +597,22 @@ export function PdcManagement() {
 
       const [rawFinRegister, rawPdcsTable, finBanksRes, finBankAccountsRes, finVouchersRes] = await Promise.all([
         fetchAllRows((from, to) =>
-          supabase
+          db
             .from("fin_pdc_register")
             .select("*")
             .order("cheque_date", { ascending: true })
             .range(from, to)
         ),
         fetchAllRows((from, to) =>
-          supabase
+          db
             .from("pdcs")
             .select("*")
             .order("created_at", { ascending: true })
             .range(from, to)
         ),
-        supabase.from("fin_banks").select("id, code, name"),
-        supabase.from("fin_bank_accounts").select("id, bank_id, account_title, account_number"),
-        supabase
+        db.from("fin_banks").select("id, code, name"),
+        db.from("fin_bank_accounts").select("id, bank_id, account_title, account_number"),
+        db
           .from("fin_vouchers")
           .select("voucher_number, voucher_type, voucher_date, description, total_amount")
           .or("voucher_number.ilike.VCH-PDC-REC-%,voucher_number.ilike.VCH-DEP-%,voucher_number.ilike.VCH-CLR-%")
@@ -714,7 +708,7 @@ export function PdcManagement() {
       };
       let storedRenewalList: any[] = [];
       try {
-        const rawRenewal = localStorage.getItem("pms_renewal_pdcs");
+        const rawRenewal = kvStore.getItem("pms_renewal_pdcs");
         storedRenewalList = rawRenewal ? JSON.parse(rawRenewal) : [];
         if (!Array.isArray(storedRenewalList)) storedRenewalList = [];
       } catch {
@@ -905,11 +899,6 @@ export function PdcManagement() {
         const pStatus = normalizeStatus(p.status || p.status_pdc);
         const fStatus = matchedFin ? normalizeStatus(matchedFin.status) : "In Hand";
         let finalStatus = statusRank(fStatus) >= statusRank(pStatus) ? fStatus : pStatus;
-
-        // Reset testing transaction for OA22-10 / Cheque 35
-        if (chq === "35" || chq === "000035" || unitName.includes("OA22-10")) {
-          finalStatus = "In Hand";
-        }
 
         const rowKey = String(p.id);
         dbDataMap.set(rowKey, {
@@ -1336,7 +1325,7 @@ export function PdcManagement() {
 
   function syncLocalRenewalPdcStatus(pdc: any, nextSharedStatus: string, bankName?: string) {
     try {
-      const raw = localStorage.getItem("pms_renewal_pdcs");
+      const raw = kvStore.getItem("pms_renewal_pdcs");
       if (!raw) return;
       const list = JSON.parse(raw);
       if (!Array.isArray(list)) return;
@@ -1370,7 +1359,7 @@ export function PdcManagement() {
         return item;
       });
       if (changed) {
-        localStorage.setItem("pms_renewal_pdcs", JSON.stringify(updated));
+        kvStore.setItem("pms_renewal_pdcs", JSON.stringify(updated));
       }
     } catch {
       // ignore storage failures
@@ -1411,7 +1400,7 @@ export function PdcManagement() {
     setActionLoading(true);
 
     try {
-      // 2. Persist status and GL double entries directly to Supabase Database
+      // 2. Persist status and GL double entries directly to DB Database
       const chosenBank = bankAccounts.find((b) => b.id === selectedBankAccountId) || bankAccounts[0];
       const existingBankLabel = pdc.bank_name || pdc.bank || chosenBank?.accountTitle;
 
@@ -2260,15 +2249,15 @@ export function PdcManagement() {
       // 1. Resolve authoritative UUID context from the lease record, falling back to units table when needed.
       const leaseLookup = selectedLeaseId
         ? (UUID_PATTERN.test(String(selectedLeaseId))
-          ? supabase.from("leases").select("id, customer_id, property_id, unit_id").eq("id", String(selectedLeaseId)).maybeSingle()
-          : supabase.from("leases").select("id, customer_id, property_id, unit_id").eq("lease_number", String(selectedLeaseId)).maybeSingle())
+          ? db.from("leases").select("id, customer_id, property_id, unit_id").eq("id", String(selectedLeaseId)).maybeSingle()
+          : db.from("leases").select("id, customer_id, property_id, unit_id").eq("lease_number", String(selectedLeaseId)).maybeSingle())
         : Promise.resolve({ data: null, error: null } as any);
       const [{ data: leaseRow }, { data: unitRow }, { data: finBankAccounts }] = await Promise.all([
         leaseLookup,
         unit && unit !== "Unit"
-          ? supabase.from("units").select("id, property_id").or(`unit_ref.eq.${unit},unit_code.eq.${unit},unit_name.eq.${unit}`).limit(1).maybeSingle()
+          ? db.from("units").select("id, property_id").or(`unit_ref.eq.${unit},unit_code.eq.${unit},unit_name.eq.${unit}`).limit(1).maybeSingle()
           : Promise.resolve({ data: null, error: null } as any),
-        supabase.from("fin_bank_accounts").select("id, account_title, bank_id"),
+        db.from("fin_bank_accounts").select("id, account_title, bank_id"),
       ]);
 
       const resolveBankAccountId = (bankLabel: string): number | undefined => {
@@ -2305,7 +2294,7 @@ export function PdcManagement() {
         let insertedPdc: { id?: string; sl_no?: number } | null = null;
         let finRow: any = null;
         try {
-          const { data: existingPdc } = await supabase
+          const { data: existingPdc } = await db
             .from("pdcs")
             .select("id, sl_no")
             .eq("cheque_number", row.chequeNo)
@@ -2328,10 +2317,10 @@ export function PdcManagement() {
               status: "In Hand",
               lease_id: validLeaseUuid,
             };
-            const firstTry = await supabase.from("pdcs").insert(pdcsPayload).select("id, sl_no").maybeSingle();
+            const firstTry = await db.from("pdcs").insert(pdcsPayload).select("id, sl_no").maybeSingle();
             if (firstTry.error && validLeaseUuid) {
               console.warn("[handleAddPdc] pdcs insert with lease_id failed, retrying without lease_id:", firstTry.error.message);
-              const retry = await supabase.from("pdcs").insert({ ...pdcsPayload, lease_id: null }).select("id, sl_no").maybeSingle();
+              const retry = await db.from("pdcs").insert({ ...pdcsPayload, lease_id: null }).select("id, sl_no").maybeSingle();
               if (retry.error) console.warn("[handleAddPdc] pdcs insert retry error:", retry.error.message);
               insertedPdc = retry.data ?? null;
             } else {
@@ -2406,9 +2395,9 @@ export function PdcManagement() {
         newStoredItems.push(sharedItem);
       }
 
-      // Persist newly registered PDCs to localStorage with deduplication by (chequeNo, unit, date)
+      // Persist newly registered PDCs to kvStore with deduplication by (chequeNo, unit, date)
       try {
-        const existingStored = JSON.parse(localStorage.getItem("pms_renewal_pdcs") || "[]");
+        const existingStored = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
         const safeExisting = Array.isArray(existingStored) ? existingStored : [];
         const dedupedExisting = safeExisting.filter(
           (ex: any) =>
@@ -2419,7 +2408,7 @@ export function PdcManagement() {
                 String(ex.date || ex.dueDate || "").slice(0, 10) === String(n.date).slice(0, 10),
             ),
         );
-        localStorage.setItem("pms_renewal_pdcs", JSON.stringify([...newStoredItems, ...dedupedExisting]));
+        kvStore.setItem("pms_renewal_pdcs", JSON.stringify([...newStoredItems, ...dedupedExisting]));
         window.dispatchEvent(new Event("pdcs_updated"));
       } catch { /* ignore */ }
 

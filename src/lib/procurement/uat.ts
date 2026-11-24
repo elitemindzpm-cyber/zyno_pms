@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type ProcurementUatResult = {
   suite: 'PROCUREMENT_E2E_UAT';
@@ -16,7 +16,7 @@ export type ProcurementUatResult = {
 };
 
 export async function validateProcurementUat(poId: string): Promise<ProcurementUatResult> {
-  const { data, error } = await supabase.rpc('proc_uat_validate_po', { p_po_id: poId });
+  const { data, error } = await db.rpc('proc_uat_validate_po', { p_po_id: poId });
   if (error) throw error;
   return data as ProcurementUatResult;
 }
@@ -32,7 +32,7 @@ export type ProcurementUatDashboard = {
 };
 
 export async function getProcurementUatDashboard(limit = 25): Promise<ProcurementUatDashboard> {
-  const { data, error } = await supabase.rpc('proc_uat_dashboard', { p_limit: limit });
+  const { data, error } = await db.rpc('proc_uat_dashboard', { p_limit: limit });
   if (error) throw error;
   return data;
 }

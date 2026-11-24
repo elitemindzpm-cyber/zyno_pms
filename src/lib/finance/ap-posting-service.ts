@@ -9,7 +9,7 @@
  *   5. AP Subledger-to-GL Invariants
  */
 
-import { supabase } from '../supabase';
+import { db } from '../db';
 import { resolveAccountingAccounts } from './account-resolver';
 import { postVoucher, type PostingResult } from './posting-engine';
 
@@ -230,7 +230,7 @@ export type ApReconciliationResult = {
  * Reconciles Trade Payables GL (22100001).
  */
 export async function reconcileVendorAp(): Promise<ApReconciliationResult> {
-  const { data: lines, error } = await supabase
+  const { data: lines, error } = await db
     .from('fin_voucher_lines')
     .select('account_code, debit_amount, credit_amount');
 

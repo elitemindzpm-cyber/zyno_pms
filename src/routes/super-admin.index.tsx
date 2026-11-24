@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import {
@@ -9,7 +10,7 @@ import {
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { RBAC_MODULES } from "@/lib/rbac";
 import { toast } from "sonner";
 
@@ -78,12 +79,12 @@ function SuperAdminDashboard() {
     setLoading(true);
     try {
       const [orgsRes, propsRes, unitsRes, leasesRes, profilesRes, pdcRes] = await Promise.all([
-        supabase.from("tenant_organisations").select("*").order("created_at", { ascending: false }),
-        supabase.from("properties").select("id, host_id, title, city, is_active"),
-        supabase.from("units").select("id, status, current_rent, price"),
-        supabase.from("leases").select("id, lease_status, rental_amount"),
-        supabase.from("profiles").select("id, full_name, role, created_at"),
-        supabase.from("payments").select("id").eq("payment_method", "Cheque").eq("payment_status", "Pending"),
+        db.from("tenant_organisations").select("*").order("created_at", { ascending: false }),
+        db.from("properties").select("id, host_id, title, city, is_active"),
+        db.from("units").select("id, status, current_rent, price"),
+        db.from("leases").select("id, lease_status, rental_amount"),
+        db.from("profiles").select("id, full_name, role, created_at"),
+        db.from("payments").select("id").eq("payment_method", "Cheque").eq("payment_status", "Pending"),
       ]);
 
       const orgs = orgsRes.data || [];
@@ -94,10 +95,10 @@ function SuperAdminDashboard() {
       const pdcs = pdcRes.data || [];
 
       // Calculate totals
-      const activeOrgs = orgs.filter((o) => o.status === "Active");
-      const activeLeases = leases.filter((l) => ["active", "Active", "fully_signed", "Renewed"].includes(l.lease_status));
-      const leaseRevenue = activeLeases.reduce((s, l) => s + (Number(l.rental_amount) || 0), 0);
-      const subMRR = orgs.reduce((s, o) => s + (Number(o.subscription_amount) || 0), 0);
+      const activeOrgs = orgs.filter((o: any) => o.status === "Active");
+      const activeLeases = leases.filter((l: any) => ["active", "Active", "fully_signed", "Renewed"].includes(l.lease_status));
+      const leaseRevenue = activeLeases.reduce((s: any, l: any) => s + (Number(l.rental_amount) || 0), 0);
+      const subMRR = orgs.reduce((s: any, o: any) => s + (Number(o.subscription_amount) || 0), 0);
 
       setStats({
         totalTenants: orgs.length,
@@ -122,7 +123,7 @@ function SuperAdminDashboard() {
 
   const systemHealthItems = [
     { label: "PostgreSQL Database", status: "Operational (pg_cron Active)", ok: true },
-    { label: "Supabase Auth (JWT)", status: "Operational (Zero-Trust)", ok: true },
+    { label: "DB Auth (JWT)", status: "Operational (Zero-Trust)", ok: true },
     { label: "Cloud Media Storage", status: "Operational (4 Buckets)", ok: true },
     { label: "SendGrid / SMTP", status: "Operational (Qatar Gateway)", ok: true },
     { label: "QPay / NAPS Webhook", status: "Operational (Active)", ok: true },
@@ -194,14 +195,14 @@ function SuperAdminDashboard() {
 
                   for (const table of tables) {
                     try {
-                      await supabase.from(table).delete().neq("id", "00000000-0000-0000-0000-000000000000");
+                      await db.from(table).delete().neq("id", "00000000-0000-0000-0000-000000000000");
                     } catch {
                       // Silently continue if table doesn't exist
                     }
                   }
 
-                  // Clear localStorage audit cache too
-                  localStorage.removeItem("pms_security_audit_logs");
+                  // Clear kvStore audit cache too
+                  kvStore.removeItem("pms_security_audit_logs");
 
                   toast.success("✅ All platform data wiped. Ready for fresh tenant onboarding!", { id: "wipe-all" });
                   loadDashboardStats();

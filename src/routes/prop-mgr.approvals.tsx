@@ -14,7 +14,7 @@ import { Loader2, Plus, CheckCircle2, XCircle, Clock, RefreshCw, ShieldCheck, Al
 import {
   fetchApprovalRequests, createApprovalRequest, processApproval,
   type ApprovalRequest
-} from "@/lib/supabase";
+} from "@/lib/db";
 import { formatDateUniform } from "@/lib/date-utils";
 
 export const Route = createFileRoute("/prop-mgr/approvals")({

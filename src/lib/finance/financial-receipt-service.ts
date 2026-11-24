@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type FinancialReceiptLine = {
   line_number: number;
@@ -38,7 +38,7 @@ export type FinancialReceipt = {
 };
 
 export async function fetchFinancialReceipts(limit = 100) {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('fin_transaction_receipts')
     .select('*')
     .order('issued_at', { ascending: false })
@@ -49,7 +49,7 @@ export async function fetchFinancialReceipts(limit = 100) {
 }
 
 export async function fetchFinancialReceiptByEvent(eventId: string) {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('fin_transaction_receipts')
     .select('*')
     .eq('accounting_event_id', eventId)

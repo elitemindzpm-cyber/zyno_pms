@@ -5,7 +5,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { formatSAR } from "@/lib/mock-data";
 import { useEffect, useState } from "react";
-import { supabase, fetchAllProperties, type Property } from "@/lib/supabase";
+import { db, fetchAllProperties, type Property } from "@/lib/db";
 
 export const Route = createFileRoute("/admin/")({
   head: () => ({ meta: [{ title: "Dashboard — ZYNO Property Management Staff" }] }),
@@ -37,11 +37,11 @@ function AdminDashboard() {
           { data: expiringData }
         ] = await Promise.all([
           fetchAllProperties().catch(() => []),
-          supabase.from("units").select("id, unit_ref, unit_name, status, lease_status, current_tenant, contract_no, contract_start_date, contract_end_date, current_rent, price, property_id"),
-          supabase.from("leases").select("*, properties(title), units(unit_number), customers:customer_id(full_name)"),
-          supabase.from("maintenance_tickets").select("*", { count: "exact" }).in("status", ["OPEN", "IN_PROGRESS", "ASSIGNED", "new", "assigned", "in_progress"]).order("created_at", { ascending: false }).limit(5),
-          supabase.from("pdcs").select("amount, status, deposit_date, maturity_date, collection_date, created_at").limit(1000),
-          supabase.from("leases").select("*, properties(title)").in("lease_status", ["ACTIVE", "active"]).order("end_date", { ascending: true }).limit(5),
+          db.from("units").select("id, unit_ref, unit_name, status, lease_status, current_tenant, contract_no, contract_start_date, contract_end_date, current_rent, price, property_id"),
+          db.from("leases").select("*, properties(title), units(unit_number), customers:customer_id(full_name)"),
+          db.from("maintenance_tickets").select("*", { count: "exact" }).in("status", ["OPEN", "IN_PROGRESS", "ASSIGNED", "new", "assigned", "in_progress"]).order("created_at", { ascending: false }).limit(5),
+          db.from("pdcs").select("amount, status, deposit_date, maturity_date, collection_date, created_at").limit(1000),
+          db.from("leases").select("*, properties(title)").in("lease_status", ["ACTIVE", "active"]).order("expiry_date", { ascending: true }).limit(5),
         ]);
 
         const allUnits = unitsRes.data || [];

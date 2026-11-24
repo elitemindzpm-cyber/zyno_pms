@@ -13,7 +13,7 @@
  *      Generates formal FINANCE_RECONCILIATION_EXCEPTION records if any invariant fails.
  */
 
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type TenantArReconciliationResult = {
   tenantId: string;
@@ -68,7 +68,7 @@ export async function reconcileTenantAr(
   tenantId: string,
   leaseId?: string,
 ): Promise<TenantArReconciliationResult> {
-  let query = supabase
+  let query = db
     .from('fin_voucher_lines')
     .select('account_code, debit_amount, credit_amount, voucher_id, description')
     .eq('tenant_id', tenantId);
@@ -136,7 +136,7 @@ export async function reconcileTenantAr(
  */
 export async function reconcilePdcRegister(): Promise<PdcReconciliationResult> {
   // 1. Fetch Register totals
-  const { data: pdcs, error: pdcErr } = await supabase
+  const { data: pdcs, error: pdcErr } = await db
     .from('fin_pdc_register')
     .select('amount, pdc_type, status')
     .in('status', ['In Hand', 'Received', 'IN_HAND', 'RECEIVED']);
@@ -156,7 +156,7 @@ export async function reconcilePdcRegister(): Promise<PdcReconciliationResult> {
   }
 
   // 2. Fetch GL totals from posted vouchers
-  const { data: lines, error: lineErr } = await supabase
+  const { data: lines, error: lineErr } = await db
     .from('fin_voucher_lines')
     .select('account_code, debit_amount, credit_amount');
 
@@ -192,7 +192,7 @@ export async function reconcilePdcRegister(): Promise<PdcReconciliationResult> {
  * Reconciles Deposit GLs (21500 & 21100 subledgers) against fin_deposits register.
  */
 export async function reconcileDepositRegister(): Promise<DepositReconciliationResult> {
-  const { data: deposits, error: depErr } = await supabase
+  const { data: deposits, error: depErr } = await db
     .from('fin_deposits')
     .select('amount, deposit_type, coa_account_code, status');
 
@@ -223,7 +223,7 @@ export async function reconcileDepositRegister(): Promise<DepositReconciliationR
   }
 
   // Fetch GL totals from posted vouchers
-  const { data: lines, error: lineErr } = await supabase
+  const { data: lines, error: lineErr } = await db
     .from('fin_voucher_lines')
     .select('account_code, debit_amount, credit_amount');
 
@@ -286,7 +286,7 @@ export async function reconcileOwnerPayables(): Promise<{
   ownerGlBalance: number;
   isReconciled: boolean;
 }> {
-  const { data: lines, error } = await supabase
+  const { data: lines, error } = await db
     .from('fin_voucher_lines')
     .select('account_code, debit_amount, credit_amount');
 
@@ -314,7 +314,7 @@ export async function reconcileInterPropertyClearing(): Promise<{
   netClearingBalance: number;
   isBalanced: boolean;
 }> {
-  const { data: lines, error } = await supabase
+  const { data: lines, error } = await db
     .from('fin_voucher_lines')
     .select('account_code, debit_amount, credit_amount');
 

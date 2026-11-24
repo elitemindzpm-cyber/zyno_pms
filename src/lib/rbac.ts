@@ -1,6 +1,7 @@
+import { kvStore } from "@/lib/kv-store";
 import type { ConsoleKey } from "@/lib/console-config";
-import type { Profile } from "@/lib/supabase";
-import { supabase } from "@/lib/supabase";
+import type { Profile } from "@/lib/db";
+import { db } from "@/lib/db";
 
 export type AppRole = Profile["role"] | "GUEST";
 
@@ -198,7 +199,7 @@ const WORKFLOWS_STORAGE_KEY = "zyno_approval_workflows_v2";
 
 export function loadSavedApprovalWorkflows(): ApprovalWorkflowRule[] {
   try {
-    const saved = localStorage.getItem(WORKFLOWS_STORAGE_KEY);
+    const saved = kvStore.getItem(WORKFLOWS_STORAGE_KEY);
     if (saved) {
       const parsed = JSON.parse(saved);
       if (Array.isArray(parsed) && parsed.length > 0) return parsed;
@@ -211,7 +212,7 @@ export function loadSavedApprovalWorkflows(): ApprovalWorkflowRule[] {
 
 export function saveApprovalWorkflows(workflows: ApprovalWorkflowRule[]) {
   try {
-    localStorage.setItem(WORKFLOWS_STORAGE_KEY, JSON.stringify(workflows));
+    kvStore.setItem(WORKFLOWS_STORAGE_KEY, JSON.stringify(workflows));
     window.dispatchEvent(new CustomEvent("approval_workflows_updated", { detail: workflows }));
   } catch (e) {
     console.error("Error saving workflows:", e);
@@ -474,7 +475,7 @@ function getDefaultAccess(role: AppRole) {
 export async function fetchEffectiveRoleAccess(role: AppRole, tenantId?: string | null) {
   const effective = getDefaultAccess(role);
 
-  let query = supabase.from("role_permissions").select("role_name,module_id,has_access,tenant_id").eq("role_name", role);
+  let query = db.from("role_permissions").select("role_name,module_id,has_access,tenant_id").eq("role_name", role);
   query = tenantId ? query.or(`tenant_id.eq.${tenantId},tenant_id.is.null`) : query.is("tenant_id", null);
 
   const { data, error } = await query;
@@ -517,7 +518,7 @@ export async function canAccessConsole(consoleKey: ConsoleKey, role: AppRole, te
     return true;
   }
 
-  // 3. Fallback to Supabase permissions if custom tenant config is loaded
+  // 3. Fallback to DB permissions if custom tenant config is loaded
   try {
     const access = await fetchEffectiveRoleAccess(role, tenantId);
     return rule.anyOf.some((moduleId) => access[moduleId]);

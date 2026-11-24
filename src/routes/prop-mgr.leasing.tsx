@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -15,9 +16,8 @@ import { Separator } from "@/components/ui/separator";
 import { SearchableSelect } from "@/components/ui/searchable-select";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { useAppData } from "@/lib/app-data-context";
-import { fetchAssets, updateAsset, supabase, type Asset as SupabaseAsset } from "@/lib/supabase";
+import { fetchAssets, updateAsset, db, type Asset as DbAsset } from "@/lib/db";
 import { generateLeaseAgreementBlob } from "@/components/lease-agreement-template";
-import { generateReceiptBlob } from "@/components/receipt-template";
 import { LeaseRenewalStepperModal, type RenewalSubmitData } from "@/components/lease-renewal-stepper-modal";
 import { getTodayIST, getCurrentISTDate, formatDateDDMMYYYY } from "@/lib/date-utils";
 import {
@@ -364,7 +364,7 @@ function createSampleAssetsForUnits(units: Unit[]) {
         assigned_unit_code: unit.unit,
         created_at: today.toISOString(),
         updated_at: today.toISOString(),
-      } as SupabaseAsset;
+      } as DbAsset;
     });
     return list;
   });
@@ -646,10 +646,10 @@ function LeasingPage() {
   useEffect(() => {
     async function fetchRealUnits() {
       try {
-        const { supabase } = await import('@/lib/supabase');
+        const { db } = await import('@/lib/db');
         const [{ data: props }, { data: uns }] = await Promise.all([
-          supabase.from('properties').select('id, title'),
-          supabase.from('units').select('*')
+          db.from('properties').select('id, title'),
+          db.from('units').select('*')
         ]);
         if (props && uns) {
           const propMap = new Map(props.map((p: any) => [p.id, p.title]));
@@ -740,7 +740,7 @@ function LeasingPage() {
 
   // ── Signature Workflow Dialogs ─────────────────────────────────
   const [signatureWorkflowLease, setSignatureWorkflowLease] = useState<Lease | null>(null);
-  const [assets, setAssets] = useState<SupabaseAsset[]>([]);
+  const [assets, setAssets] = useState<DbAsset[]>([]);
   const [assetChanges, setAssetChanges] = useState<Record<string, { condition: string; imageFileName: string }>>({});
   const [assetLoading, setAssetLoading] = useState(false);
 
@@ -1265,6 +1265,7 @@ function LeasingPage() {
             },
           ],
         };
+        const { generateReceiptBlob } = await import("@/components/receipt-template");
         const blob = await generateReceiptBlob(receiptData);
         const url = URL.createObjectURL(blob);
         setTokenReceiptUrl(url);
@@ -1472,10 +1473,10 @@ function LeasingPage() {
       setLeases(prev => prev.map(l => l.id === targetLease.id ? { ...l, status: "active" as LeaseStatus } : l));
       setUnits(prev => prev.map(u => (u.unit === targetLease.unit || (u as any).unit_number === targetLease.unit) ? { ...u, status: "Occupied" } : u));
       try {
-        void supabase.from("leases").update({ status: "active" }).eq("id", targetLease.id);
-        void supabase.from("units").update({ status: "Occupied" }).eq("unit_number", targetLease.unit);
+        void db.from("leases").update({ status: "active" }).eq("id", targetLease.id);
+        void db.from("units").update({ status: "Occupied" }).eq("unit_number", targetLease.unit);
       } catch (e) {
-        console.warn("Lease approval Supabase sync:", e);
+        console.warn("Lease approval DB sync:", e);
       }
     }
 
@@ -1996,10 +1997,10 @@ function LeasingPage() {
       setPdcs((items) => [newPdc, ...items]);
     }
 
-    // 3. Persist to Supabase Finance tables (fin_vouchers and fin_voucher_lines) so Finance Dashboard & Ledger are updated
+    // 3. Persist to DB Finance tables (fin_vouchers and fin_voucher_lines) so Finance Dashboard & Ledger are updated
     try {
-      const { supabase } = await import("@/lib/supabase");
-      const { data: finVch } = await supabase.from("fin_vouchers").insert({
+      const { db } = await import("@/lib/db");
+      const { data: finVch } = await db.from("fin_vouchers").insert({
         voucher_number: vchNo,
         voucher_date: today.toISOString().split("T")[0],
         voucher_type: name.includes("Deposit") ? "Deposit" : name.includes("Payment") ? "Payment" : "Receipt",
@@ -2011,13 +2012,13 @@ function LeasingPage() {
       }).select().single();
 
       if (finVch) {
-        await supabase.from("fin_voucher_lines").insert([
+        await db.from("fin_voucher_lines").insert([
           { voucher_id: finVch.id, account_id: 1, debit_amount: numAmount, credit_amount: 0, description: accounts.debit },
           { voucher_id: finVch.id, account_id: 2, debit_amount: 0, credit_amount: numAmount, description: accounts.credit },
         ]);
       }
     } catch (e) {
-      console.warn("Supabase finance sync notice:", e);
+      console.warn("DB finance sync notice:", e);
     }
 
     recordAudit({
@@ -2265,7 +2266,7 @@ function LeasingPage() {
 
     // Persist renewal PDCs to persistent browser storage so they are immediately available in PDC Management
     try {
-      const existingRaw = localStorage.getItem("pms_renewal_pdcs");
+      const existingRaw = kvStore.getItem("pms_renewal_pdcs");
       const existingList: any[] = existingRaw ? JSON.parse(existingRaw) : [];
       const updatedList = [
         ...renewalPdcs.map(rp => ({
@@ -2279,12 +2280,12 @@ function LeasingPage() {
         })),
         ...existingList.filter(item => item.leaseId !== renewed.id && !renewalPdcs.some(rp => rp.chequeNo === item.chequeNo && rp.unit === item.unit)),
       ];
-      localStorage.setItem("pms_renewal_pdcs", JSON.stringify(updatedList));
+      kvStore.setItem("pms_renewal_pdcs", JSON.stringify(updatedList));
     } catch (e) {
-      console.warn("Error storing renewal PDCs to localStorage:", e);
+      console.warn("Error storing renewal PDCs to kvStore:", e);
     }
 
-    // Persist renewal PDCs directly to Supabase pdcs and fin_pdc_register
+    // Persist renewal PDCs directly to DB pdcs and fin_pdc_register
     try {
       const dbPdcs = renewalPdcs.map(p => ({
         cheque_number: p.chequeNo,
@@ -2302,7 +2303,7 @@ function LeasingPage() {
         rent_to_date: p.tenureEnd,
         lease_id: renewed.id,
       }));
-      void supabase.from("pdcs").insert(dbPdcs).then(({ error }) => {
+      void db.from("pdcs").insert(dbPdcs).then(({ error }) => {
         if (error) console.warn("[renewLease] pdcs insert note:", error.message);
         else console.log("[renewLease] PDCs inserted into pdcs table successfully");
       });
@@ -2317,11 +2318,11 @@ function LeasingPage() {
         property_name: oldLease.property,
         tenant_name: oldLease.tenantName,
       }));
-      void supabase.from("fin_pdc_register").insert(dbFinPdcs).then(({ error }) => {
+      void db.from("fin_pdc_register").insert(dbFinPdcs).then(({ error }) => {
         if (error) console.warn("[renewLease] fin_pdc_register insert note:", error.message);
       });
     } catch (e) {
-      console.warn("Error persisting renewal PDCs to Supabase:", e);
+      console.warn("Error persisting renewal PDCs to Db:", e);
     }
 
     window.dispatchEvent(new CustomEvent("pdcs_updated"));
@@ -2559,11 +2560,11 @@ function LeasingPage() {
       };
       newVouchers.push(rentVoucher);
 
-      // Post GL to Supabase fin_vouchers
+      // Post GL to DB fin_vouchers
       const drCode = isPdc ? "12900001" : isCash ? "12100001" : "12000001";
       const drName = isPdc ? "Rent PDC In Hand" : isCash ? "Cash in Hand / Operating Cash" : "Bank Operating Account (QNB)";
       const postingDate = renewalResponseForm.rentPaymentDate || today.toISOString().split("T")[0];
-      void supabase.from("fin_vouchers").insert({
+      void db.from("fin_vouchers").insert({
         voucher_number: `VCH-RENT-${rentRef}`,
         voucher_date: postingDate,
         voucher_type: "RV",
@@ -2573,7 +2574,7 @@ function LeasingPage() {
         posted_at: new Date().toISOString(),
       }).select("id").single().then(({ data: vData, error: vErr }) => {
         if (!vErr && vData?.id) {
-          void supabase.from("fin_voucher_lines").insert([
+          void db.from("fin_voucher_lines").insert([
             { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: rentAmt, credit: 0, description: `Rent Differential — ${oldLease.tenantName}` },
             { voucher_id: vData.id, account_code: "41100001", account_name: "Rental Revenue", debit: 0, credit: rentAmt, description: `Rent Differential — ${oldLease.tenantName}` },
           ]);
@@ -2617,11 +2618,11 @@ function LeasingPage() {
         ]);
       }
 
-      // Post GL to Supabase fin_vouchers
+      // Post GL to DB fin_vouchers
       const drCode = isPdc ? "12900001" : isCash ? "12100001" : "12000001";
       const drName = isPdc ? "Rent PDC In Hand" : isCash ? "Cash in Hand / Operating Cash" : "Bank Operating Account (QNB)";
       const postingDate = renewalResponseForm.securityChequeDate || today.toISOString().split("T")[0];
-      void supabase.from("fin_vouchers").insert({
+      void db.from("fin_vouchers").insert({
         voucher_number: `VCH-SD-${sdRef}`,
         voucher_date: postingDate,
         voucher_type: "RV",
@@ -2631,7 +2632,7 @@ function LeasingPage() {
         posted_at: new Date().toISOString(),
       }).select("id").single().then(({ data: vData, error: vErr }) => {
         if (!vErr && vData?.id) {
-          void supabase.from("fin_voucher_lines").insert([
+          void db.from("fin_voucher_lines").insert([
             { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: depositTopUp, credit: 0, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
             { voucher_id: vData.id, account_code: "21500001", account_name: "Security Deposit Liability", debit: 0, credit: depositTopUp, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
           ]);
@@ -2694,16 +2695,16 @@ function LeasingPage() {
       output: `Refund processed, lease closed, unit updated to ${settlement.unitDisposition || "Vacant - Available"}, and history retained`,
     });
 
-    // ── Persist checkout to Supabase so occupancy survives page refresh ──────
+    // ── Persist checkout to DB so occupancy survives page refresh ──────
     if (lease) {
       const dbUnitStatus = (settlement.unitDisposition || "Available").toLowerCase().includes("maintenance")
         ? "Vacant - Under Maintenance"
         : "Available";
 
-      // 1. Update the unit in Supabase: clear tenant, contract, and rent fields
+      // 1. Update the unit in Db: clear tenant, contract, and rent fields
       const matchedUnit = units.find((u) => u.unit === lease.unit);
       if (matchedUnit?.id) {
-        supabase
+        db
           .from("units")
           .update({
             status: dbUnitStatus,
@@ -2718,7 +2719,7 @@ function LeasingPage() {
           .eq("id", matchedUnit.id)
           .then(({ error }: { error: any }) => {
             if (error) {
-              console.error("[Checkout] Failed to vacate unit in Supabase:", error.message);
+              console.error("[Checkout] Failed to vacate unit in Db:", error.message);
               toast.error("Could not update unit occupancy in the database — please refresh to verify.");
             } else {
               window.dispatchEvent(new Event("pms_data_updated"));
@@ -2726,7 +2727,7 @@ function LeasingPage() {
           });
       }
 
-      // 2. Update the lease status to CLOSED in Supabase
+      // 2. Update the lease status to CLOSED in Db
       // reservationId holds the raw DB UUID for real DB leases
       const leaseDbId =
         lease.reservationId && !String(lease.reservationId).startsWith("res-")
@@ -2736,12 +2737,12 @@ function LeasingPage() {
           : null;
 
       if (leaseDbId) {
-        supabase
+        db
           .from("leases")
           .update({ lease_status: "CLOSED", updated_at: new Date().toISOString() } as any)
           .eq("id", leaseDbId)
           .then(({ error }: { error: any }) => {
-            if (error) console.error("[Checkout] Failed to close lease in Supabase:", error.message);
+            if (error) console.error("[Checkout] Failed to close lease in Db:", error.message);
           });
       }
     }
@@ -3006,7 +3007,7 @@ function LeasingPage() {
       : "Available") as Unit["status"];
     setUnits((items) => items.map((item) => (item.unit === lease.unit ? { ...item, status: releasedStatus } : item)));
     setRealUnits((items) => items.map((item) => (item.unit === lease.unit ? { ...item, status: releasedStatus } : item)));
-    void supabase
+    void db
       .from("units")
       .update({
         status: releasedStatus,
@@ -5725,8 +5726,8 @@ function LeasingPage() {
                       <Button size="sm" variant="outline" disabled={voucher.status !== "draft"} onClick={async () => {
                         setVouchers((items) => items.map((item) => item.id === voucher.id ? { ...item, status: "posted" } : item));
                         try {
-                          const { supabase } = await import("@/lib/supabase");
-                          await supabase.from("fin_vouchers").insert({
+                          const { db } = await import("@/lib/db");
+                          await db.from("fin_vouchers").insert({
                             voucher_number: voucher.receiptNo || voucher.id,
                             voucher_date: today.toISOString().split("T")[0],
                             voucher_type: voucher.name.includes("Deposit") ? "Deposit" : voucher.name.includes("Payment") ? "Payment" : "Receipt",
@@ -5737,7 +5738,7 @@ function LeasingPage() {
                             posted_at: new Date().toISOString(),
                           });
                         } catch (e) {
-                          console.warn("Posting to Supabase finance failed:", e);
+                          console.warn("Posting to DB finance failed:", e);
                         }
                       }}>Post</Button>
                       <Button size="sm" variant="outline" disabled={voucher.status === "draft" || voucher.status === "shared"} onClick={() => setVouchers((items) => items.map((item) => item.id === voucher.id ? { ...item, status: "shared" } : item))}>Share</Button>

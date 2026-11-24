@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useState, useEffect } from "react";
-import { fetchARLedgers, ARLedger } from "@/lib/supabase";
+import { fetchARLedgers, ARLedger } from "@/lib/db";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Wallet, AlertCircle } from "lucide-react";
 import { formatDateUniform } from "@/lib/date-utils";

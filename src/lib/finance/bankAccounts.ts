@@ -1,4 +1,5 @@
-import { supabase } from '../supabase';
+import { kvStore } from "@/lib/kv-store";
+import { db } from '../db';
 
 export interface CompanyBankAccount {
   id: string;
@@ -26,7 +27,7 @@ const PMS_FIN_STORAGE_KEY = "pms_fin_bank_accounts_override_v2";
 export function getStoredCompanyBankAccounts(): CompanyBankAccount[] {
   if (typeof window === "undefined") return DEFAULT_COMPANY_BANK_ACCOUNTS;
   try {
-    const raw = localStorage.getItem(BANK_ACCOUNTS_STORAGE_KEY);
+    const raw = kvStore.getItem(BANK_ACCOUNTS_STORAGE_KEY);
     if (raw) {
       const parsed = JSON.parse(raw);
       if (Array.isArray(parsed) && parsed.length > 0) {
@@ -34,7 +35,7 @@ export function getStoredCompanyBankAccounts(): CompanyBankAccount[] {
       }
     }
     // Also check PMS finance module override storage key
-    const rawPms = localStorage.getItem(PMS_FIN_STORAGE_KEY);
+    const rawPms = kvStore.getItem(PMS_FIN_STORAGE_KEY);
     if (rawPms) {
       const parsedPms = JSON.parse(rawPms);
       if (Array.isArray(parsedPms) && parsedPms.length > 0) {
@@ -72,7 +73,7 @@ export function getStoredCompanyBankAccounts(): CompanyBankAccount[] {
 }
 
 /**
- * Save or update a bank account in local storage and persist to Supabase where possible.
+ * Save or update a bank account in local storage and persist to DB where possible.
  */
 export async function saveCompanyBankAccount(acc: CompanyBankAccount): Promise<CompanyBankAccount[]> {
   const current = getStoredCompanyBankAccounts();
@@ -88,15 +89,15 @@ export async function saveCompanyBankAccount(acc: CompanyBankAccount): Promise<C
 
   if (typeof window !== "undefined") {
     try {
-      localStorage.setItem(BANK_ACCOUNTS_STORAGE_KEY, JSON.stringify(updated));
+      kvStore.setItem(BANK_ACCOUNTS_STORAGE_KEY, JSON.stringify(updated));
     } catch {
       // ignore storage quota issues
     }
   }
 
-  // Attempt to sync to Supabase database if fin_bank_accounts table is accessible
+  // Attempt to sync to DB database if fin_bank_accounts table is accessible
   try {
-    await (supabase as any)
+    await (db as any)
       .from('fin_bank_accounts')
       .upsert({
         account_number: acc.accountNumber,
@@ -118,7 +119,7 @@ export async function fetchCompanyBankAccounts(): Promise<CompanyBankAccount[]> 
   const stored = getStoredCompanyBankAccounts();
 
   try {
-    const { data, error } = await (supabase as any)
+    const { data, error } = await (db as any)
       .from('fin_bank_accounts')
       .select('*, fin_banks(name, code, swift_code)')
       .limit(50);

@@ -43,7 +43,7 @@ Do not commit:
 2. Production build: passed on 17 Nov 2026 (`vite build`, exit 0, built in about 36 seconds).
 3. Commit on main, with the attribution lines in the commit message. Do not rewrite history: the repository
    is connected to Lovable, and pushes to this branch sync there (see AGENTS.md).
-4. Push: `git -C "E:/Port/Property Management System/one-platform-many-smiles" push origin main`
+4. Push: `# Removed: this line pushed a different project (E:/Port/Property Management System). ZYNO PMS has no remote configured.`
    (run by you; pushes from this session have been blocked before).
 5. Deploy: the repository has no deploy step (the CI workflow only builds). Deploy production from wherever
    property-management.zynotechnologies.com is hosted, using this commit.

@@ -16,7 +16,7 @@
  *             - Settlement approved & posted
  */
 
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type FinancialClosureValidationResult = {
   canClose: boolean;
@@ -45,7 +45,7 @@ export async function validateLeaseFinancialClosure(
   const warnings: string[] = [];
 
   // 1. Fetch lease record
-  const { data: lease, error: leaseErr } = await supabase
+  const { data: lease, error: leaseErr } = await db
     .from('leases')
     .select('id, tenant_id, property_id, unit_id, status')
     .eq('id', leaseIdStr)
@@ -70,7 +70,7 @@ export async function validateLeaseFinancialClosure(
   }
 
   // 2. Check active PDCs for this lease
-  const { data: activePdcs } = await supabase
+  const { data: activePdcs } = await db
     .from('fin_pdc_register')
     .select('id, cheque_number, status, amount')
     .eq('lease_id', leaseIdStr)
@@ -84,7 +84,7 @@ export async function validateLeaseFinancialClosure(
   }
 
   // 3. Check Security Deposits (fin_deposits)
-  const { data: deposits } = await supabase
+  const { data: deposits } = await db
     .from('fin_deposits')
     .select('id, deposit_type, coa_account_code, amount, status')
     .eq('lease_id', leaseIdStr)
@@ -122,7 +122,7 @@ export async function validateLeaseFinancialClosure(
   }
 
   // 4. Check Guarantee Cheques
-  const { data: guaranteeCheques } = await supabase
+  const { data: guaranteeCheques } = await db
     .from('fin_pdc_register')
     .select('id, cheque_number, status')
     .eq('lease_id', leaseIdStr)
@@ -137,7 +137,7 @@ export async function validateLeaseFinancialClosure(
   // 5. Check Tenant AR Balance
   // Query posted vouchers for this lease/tenant on 12413
   let arBalance = 0;
-  const { data: voucherLines } = await supabase
+  const { data: voucherLines } = await db
     .from('fin_voucher_lines')
     .select('debit_amount, credit_amount, account_code')
     .eq('lease_id', leaseIdStr);

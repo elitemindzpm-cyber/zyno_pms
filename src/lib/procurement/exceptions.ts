@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type ProcurementException = {
   exception_key: string;
@@ -24,7 +24,7 @@ export type ProcurementExceptionQueue = {
 };
 
 export async function getProcurementExceptionQueue(limit = 50): Promise<ProcurementExceptionQueue> {
-  const { data, error } = await supabase.rpc('proc_exception_queue', { p_limit: limit });
+  const { data, error } = await db.rpc('proc_exception_queue', { p_limit: limit });
   if (error) throw error;
   return data as ProcurementExceptionQueue;
 }
@@ -35,7 +35,7 @@ export async function resolveProcurementException(input: {
   resolutionNotes?: string;
   assignedTo?: string | null;
 }) {
-  const { data, error } = await supabase.rpc('proc_resolve_exception', {
+  const { data, error } = await db.rpc('proc_resolve_exception', {
     p_exception_key: input.exceptionKey,
     p_status: input.status,
     p_resolution_notes: input.resolutionNotes || null,
@@ -46,7 +46,7 @@ export async function resolveProcurementException(input: {
 }
 
 export async function reopenProcurementException(exceptionKey: string, reason?: string) {
-  const { data, error } = await supabase.rpc('proc_reopen_exception', {
+  const { data, error } = await db.rpc('proc_reopen_exception', {
     p_exception_key: exceptionKey,
     p_reason: reason || null,
   });

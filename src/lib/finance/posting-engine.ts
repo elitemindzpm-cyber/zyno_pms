@@ -1,4 +1,5 @@
-import { supabase } from '../supabase';
+import { kvStore } from "@/lib/kv-store";
+import { db } from '../db';
 import {
   resolveAccountingAccounts,
   type PaymentMethod,
@@ -46,7 +47,7 @@ export type PostingResult = {
 };
 
 async function getGeneratedReceipt(eventId: string) {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from('fin_transaction_receipts')
     .select('id, receipt_no')
     .eq('accounting_event_id', eventId)
@@ -335,7 +336,7 @@ async function resolveAccounts(
   const {
     data: accounts,
     error,
-  } = await supabase
+  } = await db
     .from(
       'fin_coa_accounts',
     )
@@ -415,7 +416,7 @@ async function findExistingVoucher(
   const {
     data,
     error,
-  } = await supabase
+  } = await db
     .from(
       'fin_vouchers',
     )
@@ -448,7 +449,7 @@ async function markEventPosting(
   const {
     data,
     error,
-  } = await supabase
+  } = await db
     .from(
       'fin_accounting_events',
     )
@@ -481,7 +482,7 @@ async function restoreDraftStatus(
 ) {
   const {
     error,
-  } = await supabase
+  } = await db
     .from(
       'fin_accounting_events',
     )
@@ -532,7 +533,7 @@ export async function postAccountingEvent(
   eventId: string,
 ): Promise<PostingResult> {
 
-  const { data: rpcRows, error: rpcError } = await supabase
+  const { data: rpcRows, error: rpcError } = await db
     .rpc('post_accounting_event_atomic', {
       p_event_id: eventId,
     });
@@ -658,7 +659,7 @@ function isDateInClosedPostingPeriod(dateStr?: string): { closed: boolean; perio
   if (!dateStr || typeof window === "undefined") return { closed: false };
   try {
     const ym = dateStr.split("T")[0].slice(0, 7);
-    const raw = localStorage.getItem("pms_posting_periods_cache");
+    const raw = kvStore.getItem("pms_posting_periods_cache");
     if (!raw) return { closed: false };
     const list = JSON.parse(raw) as Array<{ period_name: string; status: string }>;
     const found = list.find(p => p.period_name === ym);
@@ -731,7 +732,7 @@ export async function postVoucher(
   const {
     data: existingEvent,
     error: existingEventError,
-  } = await supabase
+  } = await db
     .from('fin_accounting_events')
     .select('id')
     .eq(

@@ -1,4 +1,4 @@
-import type { Property } from "@/lib/supabase";
+import type { Property } from "@/lib/db";
 import { parseFloors } from "@/lib/utils";
 
 export type PropertySavePayload = Partial<Omit<Property, "id" | "created_at" | "property_images">>;

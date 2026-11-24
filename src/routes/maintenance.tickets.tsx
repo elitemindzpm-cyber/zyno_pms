@@ -8,11 +8,11 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Loader2, RefreshCw } from "lucide-react";
 import {
-  supabase,
+  db,
   fetchMaintenanceTickets,
   updateMaintenanceTicket,
   type MaintenanceTicket,
-} from "@/lib/supabase";
+} from "@/lib/db";
 import {
   fetchInventoryParts,
   fetchMaterialUsage,
@@ -20,7 +20,7 @@ import {
   createApprovalRequest,
   type InventoryPart,
   type MaterialUsage,
-} from "@/lib/supabase";
+} from "@/lib/db";
 
 export const Route = createFileRoute("/maintenance/tickets")({
   component: HostMaintenance,
@@ -111,7 +111,7 @@ function HostMaintenance() {
     load();
 
     // Real-time subscription
-    const channel = supabase
+    const channel = db
       .channel("maintenance_tickets_changes")
       .on(
         "postgres_changes",
@@ -131,7 +131,7 @@ function HostMaintenance() {
       .subscribe();
 
     return () => {
-      supabase.removeChannel(channel);
+      db.removeChannel(channel);
     };
   }, [load]);
 

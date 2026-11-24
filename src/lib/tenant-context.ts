@@ -1,5 +1,7 @@
-import type { User } from "@supabase/supabase-js";
-import type { Profile } from "@/lib/supabase";
+import type { Profile } from "@/lib/db";
+
+// Minimal auth user shape (the app authenticates through its own API, not a third-party auth service).
+type User = { id?: string; email?: string | null; user_metadata?: Record<string, any> | null; [key: string]: any };
 
 export type TenantScopedRole = Extract<Profile["role"], "ADMIN" | "HOST" | "PROP_MGR" | "LEASING" | "FINANCE" | "CASHIER" | "MAINTENANCE">;
 

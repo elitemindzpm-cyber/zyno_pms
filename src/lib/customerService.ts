@@ -1,4 +1,4 @@
-import { supabase, type Customer } from "./supabase";
+import { db, type Customer } from "./db";
 
 /**
  * Check if a customer with the given identifiers already exists.
@@ -28,7 +28,7 @@ export async function checkDuplicateCustomer(customerData: Partial<Customer>): P
     return false;
   }
 
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from("customers")
     .select("id")
     .or(duplicateClauses.join(","))
@@ -46,7 +46,7 @@ export async function checkDuplicateCustomer(customerData: Partial<Customer>): P
  * Create or upsert a customer in customers table.
  */
 export async function createCustomer(customer: Customer): Promise<Customer> {
-  const { data, error } = await supabase
+  const { data, error } = await db
     .from("customers")
     .upsert(customer)
     .select()

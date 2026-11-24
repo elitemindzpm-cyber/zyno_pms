@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 /**
  * One-time removal of the September 2026 test transactions: work orders WO-2026-001 and WO-2026-003, the two
  * contractor invoices raised against them, the payment receipt and settlement voucher for the paid one, and the
@@ -9,7 +10,7 @@
  * `pms_legacy_purge_backup_v1` first, so it can be restored. Runs once per browser; the database delete repeats
  * until it succeeds.
  */
-import { supabase } from "./supabase";
+import { db } from "./db";
 
 const INVOICE_NOS = ["INV-CARRIER-2026-081", "INV-ALMANA-4482"];
 const WORK_ORDERS = ["WO-2026-001", "WO-2026-003"];
@@ -28,7 +29,7 @@ const mentionsLegacy = (value: unknown): boolean => {
 
 function readList(key: string): any[] | null {
   try {
-    const raw = localStorage.getItem(key);
+    const raw = kvStore.getItem(key);
     if (!raw) return null;
     const parsed = JSON.parse(raw);
     return Array.isArray(parsed) ? parsed : null;
@@ -45,7 +46,7 @@ function purgeLocal(): void {
     const kept = list.filter((item) => !isLegacy(item));
     if (kept.length !== list.length) {
       removed[key] = list.filter(isLegacy);
-      localStorage.setItem(key, JSON.stringify(kept));
+      kvStore.setItem(key, JSON.stringify(kept));
     }
   };
 
@@ -64,13 +65,13 @@ function purgeLocal(): void {
   // Partial-payment markers are keyed by invoice id, which the cleaned invoice list no longer has.
   try {
     const known = new Set((readList("proc_ap_invoices_cache_v2") || []).map((i) => String(i?.id)));
-    for (let i = localStorage.length - 1; i >= 0; i--) {
-      const k = localStorage.key(i) || "";
+    for (let i = kvStore.length - 1; i >= 0; i--) {
+      const k = kvStore.key(i) || "";
       if (k.startsWith("partial_paid_") && !known.has(k.replace("partial_paid_", ""))) {
-        const v = localStorage.getItem(k);
+        const v = kvStore.getItem(k);
         if (v && Number(v) > 0) {
           (removed["partial_paid"] ||= []).push({ key: k, value: v });
-          localStorage.removeItem(k);
+          kvStore.removeItem(k);
         }
       }
     }
@@ -80,13 +81,13 @@ function purgeLocal(): void {
 
   if (Object.keys(removed).length > 0) {
     try {
-      localStorage.setItem(BACKUP_KEY, JSON.stringify({ removedAt: new Date().toISOString(), removed }));
+      kvStore.setItem(BACKUP_KEY, JSON.stringify({ removedAt: new Date().toISOString(), removed }));
     } catch {
       // backup is best-effort
     }
     console.info("[purge] removed legacy test transactions from this browser:", Object.fromEntries(Object.entries(removed).map(([k, v]) => [k, v.length])));
   }
-  localStorage.setItem(LOCAL_DONE_KEY, "1");
+  kvStore.setItem(LOCAL_DONE_KEY, "1");
 }
 
 async function purgeDatabase(): Promise<void> {
@@ -96,8 +97,8 @@ async function purgeDatabase(): Promise<void> {
       ...INVOICE_NOS.map((n) => `description.ilike.%${n}%`),
       ...WORK_ORDERS.map((w) => `description.ilike.%${w}%`),
     ].join(",");
-    const { error } = await supabase.from("fin_vouchers").delete().or(filters);
-    if (!error) localStorage.setItem(DB_DONE_KEY, "1");
+    const { error } = await db.from("fin_vouchers").delete().or(filters);
+    if (!error) kvStore.setItem(DB_DONE_KEY, "1");
   } catch {
     // try again on the next load
   }
@@ -105,8 +106,8 @@ async function purgeDatabase(): Promise<void> {
 
 if (typeof window !== "undefined") {
   try {
-    if (!localStorage.getItem(LOCAL_DONE_KEY)) purgeLocal();
-    if (!localStorage.getItem(DB_DONE_KEY)) void purgeDatabase();
+    if (!kvStore.getItem(LOCAL_DONE_KEY)) purgeLocal();
+    if (!kvStore.getItem(DB_DONE_KEY)) void purgeDatabase();
   } catch {
     // storage unavailable; nothing to purge
   }

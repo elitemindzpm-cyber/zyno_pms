@@ -6,7 +6,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { getLandingRouteForRole } from "@/lib/console-config";
 import { clearDemoSession } from "@/lib/demo-auth";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { toast } from "sonner";
 import {
   Loader2,
@@ -30,9 +30,9 @@ import {
 export const Route = createFileRoute("/auth")({
   beforeLoad: async () => {
     try {
-      const { data } = await supabase.auth.getSession();
+      const { data } = await db.auth.getSession();
       if (data?.session?.user) {
-        const { data: profile } = await supabase
+        const { data: profile } = await db
           .from("profiles")
           .select("role")
           .eq("id", data.session.user.id)
@@ -67,7 +67,7 @@ function AuthPage() {
     setLoading(true);
     try {
       const redirectUrl = `${window.location.origin}/reset-password`;
-      const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
+      const { error } = await db.auth.resetPasswordForEmail(email.trim(), {
         redirectTo: redirectUrl,
       });
 
@@ -98,7 +98,7 @@ function AuthPage() {
 
     try {
       clearDemoSession();
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { data, error } = await db.auth.signInWithPassword({
         email: trimmedIdentifier,
         password: trimmedPassword,
       });
@@ -107,7 +107,7 @@ function AuthPage() {
 
       toast.success("Successfully signed in");
       
-      const { data: profile } = await supabase
+      const { data: profile } = await db
         .from('profiles')
         .select('role')
         .eq('id', data.user.id)

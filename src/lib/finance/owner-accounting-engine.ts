@@ -10,7 +10,7 @@
  *   6. Owner Statement & Balance Reconciliations
  */
 
-import { supabase } from '../supabase';
+import { db } from '../db';
 import { resolveAccountingAccounts, normalizeUuid } from './account-resolver';
 import { postVoucher, type PostingResult } from './posting-engine';
 
@@ -222,7 +222,7 @@ export async function generateOwnerStatementSummary(
   ownerId: string,
   propertyId: string,
 ): Promise<OwnerStatementSummary> {
-  const { data: lines, error } = await supabase
+  const { data: lines, error } = await db
     .from('fin_voucher_lines')
     .select('account_code, debit_amount, credit_amount, description')
     .eq('property_id', propertyId);

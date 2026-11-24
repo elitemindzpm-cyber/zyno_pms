@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useSearch } from "@tanstack/react-router";
 import { useState, useMemo, useRef, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -84,7 +84,8 @@ const MODULES: { key: ImportModule; label: string; icon: any; description: strin
 ];
 
 export function AdminExcelImportPage() {
-  const searchParams = Route.useSearch?.() || {};
+  // strict:false so this also works when rendered from another route (prop-mgr.imports)
+  const searchParams = (useSearch({ strict: false }) || {}) as { module?: string; op?: string };
   const initialModule = (searchParams.module as ImportModule) || "property";
   const initialOp = (searchParams.op as ImportOperation) || "CREATE";
 

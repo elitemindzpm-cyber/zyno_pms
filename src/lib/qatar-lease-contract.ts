@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 /**
  * QATAR BILINGUAL LEASE CONTRACT TEMPLATE (عقد إيجار ثنائي اللغة - دولة قطر)
  * 
@@ -414,11 +415,11 @@ function toArabicTenantName(raw: string): string {
  * Builds full dynamic contract data matching the specific tenant and property
  */
 export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseContractData {
-  // 0. Check localStorage overrides if available in browser
+  // 0. Check kvStore overrides if available in browser
   let localOverride: any = null;
   try {
     if (typeof window !== 'undefined') {
-      const stored = JSON.parse(localStorage.getItem('pms_custom_lease_overrides') || '{}');
+      const stored = JSON.parse(kvStore.getItem('pms_custom_lease_overrides') || '{}');
       const uKey = (raw.unit || raw.unit_ref || raw.propertyUnitNumber || raw.unit_code || raw.unit_name || '').toString().toUpperCase().trim();
       localOverride = stored[raw.id] || (raw.lease_number ? stored[raw.lease_number] : null) || (raw.contractNumber ? stored[raw.contractNumber] : null) || (uKey ? stored[uKey] : null);
     }

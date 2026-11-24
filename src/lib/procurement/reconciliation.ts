@@ -1,4 +1,4 @@
-import { supabase } from '../supabase';
+import { db } from '../db';
 
 export type ProcurementReconciliation = {
   po_id: string;
@@ -29,13 +29,13 @@ export type ProcurementAuditRow = {
 };
 
 export async function reconcilePurchaseOrder(poId: string): Promise<ProcurementReconciliation> {
-  const { data, error } = await supabase.rpc('proc_reconcile_po', { p_po_id: poId });
+  const { data, error } = await db.rpc('proc_reconcile_po', { p_po_id: poId });
   if (error) throw error;
   return data as ProcurementReconciliation;
 }
 
 export async function getProcurementAuditLog(table: string, entityId: string, limit = 50): Promise<ProcurementAuditRow[]> {
-  const { data, error } = await supabase.rpc('proc_get_audit_log', {
+  const { data, error } = await db.rpc('proc_get_audit_log', {
     p_entity_table: table,
     p_entity_id: entityId,
     p_limit: limit,

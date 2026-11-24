@@ -9,7 +9,7 @@ import { Label } from "@/components/ui/label";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Users, Plus, RefreshCw, CheckCircle2, ArrowDownUp, Landmark, ShieldCheck, Loader2 } from "lucide-react";
 import { toast } from "sonner";
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 import { syncPayrollRun, type PayrollSyncPayload } from "@/lib/finance/payrollIntegrationService";
 import { useFinanceStore } from "@/lib/finance/finance-store";
 
@@ -41,7 +41,7 @@ export function PayrollSync() {
     setLoading(true);
     try {
       // Just ping to set loading off; data comes from FinanceStore
-      await supabase.from('fin_payroll_syncs').select('id').limit(1);
+      await db.from('fin_payroll_syncs').select('id').limit(1);
     } catch {
       // Keep state
     } finally {

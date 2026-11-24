@@ -1,15 +1,16 @@
+import { kvStore } from "@/lib/kv-store";
 /**
  * security.ts — Production Security Service
  *
  * Handles:
- *  - Persistent security audit log (Supabase DB + LocalStorage + in-memory fallback)
+ *  - Persistent security audit log (DB DB + LocalStorage + in-memory fallback)
  *  - Input sanitisation (XSS prevention)
  *  - Rate limiting (client-side token bucket)
  *  - CSRF guard for server-bound mutation requests
  *  - Content Security Policy (CSP) header helper
  */
 
-import { supabase } from "@/lib/supabase";
+import { db } from "@/lib/db";
 
 // ─── Types ───────────────────────────────────────────────────────────────────
 
@@ -41,7 +42,7 @@ const STORAGE_KEY = "pms_security_audit_logs";
 function getLocalAuditLogs(): SecurityAuditLog[] {
   if (typeof window === "undefined") return [];
   try {
-    const raw = localStorage.getItem(STORAGE_KEY);
+    const raw = kvStore.getItem(STORAGE_KEY);
     if (!raw) return [];
     return JSON.parse(raw);
   } catch {
@@ -54,9 +55,9 @@ function saveLocalAuditLog(record: SecurityAuditLog) {
   try {
     const existing = getLocalAuditLogs();
     const updated = [record, ...existing.filter(r => r.id !== record.id)].slice(0, 300);
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+    kvStore.setItem(STORAGE_KEY, JSON.stringify(updated));
   } catch (e) {
-    console.warn("Could not save to localStorage audit store", e);
+    console.warn("Could not save to kvStore audit store", e);
   }
 }
 
@@ -74,16 +75,16 @@ export async function logSecurityEvent(
     user_agent: typeof navigator !== "undefined" ? navigator.userAgent : undefined,
   };
 
-  // Always push to in-memory log & localStorage
+  // Always push to in-memory log & kvStore
   _memoryLog.unshift(record);
   if (_memoryLog.length > 300) _memoryLog.pop();
   saveLocalAuditLog(record);
 
-  // Best-effort persist to Supabase
+  // Best-effort persist to Db
   try {
-    const { error } = await supabase.from("security_audit_logs").insert(record);
+    const { error } = await db.from("security_audit_logs").insert(record);
     if (error) {
-      console.warn("Supabase security_audit_logs table unavailable or restricted by RLS; saved to local audit trail store.", error.message);
+      console.warn("DB security_audit_logs table unavailable or restricted by RLS; saved to local audit trail store.", error.message);
     }
   } catch (err) {
     console.warn("Audit log DB insert skipped", err);
@@ -94,7 +95,7 @@ export async function fetchSecurityAuditLogs(): Promise<SecurityAuditLog[]> {
   const localLogs = getLocalAuditLogs();
   
   try {
-    const { data, error } = await supabase
+    const { data, error } = await db
       .from("security_audit_logs")
       .select("*")
       .order("timestamp", { ascending: false })
@@ -104,7 +105,7 @@ export async function fetchSecurityAuditLogs(): Promise<SecurityAuditLog[]> {
       return localLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
     }
 
-    // Merge Supabase logs with local logs
+    // Merge DB logs with local logs
     const mergedMap = new Map<string, SecurityAuditLog>();
     data.forEach((d: SecurityAuditLog) => mergedMap.set(d.id || d.timestamp, d));
     localLogs.forEach((l: SecurityAuditLog) => mergedMap.set(l.id || l.timestamp, l));
@@ -119,11 +120,11 @@ export async function fetchSecurityAuditLogs(): Promise<SecurityAuditLog[]> {
 
 export async function clearSecurityAuditLogs(): Promise<void> {
   if (typeof window !== "undefined") {
-    localStorage.removeItem(STORAGE_KEY);
+    kvStore.removeItem(STORAGE_KEY);
   }
   _memoryLog.length = 0;
   try {
-    await supabase.from("security_audit_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+    await db.from("security_audit_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000");
   } catch (err) {
     console.warn("Could not delete from security_audit_logs table", err);
   }
@@ -209,18 +210,18 @@ export function checkRateLimit(key: string, limit: number = DEFAULT_LIMIT): bool
 // ─── Session Validation ──────────────────────────────────────────────────────
 
 /**
- * Validate that the current Supabase session is fresh and not expired.
+ * Validate that the current DB session is fresh and not expired.
  * Returns the session or null.
  */
 export async function validateSession() {
   try {
-    const { data, error } = await supabase.auth.getSession();
+    const { data, error } = await db.auth.getSession();
     if (error || !data.session) return null;
 
     const expiresAt = data.session.expires_at ?? 0;
     if (Date.now() / 1000 > expiresAt) {
-      await supabase.auth.refreshSession();
-      const { data: refreshed } = await supabase.auth.getSession();
+      await db.auth.refreshSession();
+      const { data: refreshed } = await db.auth.getSession();
       return refreshed.session;
     }
 

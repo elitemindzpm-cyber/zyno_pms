@@ -1,3 +1,4 @@
+import { kvStore } from "@/lib/kv-store";
 import React, { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
@@ -86,7 +87,7 @@ export function ProformaInvoiceDialog({
   const baseAmount = totalAmount - taxAmount > 0 ? totalAmount - taxAmount : totalAmount;
   
   // Calculate paid & outstanding
-  const localPaid = Number(localStorage.getItem(`partial_paid_${invoice.id}`) || "0");
+  const localPaid = Number(kvStore.getItem(`partial_paid_${invoice.id}`) || "0");
   const alreadyPaid = Number(invoice.amount_paid ?? (invoice.status === "PAID" || invoice.status === "Paid" ? totalAmount : localPaid));
   const outstanding = Math.max(0, totalAmount - alreadyPaid);
   const isPaid = (invoice.status === "PAID" || invoice.status === "Paid" || outstanding <= 0.01) && totalAmount > 0;
