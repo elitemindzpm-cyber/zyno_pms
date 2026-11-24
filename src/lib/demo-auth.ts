@@ -116,6 +116,7 @@ export function getDemoSession() {
 
 export function clearDemoSession() {
   if (typeof window === "undefined") return;
+  if (!kvStore.getItem(DEMO_SESSION_KEY)) return;
   kvStore.removeItem(DEMO_SESSION_KEY);
 }
 
