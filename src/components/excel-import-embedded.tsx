@@ -71,7 +71,11 @@ interface ExcelImportEmbeddedProps {
   description?: string;
   onCompleted?: () => void;
   hideHistory?: boolean;
+  /** Operations offered as tabs. Defaults to CREATE, UPDATE and DELETE. */
+  operations?: ImportOperation[];
 }
+
+const ALL_OPERATIONS: ImportOperation[] = ["CREATE", "UPDATE", "DELETE"];
 
 export function ExcelImportEmbedded({
   module,
@@ -80,6 +84,7 @@ export function ExcelImportEmbedded({
   description,
   onCompleted,
   hideHistory = false,
+  operations = ALL_OPERATIONS,
 }: ExcelImportEmbeddedProps) {
   const [selectedOperation, setSelectedOperation] = useState<ImportOperation>(defaultOperation);
   
@@ -354,10 +359,16 @@ export function ExcelImportEmbedded({
           onValueChange={(val) => !isBusy && handleOperationChange(val as ImportOperation)}
           className="w-full"
         >
-          <TabsList className="grid w-full grid-cols-3 max-w-md">
-            <TabsTrigger value="CREATE" disabled={isBusy} className="text-xs font-medium">CREATE (New)</TabsTrigger>
-            <TabsTrigger value="UPDATE" disabled={isBusy} className="text-xs font-medium">UPDATE (Modify)</TabsTrigger>
-            <TabsTrigger value="DELETE" disabled={isBusy} className="text-xs font-medium text-destructive">DELETE (Remove)</TabsTrigger>
+          <TabsList className="grid w-full max-w-md" style={{ gridTemplateColumns: `repeat(${operations.length}, minmax(0, 1fr))` }}>
+            {operations.includes("CREATE") && (
+              <TabsTrigger value="CREATE" disabled={isBusy} className="text-xs font-medium">CREATE (New)</TabsTrigger>
+            )}
+            {operations.includes("UPDATE") && (
+              <TabsTrigger value="UPDATE" disabled={isBusy} className="text-xs font-medium">UPDATE (Modify)</TabsTrigger>
+            )}
+            {operations.includes("DELETE") && (
+              <TabsTrigger value="DELETE" disabled={isBusy} className="text-xs font-medium text-destructive">DELETE (Remove)</TabsTrigger>
+            )}
           </TabsList>
         </Tabs>
       )}

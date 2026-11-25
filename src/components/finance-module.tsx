@@ -37,6 +37,7 @@ import {
   type FinPostingPeriod, type FinBank, type FinBankAccount, type FinBankReconciliation, type FinContract
 } from "@/lib/db-finance";
 import { toast } from "sonner";
+import { ExcelImportEmbedded } from "@/components/excel-import-embedded";
 import { useAppData } from "@/lib/app-data-context";
 import { PdcManagement } from "./finance/pdc-management";
 import { DepositsGuarantees } from "./finance/deposits-guarantees";
@@ -1793,6 +1794,7 @@ function ChartOfAccountsSubModule() {
 
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'tree' | 'master' | 'units' | 'properties'>('tree');
+  const [bulkCoaOpen, setBulkCoaOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
@@ -2147,11 +2149,29 @@ function ChartOfAccountsSubModule() {
             </button>
           </div>
 
+          <Button variant="outline" size="sm" onClick={() => setBulkCoaOpen(true)} className="gap-2">
+            <FileSpreadsheet className="h-4 w-4" /> Bulk Upload (Excel)
+          </Button>
           <Button size="sm" onClick={() => setOpen(true)} className="gap-2">
             <Plus className="h-4 w-4" /> Add Account
           </Button>
         </div>
       </div>
+
+      {/* MODAL: BULK COA IMPORT (5-tier TYPE > GROUP > CLASS > GL > SL) */}
+      <Dialog open={bulkCoaOpen} onOpenChange={setBulkCoaOpen}>
+        <DialogContent className="max-w-6xl max-h-[92vh] overflow-y-auto bg-card p-6">
+          <ExcelImportEmbedded
+            module="coa"
+            operations={["CREATE"]}
+            title="Chart of Accounts: Excel Bulk Upload"
+            description="Upload SL (posting) accounts with their TYPE, GROUP, CLASS and GL parents. Missing parents are created automatically; existing parents are reused."
+            onCompleted={() => {
+              loadData();
+            }}
+          />
+        </DialogContent>
+      </Dialog>
 
       <div className="flex flex-col sm:flex-row gap-3 items-center justify-between">
         <div className="relative w-full sm:w-80">
