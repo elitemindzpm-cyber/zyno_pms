@@ -149,3 +149,6 @@ scratch/
 
 # Credential exports - never commit
 *_CREDENTIALS.csv
+
+# Local DB backups (contain personal data and password hashes)
+backups/
