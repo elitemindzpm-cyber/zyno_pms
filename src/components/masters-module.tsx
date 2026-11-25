@@ -12,11 +12,13 @@ import {
   Plus, Trash2, Pencil, Search, Users, Package, Building2, DoorOpen, FileSignature, ShieldCheck
 } from "lucide-react";
 import {
+  DYNAMIC_MASTERS_UPDATED_EVENT,
   DynamicMastersService,
   MASTER_DEFINITIONS,
   MasterEntry,
   MasterGroupDefinition,
 } from "@/lib/dynamic-masters-service";
+import { HrmsMastersApi } from "@/lib/hrmsMastersService";
 import { toast } from "sonner";
 
 export interface MastersModuleProps {
@@ -337,7 +339,14 @@ export function MastersModule({ role }: MastersModuleProps) {
 
   useEffect(() => {
     refreshActive();
+    void DynamicMastersService.initFromDb().then(() => refreshActive());
   }, [activeKey, refreshActive]);
+
+  useEffect(() => {
+    const handleUpdate = () => refreshActive();
+    window.addEventListener(DYNAMIC_MASTERS_UPDATED_EVENT, handleUpdate);
+    return () => window.removeEventListener(DYNAMIC_MASTERS_UPDATED_EVENT, handleUpdate);
+  }, [refreshActive]);
 
   const availableRoles = useMemo(
     () => roleMasterItems.map(r => r.name),
@@ -351,7 +360,7 @@ export function MastersModule({ role }: MastersModuleProps) {
       <div>
         <h1 className="text-3xl font-bold tracking-tight">Masters &amp; Configuration</h1>
         <p className="text-sm text-muted-foreground mt-1">
-          Configure dynamic master reference values for Properties, Units, Assets, and Employees with full Excel sync and mandatory controls.
+          Configure dynamic master reference values for Properties, Units, Customers &amp; Leases, Assets, and Employees with full Excel sync and mandatory controls.
         </p>
       </div>
 
@@ -391,18 +400,41 @@ export function MastersModule({ role }: MastersModuleProps) {
                     } else {
                       DynamicMastersService.addMasterValue(activeDef.key, name);
                     }
+                    if (activeDef.key === "department") {
+                      void HrmsMastersApi.ensureSqlMaster("departments", name);
+                    } else if (activeDef.key === "designation") {
+                      void HrmsMastersApi.ensureSqlMaster("designations", name);
+                    } else if (typeof window !== "undefined") {
+                      window.dispatchEvent(new CustomEvent("hrms_masters_updated", { detail: { categoryKey: activeDef.key } }));
+                    }
                     refreshActive();
                   }}
                   onEdit={(id, name, roles) => {
+                    const prevItem = items.find((i) => i.id === id);
                     if (activeDef.supportsRoles) {
                       DynamicMastersService.updateMasterValueRoles(activeDef.key, id, name, roles);
                     } else {
                       DynamicMastersService.updateMasterValue(activeDef.key, id, name);
                     }
+                    if (activeDef.key === "department" && prevItem) {
+                      void HrmsMastersApi.renameSqlMaster("departments", prevItem.name, name);
+                    } else if (activeDef.key === "designation" && prevItem) {
+                      void HrmsMastersApi.renameSqlMaster("designations", prevItem.name, name);
+                    } else if (typeof window !== "undefined") {
+                      window.dispatchEvent(new CustomEvent("hrms_masters_updated", { detail: { categoryKey: activeDef.key } }));
+                    }
                     refreshActive();
                   }}
                   onDelete={(id) => {
+                    const prevItem = items.find((i) => i.id === id);
                     DynamicMastersService.deleteMasterValue(activeDef.key, id);
+                    if (activeDef.key === "department" && prevItem) {
+                      void HrmsMastersApi.deleteSqlMasterByName("departments", prevItem.name);
+                    } else if (activeDef.key === "designation" && prevItem) {
+                      void HrmsMastersApi.deleteSqlMasterByName("designations", prevItem.name);
+                    } else if (typeof window !== "undefined") {
+                      window.dispatchEvent(new CustomEvent("hrms_masters_updated", { detail: { categoryKey: activeDef.key } }));
+                    }
                     refreshActive();
                   }}
                 />

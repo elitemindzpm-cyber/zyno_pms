@@ -126,6 +126,7 @@ export async function generateTemplateWorkbook(module: ImportModule, operation: 
   const allMasterKeys: (keyof typeof masterOptions)[] = [
     'propertyTypes', 'propertyCategories', 'ownershipTypes', 'propertyStatuses',
     'unitTypes', 'unitUsages', 'viewTypes', 'furnishingTypes', 'unitStatuses', 'leaseStatuses', 'rentFrequencies', 'maintenanceResponsibilities', 'securityDepositTypes',
+    'nationalities', 'professions', 'agreementTypes', 'customerTypes',
     'genders', 'departments', 'designations', 'employmentTypes', 'workLocations', 'employeeStatuses',
     'assetCategories', 'assetSubcategories', 'assetOwnershipTypes', 'assetConditions', 'assetStatuses',
   ];

@@ -250,8 +250,15 @@ export const MASTER_DEFINITIONS: MasterGroupDefinition[] = [
 
 const LOCAL_STORAGE_KEY = 'zyno_custom_dynamic_masters_v1';
 const MANDATORY_FLAGS_KEY = 'zyno_master_mandatory_flags_v1';
+export const DYNAMIC_MASTERS_UPDATED_EVENT = 'zyno:dynamic-masters-updated';
 
 export class DynamicMastersService {
+  private static notifyUpdated(): void {
+    if (typeof window !== 'undefined') {
+      window.dispatchEvent(new CustomEvent(DYNAMIC_MASTERS_UPDATED_EVENT));
+    }
+  }
+
   private static getStoredData(): Record<string, MasterEntry[]> {
     if (typeof window === 'undefined') return {};
     try {
@@ -267,6 +274,7 @@ export class DynamicMastersService {
     try {
       kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(data));
       void setDbState(LOCAL_STORAGE_KEY, data);
+      this.notifyUpdated();
     } catch (e) {
       console.error('Error saving dynamic masters:', e);
     }
@@ -289,6 +297,7 @@ export class DynamicMastersService {
     try {
       kvStore.setItem(MANDATORY_FLAGS_KEY, JSON.stringify(flags));
       void setDbState(MANDATORY_FLAGS_KEY, flags);
+      this.notifyUpdated();
     } catch {}
   }
 
@@ -304,6 +313,7 @@ export class DynamicMastersService {
       if (dbFlags && Object.keys(dbFlags).length > 0) {
         kvStore.setItem(MANDATORY_FLAGS_KEY, JSON.stringify(dbFlags));
       }
+      this.notifyUpdated();
     } catch {}
   }
 

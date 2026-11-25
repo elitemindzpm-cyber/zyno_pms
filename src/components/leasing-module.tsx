@@ -24,7 +24,7 @@ import { useAppData } from "@/lib/app-data-context";
 import { buildUnitTenantCustomers } from "@/lib/unit-tenant-customers";
 import { fetchAssets, updateAsset, db, type Asset as DbAsset } from "@/lib/db";
 import { getTodayIST, getCurrentISTDate, formatDateDDMMYYYY } from "@/lib/date-utils";
-import { DynamicMastersService } from "@/lib/dynamic-masters-service";
+import { DYNAMIC_MASTERS_UPDATED_EVENT, DynamicMastersService } from "@/lib/dynamic-masters-service";
 import { DEFAULT_COMPANY_BANK_ACCOUNTS } from "@/lib/finance/bankAccounts";
 import { HrmsApi } from "@/lib/hrmsService";
 import {
@@ -3556,19 +3556,27 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     });
   }
 
+  const [mastersVersion, setMastersVersion] = useState(0);
+
+  useEffect(() => {
+    const handleMastersUpdated = () => setMastersVersion((v) => v + 1);
+    window.addEventListener(DYNAMIC_MASTERS_UPDATED_EVENT, handleMastersUpdated);
+    return () => window.removeEventListener(DYNAMIC_MASTERS_UPDATED_EVENT, handleMastersUpdated);
+  }, []);
+
   const nationalityOptions = useMemo(() => {
     return DynamicMastersService.getMasterStringOptions("nationality").map((name) => ({
       label: name,
       value: name,
     }));
-  }, []);
+  }, [mastersVersion]);
 
   const professionOptions = useMemo(() => {
     return DynamicMastersService.getMasterStringOptions("profession").map((name) => ({
       label: name,
       value: name,
     }));
-  }, []);
+  }, [mastersVersion]);
 
   function isCustomerDuplicate(form: Omit<Customer, "id" | "status">, excludeId?: string) {
     const isCompany = form.type === "company";

@@ -28,9 +28,13 @@ export interface MasterOptionsCache {
   assetStatuses: string[];
   countries: string[];
   securityDepositTypes: string[];
+  nationalities: string[];
+  professions: string[];
+  agreementTypes: string[];
 }
 
 export async function getMasterOptions(): Promise<MasterOptionsCache> {
+  const configuredCustomerTypes = DynamicMastersService.getMasterStringOptions('customer_type');
   return {
     propertyTypes: DynamicMastersService.getMasterStringOptions('property_type'),
     propertyCategories: DynamicMastersService.getMasterStringOptions('property_category'),
@@ -44,7 +48,7 @@ export async function getMasterOptions(): Promise<MasterOptionsCache> {
     leaseStatuses: DynamicMastersService.getMasterStringOptions('lease_status'),
     rentFrequencies: DynamicMastersService.getMasterStringOptions('rent_frequency'),
     maintenanceResponsibilities: DynamicMastersService.getMasterStringOptions('maintenance_responsibility'),
-    customerTypes: ['Individual', 'Company'],
+    customerTypes: configuredCustomerTypes.length > 0 ? configuredCustomerTypes : ['Individual', 'Company'],
     verificationStatuses: ['Pending', 'Verified', 'Rejected', 'Additional Info Required'],
     genders: DynamicMastersService.getMasterStringOptions('gender'),
     departments: DynamicMastersService.getMasterStringOptions('department'),
@@ -59,5 +63,8 @@ export async function getMasterOptions(): Promise<MasterOptionsCache> {
     assetStatuses: DynamicMastersService.getMasterStringOptions('asset_status'),
     countries: DynamicMastersService.getMasterStringOptions('country'),
     securityDepositTypes: DynamicMastersService.getMasterStringOptions('security_deposit_type'),
+    nationalities: DynamicMastersService.getMasterStringOptions('nationality'),
+    professions: DynamicMastersService.getMasterStringOptions('profession'),
+    agreementTypes: DynamicMastersService.getMasterStringOptions('agreement_type'),
   };
 }

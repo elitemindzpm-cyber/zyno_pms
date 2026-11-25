@@ -1002,6 +1002,18 @@ const consoleConfigs: Record<ConsoleKey, ConsoleConfig> = {
             ],
           },
           {
+            group: "Customer & Lease Masters",
+            icon: <FileSignature className="h-3.5 w-3.5" />,
+            color: "text-teal-500",
+            bg: "bg-teal-500/10",
+            items: [
+              { to: "/admin/masters", search: { tab: "nationality" }, label: "Nationality", icon: <Globe className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "profession" }, label: "Profession", icon: <Award className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "agreement_type" }, label: "Agreement / Lease Type", icon: <FileSignature className="h-3.5 w-3.5" /> },
+              { to: "/admin/masters", search: { tab: "customer_type" }, label: "Customer / Tenant Type", icon: <Users className="h-3.5 w-3.5" /> },
+            ],
+          },
+          {
             group: "Admin & Operations",
             icon: <ShieldCheck className="h-3.5 w-3.5" />,
             color: "text-rose-500",
