@@ -3,6 +3,7 @@
 import { Router, Request, Response } from 'express';
 import prisma from '../lib/prisma';
 import { tenantMiddleware, parsePagination, paginatedResponse } from '../lib/middleware';
+import { dbAllowed } from '../lib/db-policy';
 
 const router = Router();
 router.use(tenantMiddleware);
@@ -59,6 +60,246 @@ router.get('/coa', async (_req: Request, res: Response) => {
     });
     res.json({ data });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Create 5-Tier Chart of Account (TYPE -> GROUP -> CLASS -> GL -> SL)
+router.post('/coa', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'coa_sl', 'write')) {
+      return res.status(403).json({ error: 'Not authorized to create Chart of Accounts entries' });
+    }
+
+    const body = req.body || {};
+    const type_code = String(body.type_code ?? '').trim();
+    const type_name = String(body.type_name ?? '').trim();
+    const group_code = String(body.group_code ?? '').trim();
+    const group_name = String(body.group_name ?? '').trim();
+    const class_code = String(body.class_code ?? '').trim();
+    const class_name = String(body.class_name ?? '').trim();
+    const gl_code = String(body.gl_code ?? '').trim();
+    const gl_name = String(body.gl_name ?? '').trim();
+    const sl_code = String(body.sl_code ?? '').trim();
+    const sl_name = String(body.sl_name ?? '').trim();
+
+    const missing: string[] = [];
+    if (!type_code) missing.push('TYPE');
+    if (!type_name) missing.push('TYPE NAME');
+    if (!group_code) missing.push('GROUP');
+    if (!group_name) missing.push('GROUP NAME');
+    if (!class_code) missing.push('CLASS');
+    if (!class_name) missing.push('CLASS NAME');
+    if (!gl_code) missing.push('GL');
+    if (!gl_name) missing.push('GL NAME');
+    if (!sl_code) missing.push('SL');
+    if (!sl_name) missing.push('SL NAME');
+
+    if (missing.length > 0) {
+      return res.status(400).json({ error: `Missing required COA fields: ${missing.join(', ')}` });
+    }
+
+    const isDebit =
+      type_code.startsWith('1') ||
+      type_code.startsWith('5') ||
+      /asset|expenditure|expense|cost/i.test(type_name);
+    const normalBalance = isDebit ? 'Debit' : 'Credit';
+    const isPnl =
+      type_code.startsWith('4') ||
+      type_code.startsWith('5') ||
+      /revenue|income|expenditure|expense|cost/i.test(type_name);
+    const reportType = isPnl ? 'Profit & Loss' : 'Balance Sheet';
+
+    const result = await prisma.$transaction(async (tx) => {
+      // 1. TYPE
+      let coaType = await tx.coa_types.findUnique({ where: { code: type_code } });
+      if (!coaType) {
+        coaType = await tx.coa_types.create({
+          data: {
+            code: type_code,
+            name: type_name,
+            normal_balance: normalBalance,
+            report_type: reportType,
+            is_active: true,
+          },
+        });
+      }
+
+      // 2. GROUP
+      let coaGroup = await tx.coa_groups.findUnique({ where: { code: group_code } });
+      if (!coaGroup) {
+        coaGroup = await tx.coa_groups.create({
+          data: {
+            type_id: coaType.id,
+            type_code: coaType.code,
+            code: group_code,
+            name: group_name,
+            is_active: true,
+          },
+        });
+      }
+
+      // 3. CLASS
+      let coaClass = await tx.coa_classes.findUnique({ where: { code: class_code } });
+      if (!coaClass) {
+        coaClass = await tx.coa_classes.create({
+          data: {
+            group_id: coaGroup.id,
+            type_id: coaType.id,
+            group_code: coaGroup.code,
+            type_code: coaType.code,
+            code: class_code,
+            name: class_name,
+            is_active: true,
+          },
+        });
+      }
+
+      // 4. GL
+      let coaGl = await tx.coa_gl.findUnique({ where: { code: gl_code } });
+      if (!coaGl) {
+        coaGl = await tx.coa_gl.create({
+          data: {
+            class_id: coaClass.id,
+            group_id: coaGroup.id,
+            type_id: coaType.id,
+            class_code: coaClass.code,
+            group_code: coaGroup.code,
+            type_code: coaType.code,
+            code: gl_code,
+            name: gl_name,
+            normal_balance: coaType.normal_balance || normalBalance,
+            is_active: true,
+          },
+        });
+      }
+
+      // 5. SL
+      const existingSl = await tx.coa_sl.findUnique({ where: { code: sl_code } });
+      if (existingSl) {
+        const err: any = new Error(`Sub-Ledger (SL) code "${sl_code}" already exists (${existingSl.name}).`);
+        err.status = 409;
+        throw err;
+      }
+
+      const coaSl = await tx.coa_sl.create({
+        data: {
+          gl_id: coaGl.id,
+          class_id: coaClass.id,
+          group_id: coaGroup.id,
+          type_id: coaType.id,
+          gl_code: coaGl.code,
+          class_code: coaClass.code,
+          group_code: coaGroup.code,
+          type_code: coaType.code,
+          code: sl_code,
+          name: sl_name,
+          normal_balance: coaGl.normal_balance || coaType.normal_balance || normalBalance,
+          is_active: true,
+        },
+      });
+
+      // 6. Sync erp_chart_of_accounts (ensure parent GL row exists for FK erp_coa_gl_code_fk)
+      const existingErpGl = await tx.erp_chart_of_accounts.findUnique({ where: { code: gl_code } });
+      if (!existingErpGl) {
+        await tx.erp_chart_of_accounts.create({
+          data: {
+            code: gl_code,
+            name: gl_name,
+            type: type_name,
+            type_code,
+            type_name,
+            group_code,
+            group_name,
+            class_code,
+            class_name,
+            gl_code: null,
+            gl_name,
+            sl_code: null,
+            sl_name: null,
+          },
+        });
+      }
+
+      let erpSl = await tx.erp_chart_of_accounts.findUnique({ where: { code: sl_code } });
+      if (!erpSl) {
+        erpSl = await tx.erp_chart_of_accounts.create({
+          data: {
+            code: sl_code,
+            name: sl_name,
+            type: type_name,
+            type_code,
+            type_name,
+            group_code,
+            group_name,
+            class_code,
+            class_name,
+            gl_code: sl_code === gl_code ? null : gl_code,
+            gl_name,
+            sl_code,
+            sl_name,
+          },
+        });
+      } else {
+        erpSl = await tx.erp_chart_of_accounts.update({
+          where: { code: sl_code },
+          data: {
+            name: sl_name,
+            type: type_name,
+            type_code,
+            type_name,
+            group_code,
+            group_name,
+            class_code,
+            class_name,
+            gl_code: sl_code === gl_code ? null : gl_code,
+            gl_name,
+            sl_code,
+            sl_name,
+          },
+        });
+      }
+
+      // 7. Sync fin_coa_accounts (GL parent + SL posting account)
+      let finGl = await tx.fin_coa_accounts.findUnique({ where: { account_code: gl_code } });
+      if (!finGl) {
+        finGl = await tx.fin_coa_accounts.create({
+          data: {
+            account_code: gl_code,
+            account_name: gl_name,
+            account_type: type_name,
+            group_name,
+            class_name,
+            account_level: 'GL',
+            is_active: true,
+          },
+        });
+      }
+
+      let finSl = await tx.fin_coa_accounts.findUnique({ where: { account_code: sl_code } });
+      if (!finSl) {
+        finSl = await tx.fin_coa_accounts.create({
+          data: {
+            account_code: sl_code,
+            account_name: sl_name,
+            account_type: type_name,
+            parent_id: finGl.id,
+            parent_account_id: finGl.id,
+            group_name,
+            class_name,
+            account_level: 'SL',
+            is_active: true,
+          },
+        });
+      }
+
+      return { coaType, coaGroup, coaClass, coaGl, coaSl, erpAccount: erpSl, finAccount: finSl };
+    });
+
+    res.status(201).json({ data: result });
+  } catch (e: any) {
+    const status = e?.status || 500;
+    res.status(status).json({ error: e.message || 'Failed to create Chart of Account' });
+  }
 });
 
 // Posting Engine Compliance View

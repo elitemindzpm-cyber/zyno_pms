@@ -1,7 +1,7 @@
 // src/lib/db.ts
 // REST-backed DB Compatibility Proxy
 // Replaces direct DB calls with Express + Prisma + MariaDB REST endpoints
-import { authApi, dbApi } from './api-client';
+import { authApi, dbApi, request } from './api-client';
 import { hydrateKv, resetKvCache } from './kv-store';
 
 class QueryBuilder<T = any> {
@@ -1896,6 +1896,37 @@ export async function fetchCoaSLByGL(glIdOrCode: string) {
   const { data, error } = await query.order('code');
   if (error) throw error;
   return data as CoaSL[];
+}
+
+export type CreateCoaAccountPayload = {
+  type_code: string;
+  type_name: string;
+  group_code: string;
+  group_name: string;
+  class_code: string;
+  class_name: string;
+  gl_code: string;
+  gl_name: string;
+  sl_code: string;
+  sl_name: string;
+};
+
+export async function createCoaAccount(payload: CreateCoaAccountPayload) {
+  const res = await request<{
+    data: {
+      coaType: CoaType;
+      coaGroup: CoaGroup;
+      coaClass: CoaClass;
+      coaGl: CoaGL;
+      coaSl: CoaSL;
+      erpAccount: ERPChartOfAccount;
+      finAccount: any;
+    };
+  }>('/api/accounting/coa', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return res.data;
 }
 
 export async function createInventoryPart(payload: Omit<InventoryPart, 'id'>) {

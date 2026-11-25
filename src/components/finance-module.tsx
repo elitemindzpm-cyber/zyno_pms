@@ -25,7 +25,7 @@ import {
 import {
   db,
   fetchJournalEntries, fetchARLedgers, fetchGLAccounts,
-  createJournalEntry, createAREntry, settleAREntry, createGLAccount,
+  createJournalEntry, createAREntry, settleAREntry, createGLAccount, createCoaAccount,
   fetchERPChartOfAccounts, fetchUnitCOAs, fetchCoaHierarchyTree, fetchPropertyCoaMappings, fetchCoaSLByGL,
   type JournalEntry, type ARLedger, type GLAccount, type ERPChartOfAccount, type UnitCOA,
   type CoaType, type CoaGroup, type CoaClass, type CoaGL, type CoaSL, type PropertyCoaMapping, type UnitCoaMapping
@@ -1809,8 +1809,59 @@ function ChartOfAccountsSubModule() {
   const [glSLs, setGlSLs] = useState<Record<string, CoaSL[]>>({});
   const [loadingSLs, setLoadingSLs] = useState<Record<string, boolean>>({});
 
+  const emptyCoaForm = {
+    type_code: "",
+    type_name: "",
+    group_code: "",
+    group_name: "",
+    class_code: "",
+    class_name: "",
+    gl_code: "",
+    gl_name: "",
+    sl_code: "",
+    sl_name: "",
+  };
+
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ code: "", name: "", type: "Assets", type_code: "1", group_name: "Current Assets", class_name: "Accounts Receivables", gl_name: "Tenant Receivables" });
+  const [savingCoa, setSavingCoa] = useState(false);
+  const [form, setForm] = useState(emptyCoaForm);
+
+  const defaultCoaTypes = [
+    { code: "1", name: "Assets" },
+    { code: "2", name: "Liabilities" },
+    { code: "3", name: "Capital" },
+    { code: "4", name: "Revenue" },
+    { code: "5", name: "Expenditure" },
+  ];
+
+  const availableTypes = useMemo(() => {
+    if (hierarchyData.types.length > 0) {
+      return hierarchyData.types.map(t => ({ code: t.code, name: t.name }));
+    }
+    return defaultCoaTypes;
+  }, [hierarchyData.types]);
+
+  const availableGroups = useMemo(() => {
+    const tc = form.type_code.trim();
+    return hierarchyData.groups.filter(g => !tc || g.type_code === tc);
+  }, [hierarchyData.groups, form.type_code]);
+
+  const availableClasses = useMemo(() => {
+    const tc = form.type_code.trim();
+    const gc = form.group_code.trim();
+    return hierarchyData.classes.filter(c =>
+      (!tc || c.type_code === tc) && (!gc || c.group_code === gc)
+    );
+  }, [hierarchyData.classes, form.type_code, form.group_code]);
+
+  const availableGls = useMemo(() => {
+    const tc = form.type_code.trim();
+    const gc = form.group_code.trim();
+    const cc = form.class_code.trim();
+    return hierarchyData.gls.filter(g =>
+      (!tc || g.type_code === tc) && (!gc || g.group_code === gc) && (!cc || g.class_code === cc)
+    );
+  }, [hierarchyData.gls, form.type_code, form.group_code, form.class_code]);
 
   useEffect(() => { loadData(); }, []);
 
@@ -1834,34 +1885,33 @@ function ChartOfAccountsSubModule() {
         }
       } catch {}
 
-      // ── Clean Master COA ──
+      // ── Clean Master COA (preserve full 5-tier TYPE -> GROUP -> CLASS -> GL -> SL records) ──
       const masterMap = new Map<string, ERPChartOfAccount>();
       (accs || []).forEach(a => {
-        const glKey = a.gl_code || (a.code && a.code.length >= 5 ? a.code.substring(0, 5) : a.code) || a.name;
-        if (!masterMap.has(glKey)) {
-          masterMap.set(glKey, {
-            ...a,
-            code: a.gl_code || (a.code && a.code.length >= 5 ? `${a.code.substring(0, 5)}0` : a.code),
-            name: a.gl_name || a.name.replace(/\s*-\s*(Tenant|Flat|Unit|Apt|Residence|\d+).*$/i, '').trim(),
-          });
+        const key = a.sl_code || a.code || a.gl_code || a.name;
+        if (!masterMap.has(key)) {
+          masterMap.set(key, a);
         }
       });
       customCoas.forEach(c => {
-        const key = c.code || c.gl_code || c.name;
-        masterMap.set(key, c);
+        const key = c.sl_code || c.code || c.gl_code || c.name;
+        if (!masterMap.has(key)) {
+          masterMap.set(key, c);
+        }
       });
       const cleanMaster = Array.from(masterMap.values());
 
-      // Merge custom accounts into tree.gls so they also show in Hierarchy Tree
+      // Merge any offline custom accounts into tree.gls so they also show in Hierarchy Tree
       const existingGlCodes = new Set((tree.gls || []).map((g: any) => g.code));
       const mergedGls = [...(tree.gls || [])];
       customCoas.forEach(c => {
-        if (c.code && !existingGlCodes.has(c.code)) {
-          existingGlCodes.add(c.code);
+        const glCode = String(c.gl_code || c.code || "");
+        if (glCode && !existingGlCodes.has(glCode)) {
+          existingGlCodes.add(glCode);
           mergedGls.push({
-            id: c.id || `custom-gl-${c.code}`,
-            code: String(c.code || ""),
-            name: String(c.name || c.gl_name || ""),
+            id: c.id || `custom-gl-${glCode}`,
+            code: glCode,
+            name: String(c.gl_name || c.name || ""),
             class_code: String(c.class_code || (tree.classes?.[0]?.code ?? "111")),
             group_code: String(c.group_code || (tree.groups?.[0]?.code ?? "11")),
             type_code: String(c.type_code || "1"),
@@ -1928,69 +1978,108 @@ function ChartOfAccountsSubModule() {
   };
 
   async function handleCreate() {
-    if (!form.code.trim() || !form.name.trim()) {
-      toast.error("Please enter both Account Code and Account Name.");
+    const payload = {
+      type_code: form.type_code.trim(),
+      type_name: form.type_name.trim(),
+      group_code: form.group_code.trim(),
+      group_name: form.group_name.trim(),
+      class_code: form.class_code.trim(),
+      class_name: form.class_name.trim(),
+      gl_code: form.gl_code.trim(),
+      gl_name: form.gl_name.trim(),
+      sl_code: form.sl_code.trim(),
+      sl_name: form.sl_name.trim(),
+    };
+
+    const missing: string[] = [];
+    if (!payload.type_code) missing.push("TYPE");
+    if (!payload.type_name) missing.push("TYPE NAME");
+    if (!payload.group_code) missing.push("GROUP");
+    if (!payload.group_name) missing.push("GROUP NAME");
+    if (!payload.class_code) missing.push("CLASS");
+    if (!payload.class_name) missing.push("CLASS NAME");
+    if (!payload.gl_code) missing.push("GL");
+    if (!payload.gl_name) missing.push("GL NAME");
+    if (!payload.sl_code) missing.push("SL");
+    if (!payload.sl_name) missing.push("SL NAME");
+
+    if (missing.length > 0) {
+      toast.error(`Please fill all required COA fields: ${missing.join(", ")}`);
       return;
     }
+
+    setSavingCoa(true);
     try {
-      const codeTrimmed = form.code.trim();
-      const nameTrimmed = form.name.trim();
-      const typeMap: Record<string, { type_code: string; group_name: string; class_name: string }> = {
-        Assets: { type_code: "1", group_name: "Current Assets", class_name: "General Assets" },
-        Liabilities: { type_code: "2", group_name: "Current Liabilities", class_name: "General Liabilities" },
-        Capital: { type_code: "3", group_name: "Equity & Reserves", class_name: "Owner Capital" },
-        Revenue: { type_code: "4", group_name: "Operating Revenue", class_name: "Rental & Service Income" },
-        Expenditure: { type_code: "5", group_name: "Operating Expenses", class_name: "Direct & Admin Expenses" },
-        Expenses: { type_code: "5", group_name: "Operating Expenses", class_name: "Direct & Admin Expenses" },
-      };
-      const meta = typeMap[form.type] || typeMap.Expenditure;
+      const created = await createCoaAccount(payload);
+
       const newCustomAcc: ERPChartOfAccount = {
-        id: `custom-coa-${Date.now()}`,
-        code: codeTrimmed,
-        name: nameTrimmed,
-        type: (form.type === "Expenses" ? "Expenditure" : form.type) as any,
-        type_code: meta.type_code,
-        group_code: `${meta.type_code}1`,
-        group_name: form.group_name || meta.group_name,
-        class_code: `${meta.type_code}101`,
-        class_name: form.class_name || meta.class_name,
-        gl_code: codeTrimmed,
-        gl_name: nameTrimmed,
-      } as ERPChartOfAccount;
+        id: created?.erpAccount?.id || `custom-coa-${Date.now()}`,
+        code: payload.sl_code,
+        name: payload.sl_name,
+        type: payload.type_name,
+        type_code: payload.type_code,
+        type_name: payload.type_name,
+        group_code: payload.group_code,
+        group_name: payload.group_name,
+        class_code: payload.class_code,
+        class_name: payload.class_name,
+        gl_code: payload.gl_code,
+        gl_name: payload.gl_name,
+        sl_code: payload.sl_code,
+        sl_name: payload.sl_name,
+        created_at: new Date().toISOString(),
+      };
 
       try {
         const rawCustom = kvStore.getItem("fin_custom_coa_accounts_v1");
         const existing: ERPChartOfAccount[] = rawCustom ? JSON.parse(rawCustom) : [];
-        const filtered = existing.filter(a => a.code !== codeTrimmed);
+        const filtered = existing.filter(a => (a.sl_code || a.code) !== payload.sl_code);
         filtered.push(newCustomAcc);
         kvStore.setItem("fin_custom_coa_accounts_v1", JSON.stringify(filtered));
         window.dispatchEvent(new Event("fin_custom_coa_updated"));
       } catch {}
 
-      try {
-        await createGLAccount({ code: codeTrimmed, name_en: nameTrimmed, type: form.type.toLowerCase() as any });
-      } catch {
-        // Persist in kvStore even if remote DB table constraint rejects custom format
-      }
-
-      toast.success(`Ledger Account ${codeTrimmed} - ${nameTrimmed} added to Chart of Accounts!`);
-      setForm({ code: "", name: "", type: "Expenditure", type_code: "5", group_name: "Operating Expenses", class_name: "Direct & Admin Expenses", gl_name: "" });
+      toast.success(`COA Account ${payload.sl_code} - ${payload.sl_name} created under ${payload.type_name} → ${payload.gl_code} ${payload.gl_name}!`);
+      setForm(emptyCoaForm);
       setOpen(false);
+
+      // Expand the newly created hierarchy path & refresh cached SLs for this GL
+      setExpandedNodes(prev => ({
+        ...prev,
+        [`type-${payload.type_code}`]: true,
+        [`group-${payload.group_code}`]: true,
+        [`class-${payload.class_code}`]: true,
+        [`gl-${payload.gl_code}`]: true,
+      }));
       await loadData();
+      try {
+        const freshSls = await fetchCoaSLByGL(payload.gl_code);
+        setGlSLs(prev => ({ ...prev, [payload.gl_code]: freshSls }));
+      } catch {}
     } catch (e: any) {
-      toast.error(e.message || "Failed to create ledger account");
+      toast.error(e.message || "Failed to create Chart of Account");
+    } finally {
+      setSavingCoa(false);
     }
   }
 
   const filteredMaster = erpAccounts.filter(acc => {
-    const matchesType = typeFilter === "all" || (acc.type || "").toLowerCase() === typeFilter.toLowerCase();
+    const typeText = (acc.type_name || acc.type || "").toLowerCase();
+    const matchesType = typeFilter === "all" || typeText === typeFilter.toLowerCase();
     const q = search.toLowerCase();
     const matchesSearch = !search ||
       (acc.code || "").toLowerCase().includes(q) ||
       (acc.name || "").toLowerCase().includes(q) ||
-      (acc.gl_name || "").toLowerCase().includes(q) ||
+      (acc.type_code || "").toLowerCase().includes(q) ||
+      (acc.type_name || "").toLowerCase().includes(q) ||
+      (acc.group_code || "").toLowerCase().includes(q) ||
+      (acc.group_name || "").toLowerCase().includes(q) ||
+      (acc.class_code || "").toLowerCase().includes(q) ||
       (acc.class_name || "").toLowerCase().includes(q) ||
-      (acc.group_name || "").toLowerCase().includes(q);
+      (acc.gl_code || "").toLowerCase().includes(q) ||
+      (acc.gl_name || "").toLowerCase().includes(q) ||
+      (acc.sl_code || "").toLowerCase().includes(q) ||
+      (acc.sl_name || "").toLowerCase().includes(q);
     return matchesType && matchesSearch;
   });
 
@@ -2282,37 +2371,44 @@ function ChartOfAccountsSubModule() {
           </div>
         </div>
       ) : tab === 'master' ? (
-        <div className="border rounded-lg overflow-hidden bg-card">
+        <div className="border rounded-lg overflow-x-auto bg-card">
           <Table>
             <TableHeader>
               <TableRow className="bg-muted/50 text-xs">
-                <TableHead className="font-bold">Code / SL</TableHead>
-                <TableHead className="font-bold">Account Name</TableHead>
-                <TableHead className="font-bold">Type</TableHead>
-                <TableHead className="font-bold">Group</TableHead>
-                <TableHead className="font-bold">Class / GL</TableHead>
+                <TableHead className="font-bold whitespace-nowrap">TYPE</TableHead>
+                <TableHead className="font-bold whitespace-nowrap">TYPE NAME</TableHead>
+                <TableHead className="font-bold whitespace-nowrap">GROUP</TableHead>
+                <TableHead className="font-bold whitespace-nowrap">GROUP NAME</TableHead>
+                <TableHead className="font-bold whitespace-nowrap">CLASS</TableHead>
+                <TableHead className="font-bold whitespace-nowrap">CLASS NAME</TableHead>
+                <TableHead className="font-bold whitespace-nowrap">GL</TableHead>
+                <TableHead className="font-bold whitespace-nowrap">GL NAME</TableHead>
+                <TableHead className="font-bold whitespace-nowrap">SL</TableHead>
+                <TableHead className="font-bold whitespace-nowrap">SL NAME</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {paginatedMaster.map(acc => (
                 <TableRow key={acc.id} className="hover:bg-muted/30 text-xs">
-                  <TableCell className="font-mono font-bold text-primary">{acc.code}</TableCell>
-                  <TableCell className="font-medium">{acc.name}</TableCell>
+                  <TableCell className="font-mono font-semibold text-muted-foreground">{acc.type_code || '—'}</TableCell>
                   <TableCell>
-                    <Badge variant="outline" className={`capitalize text-[10px] font-semibold ${(acc.type || '').toLowerCase().includes('asset') ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
-                      (acc.type || '').toLowerCase().includes('liab') ? 'bg-amber-50 text-amber-700 border-amber-200' :
-                        (acc.type || '').toLowerCase().includes('cap') ? 'bg-blue-50 text-blue-700 border-blue-200' :
-                          (acc.type || '').toLowerCase().includes('rev') ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
+                    <Badge variant="outline" className={`capitalize text-[10px] font-semibold ${(acc.type_name || acc.type || '').toLowerCase().includes('asset') ? 'bg-emerald-50 text-emerald-700 border-emerald-200' :
+                      (acc.type_name || acc.type || '').toLowerCase().includes('liab') ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                        (acc.type_name || acc.type || '').toLowerCase().includes('cap') ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                          (acc.type_name || acc.type || '').toLowerCase().includes('rev') ? 'bg-indigo-50 text-indigo-700 border-indigo-200' :
                             'bg-purple-50 text-purple-700 border-purple-200'
                       }`}>
                       {acc.type_name || acc.type || 'N/A'}
                     </Badge>
                   </TableCell>
-                  <TableCell className="text-xs text-muted-foreground">{acc.group_name || 'N/A'}</TableCell>
-                  <TableCell className="text-xs">
-                    <div className="font-medium">{acc.gl_name || acc.class_name || 'N/A'}</div>
-                    {acc.gl_code && <div className="text-[10px] text-muted-foreground font-mono">GL: {acc.gl_code}</div>}
-                  </TableCell>
+                  <TableCell className="font-mono text-muted-foreground">{acc.group_code || '—'}</TableCell>
+                  <TableCell className="text-muted-foreground">{acc.group_name || '—'}</TableCell>
+                  <TableCell className="font-mono text-muted-foreground">{acc.class_code || '—'}</TableCell>
+                  <TableCell className="text-muted-foreground">{acc.class_name || '—'}</TableCell>
+                  <TableCell className="font-mono font-semibold text-foreground">{acc.gl_code || '—'}</TableCell>
+                  <TableCell className="font-medium">{acc.gl_name || '—'}</TableCell>
+                  <TableCell className="font-mono font-bold text-primary">{acc.sl_code || acc.code}</TableCell>
+                  <TableCell className="font-medium">{acc.sl_name || acc.name}</TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -2425,29 +2521,348 @@ function ChartOfAccountsSubModule() {
         </div>
       )}
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Add New Chart of Account</DialogTitle></DialogHeader>
-          <div className="space-y-3 py-2 text-xs">
-            <div><Label>Account Code</Label><Input placeholder="12413999" value={form.code} onChange={e => setForm({ ...form, code: e.target.value })} /></div>
-            <div><Label>Account / SL Name</Label><Input placeholder="Receivables - Unit 101" value={form.name} onChange={e => setForm({ ...form, name: e.target.value })} /></div>
-            <div>
-              <Label>Account Type</Label>
-              <Select value={form.type} onValueChange={v => setForm({ ...form, type: v })}>
-                <SelectTrigger><SelectValue /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="Assets">Assets</SelectItem>
-                  <SelectItem value="Liabilities">Liabilities</SelectItem>
-                  <SelectItem value="Capital">Capital</SelectItem>
-                  <SelectItem value="Revenue">Revenue</SelectItem>
-                  <SelectItem value="Expenditure">Expenditure</SelectItem>
-                </SelectContent>
-              </Select>
+      <Dialog open={open} onOpenChange={(nextOpen) => { setOpen(nextOpen); if (!nextOpen) setSavingCoa(false); }}>
+        <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <FolderTree className="h-4 w-4 text-primary" />
+              Add New Chart of Account (5-Tier Structure)
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Enter all 5 hierarchy levels — TYPE, GROUP, CLASS, GL, and SL (code &amp; name). Pick an existing parent tier to auto-fill or type a new code &amp; name. Applicable to all COA types.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="space-y-4 py-2 text-xs">
+            {/* Tier 1: TYPE & TYPE NAME */}
+            <div className="p-3 rounded-md border bg-muted/20 space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <span className="font-semibold text-foreground uppercase tracking-wide text-[11px]">
+                  1. Account Type
+                </span>
+                <div className="w-full sm:w-64">
+                  <Select
+                    value={availableTypes.some(t => t.code === form.type_code) ? form.type_code : "__custom__"}
+                    onValueChange={(val) => {
+                      if (val === "__custom__") {
+                        setForm(prev => ({ ...prev, type_code: "", type_name: "", group_code: "", group_name: "", class_code: "", class_name: "", gl_code: "", gl_name: "" }));
+                        return;
+                      }
+                      const matched = availableTypes.find(t => t.code === val);
+                      if (matched) {
+                        setForm(prev => ({
+                          ...prev,
+                          type_code: matched.code,
+                          type_name: matched.name,
+                          group_code: prev.type_code === matched.code ? prev.group_code : "",
+                          group_name: prev.type_code === matched.code ? prev.group_name : "",
+                          class_code: prev.type_code === matched.code ? prev.class_code : "",
+                          class_name: prev.type_code === matched.code ? prev.class_name : "",
+                          gl_code: prev.type_code === matched.code ? prev.gl_code : "",
+                          gl_name: prev.type_code === matched.code ? prev.gl_name : "",
+                        }));
+                      }
+                    }}
+                  >
+                    <SelectTrigger className="h-8 text-xs">
+                      <SelectValue placeholder="Quick-pick existing Type..." />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {availableTypes.map(t => (
+                        <SelectItem key={t.code} value={t.code}>
+                          {t.code} — {t.name}
+                        </SelectItem>
+                      ))}
+                      <SelectItem value="__custom__">+ Custom / New Type</SelectItem>
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <Label className="text-[11px] font-semibold">TYPE *</Label>
+                  <Input
+                    className="h-8 text-xs font-mono mt-1"
+                    placeholder="e.g. 5"
+                    value={form.type_code}
+                    onChange={e => setForm({ ...form, type_code: e.target.value })}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="text-[11px] font-semibold">TYPE NAME *</Label>
+                  <Input
+                    className="h-8 text-xs mt-1"
+                    placeholder="e.g. Expenditure"
+                    value={form.type_name}
+                    onChange={e => setForm({ ...form, type_name: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Tier 2: GROUP & GROUP NAME */}
+            <div className="p-3 rounded-md border bg-muted/20 space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <span className="font-semibold text-foreground uppercase tracking-wide text-[11px]">
+                  2. Account Group
+                </span>
+                {availableGroups.length > 0 && (
+                  <div className="w-full sm:w-64">
+                    <Select
+                      value={availableGroups.some(g => g.code === form.group_code) ? form.group_code : "__custom__"}
+                      onValueChange={(val) => {
+                        if (val === "__custom__") {
+                          setForm(prev => ({ ...prev, group_code: "", group_name: "", class_code: "", class_name: "", gl_code: "", gl_name: "" }));
+                          return;
+                        }
+                        const matched = availableGroups.find(g => g.code === val);
+                        if (matched) {
+                          setForm(prev => ({
+                            ...prev,
+                            group_code: matched.code,
+                            group_name: matched.name,
+                            class_code: prev.group_code === matched.code ? prev.class_code : "",
+                            class_name: prev.group_code === matched.code ? prev.class_name : "",
+                            gl_code: prev.group_code === matched.code ? prev.gl_code : "",
+                            gl_name: prev.group_code === matched.code ? prev.gl_name : "",
+                          }));
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Quick-pick existing Group..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableGroups.map(g => (
+                          <SelectItem key={g.id} value={g.code}>
+                            {g.code} — {g.name}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value="__custom__">+ Custom / New Group</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <Label className="text-[11px] font-semibold">GROUP *</Label>
+                  <Input
+                    className="h-8 text-xs font-mono mt-1"
+                    placeholder="e.g. 51"
+                    value={form.group_code}
+                    onChange={e => setForm({ ...form, group_code: e.target.value })}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="text-[11px] font-semibold">GROUP NAME *</Label>
+                  <Input
+                    className="h-8 text-xs mt-1"
+                    placeholder="e.g. Expenditure"
+                    value={form.group_name}
+                    onChange={e => setForm({ ...form, group_name: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Tier 3: CLASS & CLASS NAME */}
+            <div className="p-3 rounded-md border bg-muted/20 space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <span className="font-semibold text-foreground uppercase tracking-wide text-[11px]">
+                  3. Account Class
+                </span>
+                {availableClasses.length > 0 && (
+                  <div className="w-full sm:w-64">
+                    <Select
+                      value={availableClasses.some(c => c.code === form.class_code) ? form.class_code : "__custom__"}
+                      onValueChange={(val) => {
+                        if (val === "__custom__") {
+                          setForm(prev => ({ ...prev, class_code: "", class_name: "", gl_code: "", gl_name: "" }));
+                          return;
+                        }
+                        const matched = availableClasses.find(c => c.code === val);
+                        if (matched) {
+                          setForm(prev => ({
+                            ...prev,
+                            class_code: matched.code,
+                            class_name: matched.name,
+                            gl_code: prev.class_code === matched.code ? prev.gl_code : "",
+                            gl_name: prev.class_code === matched.code ? prev.gl_name : "",
+                          }));
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Quick-pick existing Class..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableClasses.map(c => (
+                          <SelectItem key={c.id} value={c.code}>
+                            {c.code} — {c.name}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value="__custom__">+ Custom / New Class</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <Label className="text-[11px] font-semibold">CLASS *</Label>
+                  <Input
+                    className="h-8 text-xs font-mono mt-1"
+                    placeholder="e.g. 510"
+                    value={form.class_code}
+                    onChange={e => setForm({ ...form, class_code: e.target.value })}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="text-[11px] font-semibold">CLASS NAME *</Label>
+                  <Input
+                    className="h-8 text-xs mt-1"
+                    placeholder="e.g. Direct Expenses"
+                    value={form.class_name}
+                    onChange={e => setForm({ ...form, class_name: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Tier 4: GL & GL NAME */}
+            <div className="p-3 rounded-md border bg-muted/20 space-y-2">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                <span className="font-semibold text-foreground uppercase tracking-wide text-[11px]">
+                  4. General Ledger (GL)
+                </span>
+                {availableGls.length > 0 && (
+                  <div className="w-full sm:w-64">
+                    <Select
+                      value={availableGls.some(g => g.code === form.gl_code) ? form.gl_code : "__custom__"}
+                      onValueChange={(val) => {
+                        if (val === "__custom__") {
+                          setForm(prev => ({ ...prev, gl_code: "", gl_name: "" }));
+                          return;
+                        }
+                        const matched = availableGls.find(g => g.code === val);
+                        if (matched) {
+                          setForm(prev => ({
+                            ...prev,
+                            gl_code: matched.code,
+                            gl_name: matched.name,
+                          }));
+                        }
+                      }}
+                    >
+                      <SelectTrigger className="h-8 text-xs">
+                        <SelectValue placeholder="Quick-pick existing GL..." />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {availableGls.map(g => (
+                          <SelectItem key={g.id} value={g.code}>
+                            {g.code} — {g.name}
+                          </SelectItem>
+                        ))}
+                        <SelectItem value="__custom__">+ Custom / New GL</SelectItem>
+                      </SelectContent>
+                    </Select>
+                  </div>
+                )}
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <Label className="text-[11px] font-semibold">GL *</Label>
+                  <Input
+                    className="h-8 text-xs font-mono mt-1"
+                    placeholder="e.g. 51001"
+                    value={form.gl_code}
+                    onChange={e => setForm({ ...form, gl_code: e.target.value })}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="text-[11px] font-semibold">GL NAME *</Label>
+                  <Input
+                    className="h-8 text-xs mt-1"
+                    placeholder="e.g. Labour Outsource"
+                    value={form.gl_name}
+                    onChange={e => setForm({ ...form, gl_name: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Tier 5: SL & SL NAME */}
+            <div className="p-3 rounded-md border border-primary/30 bg-primary/5 space-y-2">
+              <span className="font-semibold text-primary uppercase tracking-wide text-[11px] block">
+                5. Sub-Ledger (SL)
+              </span>
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <Label className="text-[11px] font-semibold">SL *</Label>
+                  <Input
+                    className="h-8 text-xs font-mono mt-1 bg-background"
+                    placeholder="e.g. 51001001"
+                    value={form.sl_code}
+                    onChange={e => setForm({ ...form, sl_code: e.target.value })}
+                  />
+                </div>
+                <div className="sm:col-span-2">
+                  <Label className="text-[11px] font-semibold">SL NAME *</Label>
+                  <Input
+                    className="h-8 text-xs mt-1 bg-background"
+                    placeholder="e.g. CMEP-Labor Cost-Facilities Mgt"
+                    value={form.sl_name}
+                    onChange={e => setForm({ ...form, sl_name: e.target.value })}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Live 10-Column COA Row Preview */}
+            <div className="rounded-md border overflow-x-auto bg-card">
+              <div className="px-3 py-1.5 bg-muted/50 border-b text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
+                COA Structure Preview
+              </div>
+              <table className="w-full text-[11px]">
+                <thead>
+                  <tr className="border-b bg-muted/20 text-muted-foreground">
+                    <th className="px-2 py-1 text-left font-semibold">TYPE</th>
+                    <th className="px-2 py-1 text-left font-semibold">TYPE NAME</th>
+                    <th className="px-2 py-1 text-left font-semibold">GROUP</th>
+                    <th className="px-2 py-1 text-left font-semibold">GROUP NAME</th>
+                    <th className="px-2 py-1 text-left font-semibold">CLASS</th>
+                    <th className="px-2 py-1 text-left font-semibold">CLASS NAME</th>
+                    <th className="px-2 py-1 text-left font-semibold">GL</th>
+                    <th className="px-2 py-1 text-left font-semibold">GL NAME</th>
+                    <th className="px-2 py-1 text-left font-semibold">SL</th>
+                    <th className="px-2 py-1 text-left font-semibold">SL NAME</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr>
+                    <td className="px-2 py-1.5 font-mono">{form.type_code || "—"}</td>
+                    <td className="px-2 py-1.5">{form.type_name || "—"}</td>
+                    <td className="px-2 py-1.5 font-mono">{form.group_code || "—"}</td>
+                    <td className="px-2 py-1.5">{form.group_name || "—"}</td>
+                    <td className="px-2 py-1.5 font-mono">{form.class_code || "—"}</td>
+                    <td className="px-2 py-1.5">{form.class_name || "—"}</td>
+                    <td className="px-2 py-1.5 font-mono">{form.gl_code || "—"}</td>
+                    <td className="px-2 py-1.5">{form.gl_name || "—"}</td>
+                    <td className="px-2 py-1.5 font-mono font-bold text-primary">{form.sl_code || "—"}</td>
+                    <td className="px-2 py-1.5 font-medium">{form.sl_name || "—"}</td>
+                  </tr>
+                </tbody>
+              </table>
             </div>
           </div>
+
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={handleCreate}>Save Account</Button>
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={savingCoa}>Cancel</Button>
+            <Button onClick={handleCreate} disabled={savingCoa}>
+              {savingCoa && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+              Save Account
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
