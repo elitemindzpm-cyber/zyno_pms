@@ -269,6 +269,8 @@ export function saveEmployeeLeaveMeta(empKeyOrId: string, meta: Record<string, a
   if (meta.passport_expiry_date !== undefined) clean.passport_expiry_date = meta.passport_expiry_date;
   if (meta.visa_expiry_date !== undefined) clean.visa_expiry_date = meta.visa_expiry_date;
   if (meta.health_card_expiry_date !== undefined) clean.health_card_expiry_date = meta.health_card_expiry_date;
+  if (meta.role !== undefined) clean.role = meta.role;
+  if (meta.reporting_manager !== undefined) clean.reporting_manager = meta.reporting_manager;
   if (Object.keys(clean).length === 0) return;
 
   if (empKeyOrId) {

@@ -50,6 +50,7 @@ export function EmployeeOnboardingWizard({
   // Master lists
   const [departments, setDepartments] = useState<MasterItem[]>([]);
   const [designations, setDesignations] = useState<MasterItem[]>([]);
+  const [roles, setRoles] = useState<MasterItem[]>([]);
 
   // Form State strictly mirroring the 31 columns of Excel Master
   const [form, setForm] = useState({
@@ -67,6 +68,7 @@ export function EmployeeOnboardingWizard({
     department_id: "",
     designation: "",
     designation_id: "",
+    role: "",
     reporting_manager: "",
     date_of_joining: new Date().toISOString().split("T")[0],
     employment_type: "Full-Time",
@@ -104,13 +106,30 @@ export function EmployeeOnboardingWizard({
     remarks: ""
   });
 
-  // Load master departments and designations
+  // Load master departments, designations, and roles
   useEffect(() => {
     async function loadMasters() {
       try {
         const masters = await HrmsMastersApi.getEmployeeCreationMasters();
-        setDepartments(masters.departments || []);
-        setDesignations(masters.designations || []);
+        const deptList = masters.departments || [];
+        const desigList = masters.designations || [];
+        const masterRoles = masters.roles || [];
+
+        // Include any roles attached to departments/designations so nothing configured is ever missing
+        const roleNameSet = new Set<string>(masterRoles.map((r) => r.name));
+        const mergedRoles: MasterItem[] = [...masterRoles];
+        for (const item of [...deptList, ...desigList]) {
+          for (const roleName of item.roles || []) {
+            if (roleName && !roleNameSet.has(roleName)) {
+              roleNameSet.add(roleName);
+              mergedRoles.push({ id: `role-${roleName}`, name: roleName, is_active: true });
+            }
+          }
+        }
+
+        setDepartments(deptList);
+        setDesignations(desigList);
+        setRoles(mergedRoles);
       } catch (e) {
         console.error("Error loading masters for employee form:", e);
       }
@@ -122,6 +141,13 @@ export function EmployeeOnboardingWizard({
           setForm((prev) => ({ ...prev, employee_id_code: code }));
         });
       }
+      const handleMastersUpdated = () => {
+        void loadMasters();
+      };
+      window.addEventListener("hrms_masters_updated", handleMastersUpdated);
+      return () => {
+        window.removeEventListener("hrms_masters_updated", handleMastersUpdated);
+      };
     }
   }, [open, employeeToEdit]);
 
@@ -152,6 +178,7 @@ export function EmployeeOnboardingWizard({
         department_id: employeeToEdit.department_id || "",
         designation: employeeToEdit.designations?.title || "",
         designation_id: employeeToEdit.designation_id || "",
+        role: employeeToEdit.role || extra.role || "",
         reporting_manager: employeeToEdit.reporting_manager || extra.reporting_manager || extra.basic_extra?.reporting_manager || "",
         date_of_joining: employeeToEdit.date_of_joining ? String(employeeToEdit.date_of_joining).slice(0, 10) : new Date().toISOString().split("T")[0],
         employment_type: employeeToEdit.employment_type || extra.employment_type || "Full-Time",
@@ -195,6 +222,7 @@ export function EmployeeOnboardingWizard({
         department_id: "",
         designation: "",
         designation_id: "",
+        role: "",
         reporting_manager: "",
         date_of_joining: new Date().toISOString().split("T")[0],
         employment_type: "Full-Time",
@@ -252,6 +280,8 @@ export function EmployeeOnboardingWizard({
         email: form.email,
         department_id: form.department_id || null,
         designation_id: form.designation_id || null,
+        role: form.role || "",
+        reporting_manager: form.reporting_manager || "",
         date_of_joining: form.date_of_joining || new Date().toISOString().split("T")[0],
         employment_type: form.employment_type,
         employee_status: form.employee_status,
@@ -273,6 +303,7 @@ export function EmployeeOnboardingWizard({
         annual_leave_quota: Number(form.annual_leave_quota || 30),
         remarks: form.remarks,
         notes: JSON.stringify({
+          role: form.role,
           reporting_manager: form.reporting_manager,
           benefit_telephone: form.benefit_telephone,
           benefit_accommodation: form.benefit_accommodation,
@@ -424,29 +455,36 @@ export function EmployeeOnboardingWizard({
               </div>
 
               <div className="p-3 bg-muted/40 rounded-xl border space-y-3">
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
                     <Label className="text-xs font-semibold">Department</Label>
                     <Select
                       value={form.department_id}
                       onValueChange={(val) => {
                         const d = departments.find((x) => x.id === val);
-                        setForm({
-                          ...form,
+                        setForm((prev) => ({
+                          ...prev,
                           department_id: val,
-                          department: d ? d.name : form.department
-                        });
+                          department: d ? d.name : prev.department,
+                          role: prev.role || (d?.roles && d.roles.length > 0 ? d.roles[0] : prev.role),
+                        }));
                       }}
                     >
                       <SelectTrigger className="mt-1 text-xs bg-background">
                         <SelectValue placeholder="Select Department" />
                       </SelectTrigger>
                       <SelectContent>
-                        {departments.map((d) => (
-                          <SelectItem key={d.id} value={d.id}>
-                            {d.name}
-                          </SelectItem>
-                        ))}
+                        {departments.length === 0 ? (
+                          <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                            No departments configured
+                          </div>
+                        ) : (
+                          departments.map((d) => (
+                            <SelectItem key={d.id} value={d.id}>
+                              {d.name}
+                            </SelectItem>
+                          ))
+                        )}
                       </SelectContent>
                     </Select>
                   </div>
@@ -457,22 +495,54 @@ export function EmployeeOnboardingWizard({
                       value={form.designation_id}
                       onValueChange={(val) => {
                         const dg = designations.find((x) => x.id === val);
-                        setForm({
-                          ...form,
+                        setForm((prev) => ({
+                          ...prev,
                           designation_id: val,
-                          designation: dg ? dg.name : form.designation
-                        });
+                          designation: dg ? dg.name : prev.designation,
+                          role: prev.role || (dg?.roles && dg.roles.length > 0 ? dg.roles[0] : prev.role),
+                        }));
                       }}
                     >
                       <SelectTrigger className="mt-1 text-xs bg-background">
                         <SelectValue placeholder="Select Designation" />
                       </SelectTrigger>
                       <SelectContent>
-                        {designations.map((dg) => (
-                          <SelectItem key={dg.id} value={dg.id}>
-                            {dg.name}
-                          </SelectItem>
-                        ))}
+                        {designations.length === 0 ? (
+                          <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                            No designations configured
+                          </div>
+                        ) : (
+                          designations.map((dg) => (
+                            <SelectItem key={dg.id} value={dg.id}>
+                              {dg.name}
+                            </SelectItem>
+                          ))
+                        )}
+                      </SelectContent>
+                    </Select>
+                  </div>
+
+                  <div>
+                    <Label className="text-xs font-semibold">Role</Label>
+                    <Select
+                      value={form.role}
+                      onValueChange={(val) => setForm((prev) => ({ ...prev, role: val }))}
+                    >
+                      <SelectTrigger className="mt-1 text-xs bg-background">
+                        <SelectValue placeholder="Select Role" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {roles.length === 0 ? (
+                          <div className="px-2 py-1.5 text-xs text-muted-foreground">
+                            No roles configured
+                          </div>
+                        ) : (
+                          roles.map((r) => (
+                            <SelectItem key={r.id} value={r.name}>
+                              {r.name}
+                            </SelectItem>
+                          ))
+                        )}
                       </SelectContent>
                     </Select>
                   </div>

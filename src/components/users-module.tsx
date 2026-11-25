@@ -5,7 +5,9 @@ import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/com
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { fetchProfiles, createProfile } from "@/lib/db";
+import { DynamicMastersService } from "@/lib/dynamic-masters-service";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 
 export interface UsersModuleProps {
@@ -21,25 +23,61 @@ const staffUsers = [
   { name: "Mahmoud K.", email: "mahmoud@ZYNO Property Management.example", role: "Technician", status: "INVITED", mfa: "OFF" },
 ];
 
-const roles = [
-  { name: "Admin", desc: "Full platform", users: 2 },
-  { name: "Finance Officer", desc: "Finance, PDC, ledger, reports", users: 3 },
-  { name: "Real Estate Officer", desc: "Leases, units, tenants", users: 4 },
-  { name: "Maintenance Coordinator", desc: "Tickets, vendors, POs", users: 2 },
-  { name: "Management", desc: "Dashboards, approvals (no posting)", users: 3 },
-  { name: "Technician / Vendor", desc: "Assigned tickets only", users: 12 },
-  { name: "Owner (3rd-party)", desc: "Owner statements only", users: 8 },
+const DEFAULT_ROLES = [
+  { name: "Admin", desc: "Full platform" },
+  { name: "Finance Officer", desc: "Finance, PDC, ledger, reports" },
+  { name: "Real Estate Officer", desc: "Leases, units, tenants" },
+  { name: "Maintenance Coordinator", desc: "Tickets, vendors, POs" },
+  { name: "Management", desc: "Dashboards, approvals (no posting)" },
+  { name: "Technician / Vendor", desc: "Assigned tickets only" },
+  { name: "Owner (3rd-party)", desc: "Owner statements only" },
 ];
 
 export function UsersModule({ role }: UsersModuleProps) {
   const [profiles, setProfiles] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({ full_name: '', email: '', role: 'Technician' });
+  const [dynamicRoleNames, setDynamicRoleNames] = useState<string[]>([]);
+  const [form, setForm] = useState({ full_name: '', email: '', role: '' });
   const [currentPage, setCurrentPage] = useState(1);
   const ITEMS_PER_PAGE = 20;
   const totalPages = Math.ceil(profiles.length / ITEMS_PER_PAGE);
   const paginatedProfiles = profiles.slice((currentPage - 1) * ITEMS_PER_PAGE, currentPage * ITEMS_PER_PAGE);
+
+  const loadRoleMasters = () => {
+    const names = DynamicMastersService.getMasterValues("role").map((r) => r.name).filter(Boolean);
+    setDynamicRoleNames(names);
+  };
+
+  useEffect(() => {
+    loadRoleMasters();
+    void DynamicMastersService.initFromDb().then(() => loadRoleMasters());
+    const onUpdated = () => loadRoleMasters();
+    window.addEventListener("hrms_masters_updated", onUpdated);
+    return () => window.removeEventListener("hrms_masters_updated", onUpdated);
+  }, []);
+
+  const roleList = (() => {
+    const seen = new Set<string>();
+    const combined: { name: string; desc: string; users: number }[] = [];
+    const countUsers = (roleName: string) =>
+      profiles.filter((p) => String(p.role || "").trim().toLowerCase() === roleName.trim().toLowerCase()).length;
+
+    for (const name of dynamicRoleNames) {
+      const key = name.trim().toLowerCase();
+      if (!key || seen.has(key)) continue;
+      seen.add(key);
+      const def = DEFAULT_ROLES.find((r) => r.name.toLowerCase() === key);
+      combined.push({ name, desc: def?.desc || "Custom role from Masters", users: countUsers(name) });
+    }
+    for (const def of DEFAULT_ROLES) {
+      const key = def.name.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      combined.push({ name: def.name, desc: def.desc, users: countUsers(def.name) });
+    }
+    return combined;
+  })();
 
   async function load() {
     setLoading(true);
@@ -155,13 +193,13 @@ export function UsersModule({ role }: UsersModuleProps) {
           </CardHeader>
           <CardContent className="p-0">
             <div className="divide-y divide-border">
-              {roles.map((role, i) => (
-                <div key={i} className="px-6 py-4 flex justify-between items-center hover:bg-muted/10 transition-colors">
+              {roleList.map((r, i) => (
+                <div key={r.name || i} className="px-6 py-4 flex justify-between items-center hover:bg-muted/10 transition-colors">
                   <div>
-                    <div className="font-medium text-sm text-foreground">{role.name}</div>
-                    <div className="text-xs text-muted-foreground">{role.desc}</div>
+                    <div className="font-medium text-sm text-foreground">{r.name}</div>
+                    <div className="text-xs text-muted-foreground">{r.desc}</div>
                   </div>
-                  <div className="text-xs text-muted-foreground">{role.users} users</div>
+                  <div className="text-xs text-muted-foreground">{r.users} users</div>
                 </div>
               ))}
             </div>
@@ -185,7 +223,21 @@ export function UsersModule({ role }: UsersModuleProps) {
             </div>
             <div>
               <Label>Role</Label>
-              <Input value={form.role} onChange={e => setForm(f => ({ ...f, role: e.target.value }))} />
+              <Select
+                value={form.role}
+                onValueChange={(val) => setForm((f) => ({ ...f, role: val }))}
+              >
+                <SelectTrigger className="mt-1">
+                  <SelectValue placeholder="Select Role" />
+                </SelectTrigger>
+                <SelectContent>
+                  {roleList.map((r) => (
+                    <SelectItem key={r.name} value={r.name}>
+                      {r.name}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <DialogFooter>
               <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>

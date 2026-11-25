@@ -1,5 +1,6 @@
 import { kvStore } from "@/lib/kv-store";
 import { db } from "@/lib/db";
+import { DynamicMastersService } from "@/lib/dynamic-masters-service";
 
 export interface MasterItem {
   id: string;
@@ -606,9 +607,19 @@ const REPLACED_CATALOG_ITEMS: Partial<Record<MasterCategoryKey, string[]>> = {
   ],
 };
 
-const TABLE_BACKED_MASTERS: Partial<Record<MasterCategoryKey, { table: string; nameCol: string }>> = {
-  departments: { table: "departments", nameCol: "name" },
-  designations: { table: "designations", nameCol: "title" },
+const TABLE_BACKED_MASTERS: Partial<
+  Record<
+    MasterCategoryKey,
+    {
+      table: string;
+      nameCol: string;
+      hasDescription: boolean;
+      dynamicKey: "department" | "designation";
+    }
+  >
+> = {
+  departments: { table: "departments", nameCol: "name", hasDescription: true, dynamicKey: "department" },
+  designations: { table: "designations", nameCol: "title", hasDescription: false, dynamicKey: "designation" },
 };
 
 function rowToMasterItem(row: any): MasterItem {
@@ -625,26 +636,159 @@ function rowToMasterItem(row: any): MasterItem {
     name: row.name,
     code: row.code ?? undefined,
     description: row.description ?? undefined,
+    roles: Array.isArray(extra?.roles) ? extra.roles : undefined,
     extra,
     is_active: row.is_active !== false,
   };
 }
 
 export const HrmsMastersApi = {
+  // Ensure a department or designation added in DynamicMastersService exists in its real SQL table
+  // so foreign-key columns (employees.department_id / employees.designation_id) can reference it.
+  async ensureSqlMaster(categoryKey: "departments" | "designations", name: string): Promise<void> {
+    const tableCfg = TABLE_BACKED_MASTERS[categoryKey];
+    const trimmed = name.trim();
+    if (!tableCfg || !trimmed) return;
+    try {
+      const { data } = await db.from(tableCfg.table).select("*");
+      const exists = ((data || []) as any[]).some(
+        (row) => String(row[tableCfg.nameCol] || "").trim().toLowerCase() === trimmed.toLowerCase()
+      );
+      if (!exists) {
+        await db.from(tableCfg.table).insert({ [tableCfg.nameCol]: trimmed });
+      }
+      window.dispatchEvent(new CustomEvent("hrms_masters_updated", { detail: { categoryKey } }));
+    } catch (err) {
+      console.warn(`[HrmsMastersApi] ensureSqlMaster(${categoryKey}, ${trimmed}) notice:`, err);
+    }
+  },
+
+  async renameSqlMaster(
+    categoryKey: "departments" | "designations",
+    oldName: string,
+    newName: string
+  ): Promise<void> {
+    const tableCfg = TABLE_BACKED_MASTERS[categoryKey];
+    const trimmedOld = oldName.trim();
+    const trimmedNew = newName.trim();
+    if (!tableCfg || !trimmedNew) return;
+    try {
+      const { data } = await db.from(tableCfg.table).select("*");
+      const rows = (data || []) as any[];
+      const match = rows.find(
+        (row) => String(row[tableCfg.nameCol] || "").trim().toLowerCase() === trimmedOld.toLowerCase()
+      );
+      if (match) {
+        await db.from(tableCfg.table).update({ [tableCfg.nameCol]: trimmedNew }).eq("id", match.id);
+      } else {
+        const existsNew = rows.some(
+          (row) => String(row[tableCfg.nameCol] || "").trim().toLowerCase() === trimmedNew.toLowerCase()
+        );
+        if (!existsNew) {
+          await db.from(tableCfg.table).insert({ [tableCfg.nameCol]: trimmedNew });
+        }
+      }
+      window.dispatchEvent(new CustomEvent("hrms_masters_updated", { detail: { categoryKey } }));
+    } catch (err) {
+      console.warn(`[HrmsMastersApi] renameSqlMaster(${categoryKey}) notice:`, err);
+    }
+  },
+
+  async deleteSqlMasterByName(categoryKey: "departments" | "designations", name: string): Promise<void> {
+    const tableCfg = TABLE_BACKED_MASTERS[categoryKey];
+    const trimmed = name.trim();
+    if (!tableCfg || !trimmed) return;
+    try {
+      const { data } = await db.from(tableCfg.table).select("*");
+      const match = ((data || []) as any[]).find(
+        (row) => String(row[tableCfg.nameCol] || "").trim().toLowerCase() === trimmed.toLowerCase()
+      );
+      if (match) {
+        await db.from(tableCfg.table).delete().eq("id", match.id);
+      }
+      window.dispatchEvent(new CustomEvent("hrms_masters_updated", { detail: { categoryKey } }));
+    } catch (err) {
+      console.warn(`[HrmsMastersApi] deleteSqlMasterByName(${categoryKey}) notice:`, err);
+    }
+  },
+
+  async getRoles(): Promise<MasterItem[]> {
+    try {
+      await DynamicMastersService.initFromDb();
+    } catch {}
+    const dynRoles = DynamicMastersService.getMasterValues("role");
+    return dynRoles.map((r) => ({
+      id: r.id,
+      name: r.name,
+      code: r.code,
+      is_active: true,
+    }));
+  },
+
   // Items come from the database only. Departments and designations use their real tables (the employee
-  // form links to them); every other list is stored in hrms_master_items, keyed by category.
+  // form links to them) and are automatically reconciled with DynamicMastersService (/admin/masters);
+  // every other list is stored in hrms_master_items, keyed by category.
   async getMasterItems(categoryKey: MasterCategoryKey): Promise<MasterItem[]> {
     const tableCfg = TABLE_BACKED_MASTERS[categoryKey];
     if (tableCfg) {
+      try {
+        await DynamicMastersService.initFromDb();
+      } catch {}
+
       const { data, error } = await db.from(tableCfg.table).select("*").order(tableCfg.nameCol, { ascending: true });
       if (error) throw new Error(error.message || `Failed to load ${categoryKey}`);
-      return ((data || []) as any[]).map((row) => ({
-        id: row.id,
-        name: row[tableCfg.nameCol],
-        code: row.code ?? undefined,
-        description: row.description ?? undefined,
-        is_active: true,
-      }));
+
+      const sqlRows: any[] = [...((data || []) as any[])];
+      const existingByName = new Map<string, any>();
+      for (const row of sqlRows) {
+        const key = String(row[tableCfg.nameCol] || "").trim().toLowerCase();
+        if (key) existingByName.set(key, row);
+      }
+
+      // Reconcile any entries added via /admin/masters (DynamicMastersService) into the SQL table
+      // so they are immediately visible with valid UUIDs in Employee/User assignment forms.
+      const dynamicItems = DynamicMastersService.getMasterValues(tableCfg.dynamicKey);
+      const rolesByName = new Map<string, string[]>();
+      for (const dyn of dynamicItems) {
+        const trimmed = String(dyn.name || "").trim();
+        if (!trimmed) continue;
+        const lower = trimmed.toLowerCase();
+        if (Array.isArray(dyn.extra?.roles) && dyn.extra.roles.length > 0) {
+          rolesByName.set(lower, dyn.extra.roles);
+        }
+        if (!existingByName.has(lower)) {
+          try {
+            const { data: inserted, error: insertErr } = await db
+              .from(tableCfg.table)
+              .insert({ [tableCfg.nameCol]: trimmed })
+              .select()
+              .single();
+            if (!insertErr && inserted) {
+              sqlRows.push(inserted);
+              existingByName.set(lower, inserted);
+            }
+          } catch (syncErr) {
+            console.warn(`[HrmsMastersApi] Failed to sync ${categoryKey} "${trimmed}" to SQL:`, syncErr);
+          }
+        }
+      }
+
+      sqlRows.sort((a, b) =>
+        String(a[tableCfg.nameCol] || "").localeCompare(String(b[tableCfg.nameCol] || ""))
+      );
+
+      return sqlRows.map((row) => {
+        const name = String(row[tableCfg.nameCol] || "");
+        const roles = rolesByName.get(name.trim().toLowerCase());
+        return {
+          id: row.id,
+          name,
+          code: row.code ?? undefined,
+          description: row.description ?? undefined,
+          roles,
+          is_active: row.is_active !== false,
+        };
+      });
     }
     const { data, error } = await db
       .from("hrms_master_items")
@@ -657,17 +801,53 @@ export const HrmsMastersApi = {
 
   async addMasterItem(
     categoryKey: MasterCategoryKey,
-    item: { name: string; code?: string; description?: string; extra?: any }
+    item: { name: string; code?: string; description?: string; roles?: string[]; extra?: any }
   ): Promise<MasterItem> {
     const tableCfg = TABLE_BACKED_MASTERS[categoryKey];
     let created: MasterItem;
     if (tableCfg) {
-      const payload: Record<string, any> = { [tableCfg.nameCol]: item.name, code: item.code || null, description: item.description || null };
+      const payload: Record<string, any> = {
+        [tableCfg.nameCol]: item.name.trim(),
+        code: item.code || null,
+      };
+      if (tableCfg.hasDescription) {
+        payload.description = item.description || null;
+      }
       const { data, error } = await db.from(tableCfg.table).insert(payload).select().single();
       if (error) throw new Error(error.message || `Failed to add ${categoryKey}`);
-      created = { id: (data as any).id, name: item.name, code: (data as any).code ?? undefined, description: (data as any).description ?? undefined, is_active: true };
+      const roles = item.roles || (Array.isArray(item.extra?.roles) ? item.extra.roles : undefined);
+      // Keep DynamicMastersService in sync so /admin/masters also displays this entry and its roles
+      try {
+        const existingDyn = DynamicMastersService.getMasterValues(tableCfg.dynamicKey).find(
+          (d) => d.name.trim().toLowerCase() === item.name.trim().toLowerCase()
+        );
+        if (!existingDyn) {
+          if (roles && roles.length > 0) {
+            DynamicMastersService.addMasterValueWithRoles(tableCfg.dynamicKey, item.name.trim(), roles);
+          } else {
+            DynamicMastersService.addMasterValue(tableCfg.dynamicKey, item.name.trim());
+          }
+        } else if (roles) {
+          DynamicMastersService.updateMasterValueRoles(tableCfg.dynamicKey, existingDyn.id, item.name.trim(), roles);
+        }
+      } catch {}
+      created = {
+        id: (data as any).id,
+        name: item.name.trim(),
+        code: (data as any).code ?? undefined,
+        description: (data as any).description ?? undefined,
+        roles,
+        is_active: true,
+      };
     } else {
-      const payload = { category: categoryKey, name: item.name, code: item.code || null, description: item.description || null, extra: item.extra ? JSON.stringify(item.extra) : null, is_active: true };
+      const payload = {
+        category: categoryKey,
+        name: item.name,
+        code: item.code || null,
+        description: item.description || null,
+        extra: item.extra ? JSON.stringify(item.extra) : null,
+        is_active: true,
+      };
       const { data, error } = await db.from("hrms_master_items").insert(payload).select().single();
       if (error) throw new Error(error.message || `Failed to add ${categoryKey}`);
       created = rowToMasterItem(data as any);
@@ -693,9 +873,30 @@ export const HrmsMastersApi = {
       const payload: Record<string, any> = {};
       if (updates.name !== undefined) payload[tableCfg.nameCol] = updates.name;
       if (updates.code !== undefined) payload.code = updates.code || null;
-      if (updates.description !== undefined) payload.description = updates.description || null;
-      const { error } = await db.from(tableCfg.table).update(payload).eq("id", id);
-      if (error) throw new Error(error.message || `Failed to update ${categoryKey}`);
+      if (tableCfg.hasDescription && updates.description !== undefined) {
+        payload.description = updates.description || null;
+      }
+      if (Object.keys(payload).length > 0) {
+        const { error } = await db.from(tableCfg.table).update(payload).eq("id", id);
+        if (error) throw new Error(error.message || `Failed to update ${categoryKey}`);
+      }
+      // Persist roles metadata in DynamicMastersService when provided
+      if (updates.roles !== undefined) {
+        try {
+          const { data: row } = await db.from(tableCfg.table).select("*").eq("id", id).maybeSingle();
+          const rowName = String(updates.name ?? (row as any)?.[tableCfg.nameCol] ?? "").trim();
+          if (rowName) {
+            const existingDyn = DynamicMastersService.getMasterValues(tableCfg.dynamicKey).find(
+              (d) => d.name.trim().toLowerCase() === rowName.toLowerCase()
+            );
+            if (existingDyn) {
+              DynamicMastersService.updateMasterValueRoles(tableCfg.dynamicKey, existingDyn.id, rowName, updates.roles);
+            } else {
+              DynamicMastersService.addMasterValueWithRoles(tableCfg.dynamicKey, rowName, updates.roles);
+            }
+          }
+        } catch {}
+      }
     } else {
       const payload: Record<string, any> = {};
       if (updates.name !== undefined) payload.name = updates.name;
@@ -713,15 +914,36 @@ export const HrmsMastersApi = {
 
   async deleteMasterItem(categoryKey: MasterCategoryKey, id: string): Promise<boolean> {
     const tableCfg = TABLE_BACKED_MASTERS[categoryKey];
+    let existingName = "";
+    if (tableCfg) {
+      try {
+        const { data: row } = await db.from(tableCfg.table).select("*").eq("id", id).maybeSingle();
+        existingName = String((row as any)?.[tableCfg.nameCol] || "").trim();
+      } catch {}
+    }
     const table = tableCfg ? tableCfg.table : "hrms_master_items";
     const { error } = await db.from(table).delete().eq("id", id);
     if (error) throw new Error(error.message || `Failed to delete ${categoryKey}`);
+    if (tableCfg && existingName) {
+      try {
+        const dyn = DynamicMastersService.getMasterValues(tableCfg.dynamicKey).find(
+          (d) => d.name.trim().toLowerCase() === existingName.toLowerCase()
+        );
+        if (dyn) DynamicMastersService.deleteMasterValue(tableCfg.dynamicKey, dyn.id);
+      } catch {}
+    }
     window.dispatchEvent(new CustomEvent("hrms_masters_updated", { detail: { categoryKey } }));
     return true;
   },
 
-  // Batch getter for common dropdowns
+  // Batch getter for common dropdowns — resilient per category so one failing table never blanks out others
   async getEmployeeCreationMasters() {
+    const safeGet = (cat: MasterCategoryKey) =>
+      this.getMasterItems(cat).catch((err) => {
+        console.warn(`[HrmsMastersApi] Failed to load ${cat}:`, err);
+        return [] as MasterItem[];
+      });
+
     const [
       companies,
       branches,
@@ -730,6 +952,7 @@ export const HrmsMastersApi = {
       departments,
       subDepartments,
       designations,
+      roles,
       grades,
       employmentTypes,
       contractTypes,
@@ -742,24 +965,25 @@ export const HrmsMastersApi = {
       documentTypes,
       leaveTypes,
     ] = await Promise.all([
-      this.getMasterItems("companies"),
-      this.getMasterItems("branches"),
-      this.getMasterItems("entities"),
-      this.getMasterItems("business_units"),
-      this.getMasterItems("departments"),
-      this.getMasterItems("sub_departments"),
-      this.getMasterItems("designations"),
-      this.getMasterItems("grades"),
-      this.getMasterItems("employment_types"),
-      this.getMasterItems("contract_types"),
-      this.getMasterItems("countries"),
-      this.getMasterItems("states"),
-      this.getMasterItems("cities"),
-      this.getMasterItems("banks"),
-      this.getMasterItems("genders"),
-      this.getMasterItems("employee_statuses"),
-      this.getMasterItems("document_types"),
-      this.getMasterItems("leave_types"),
+      safeGet("companies"),
+      safeGet("branches"),
+      safeGet("entities"),
+      safeGet("business_units"),
+      safeGet("departments"),
+      safeGet("sub_departments"),
+      safeGet("designations"),
+      this.getRoles().catch(() => [] as MasterItem[]),
+      safeGet("grades"),
+      safeGet("employment_types"),
+      safeGet("contract_types"),
+      safeGet("countries"),
+      safeGet("states"),
+      safeGet("cities"),
+      safeGet("banks"),
+      safeGet("genders"),
+      safeGet("employee_statuses"),
+      safeGet("document_types"),
+      safeGet("leave_types"),
     ]);
 
     return {
@@ -770,6 +994,7 @@ export const HrmsMastersApi = {
       departments,
       subDepartments,
       designations,
+      roles,
       grades,
       employmentTypes,
       contractTypes,

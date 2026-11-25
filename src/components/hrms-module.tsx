@@ -160,6 +160,21 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
   const [newMasterRoles, setNewMasterRoles] = useState<string[]>([]);
   const [editRolesItemId, setEditRolesItemId] = useState<string | null>(null);
   const [editRolesValue, setEditRolesValue] = useState<string[]>([]);
+  const [availableMasterRoles, setAvailableMasterRoles] = useState<string[]>([
+    "Admin", "Executive", "Manager", "HR", "Finance",
+    "Sales", "Operations", "Procurement", "IT",
+    "Maintenance", "Customer Service", "Legal", "Compliance",
+  ]);
+
+  useEffect(() => {
+    HrmsMastersApi.getRoles()
+      .then((roleItems) => {
+        if (roleItems.length > 0) {
+          setAvailableMasterRoles(roleItems.map((r) => r.name));
+        }
+      })
+      .catch(() => {});
+  }, [selectedMasterKey]);
 
   // Form State Containers
   const [newEmp, setNewEmp] = useState({
@@ -2954,11 +2969,7 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
                                     {isEditingRoles ? (
                                       <div className="space-y-2">
                                         <div className="flex flex-wrap gap-1.5">
-                                          {[
-                                            "Admin", "Executive", "Manager", "HR", "Finance",
-                                            "Sales", "Operations", "Procurement", "IT",
-                                            "Maintenance", "Customer Service", "Legal", "Compliance",
-                                          ].map((role) => (
+                                          {availableMasterRoles.map((role) => (
                                             <button
                                               key={role}
                                               type="button"
@@ -3104,11 +3115,7 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
                               <span className="text-muted-foreground font-normal">(select all that apply)</span>
                             </Label>
                             <div className="flex flex-wrap gap-2">
-                              {[
-                                "Admin", "Executive", "Manager", "HR", "Finance",
-                                "Sales", "Operations", "Procurement", "IT",
-                                "Maintenance", "Customer Service", "Legal", "Compliance",
-                              ].map((role) => (
+                              {availableMasterRoles.map((role) => (
                                 <button
                                   key={role}
                                   type="button"
