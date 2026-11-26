@@ -1134,13 +1134,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   // Journals are read from the backend (posted journal vouchers); nothing is kept in the browser.
   const [journalEntries, setJournalEntries] = useState<JournalLedgerEntry[]>([]);
   const [grnMappings, setGrnMappings] = useState<GrnCostMapping[]>(INITIAL_GRN_MAPPINGS);
-  const [payableInvoices, setPayableInvoices] = useState<PayableInvoice[]>(() => {
-    if (typeof window === "undefined") return INITIAL_PAYABLE_INVOICES;
-    try {
-      const saved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-ap`);
-      return saved ? JSON.parse(saved) : INITIAL_PAYABLE_INVOICES;
-    } catch { return INITIAL_PAYABLE_INVOICES; }
-  });
+  // Payable invoices are read from the backend (fin_ap_invoices); nothing is kept in the browser.
+  const [payableInvoices, setPayableInvoices] = useState<PayableInvoice[]>([]);
   const [vouchers, setVouchers] = useState<FinanceVoucher[]>(() => {
     const initialKahramaa = buildKahramaaDepositVouchers();
     const initialSdGuarantee = buildSecurityDepositGuaranteeVouchers();
@@ -1274,13 +1269,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       return [...initialSpecialVouchers, ...INITIAL_VOUCHERS];
     } catch { return [...initialSpecialVouchers, ...INITIAL_VOUCHERS]; }
   });
-  const [receivableInvoices, setReceivableInvoices] = useState<ReceivableInvoice[]>(() => {
-    if (typeof window === "undefined") return INITIAL_RECEIVABLE_INVOICES;
-    try {
-      const saved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-ar`);
-      return saved ? JSON.parse(saved) : INITIAL_RECEIVABLE_INVOICES;
-    } catch { return INITIAL_RECEIVABLE_INVOICES; }
-  });
+  // Receivable invoices are read from the backend (fin_ar_invoices); nothing is kept in the browser.
+  const [receivableInvoices, setReceivableInvoices] = useState<ReceivableInvoice[]>([]);
   const [legalReceivables, setLegalReceivables] = useState<LegalReceivable[]>(INITIAL_LEGAL_RECEIVABLES);
   const [payrollSyncs, setPayrollSyncs] = useState<PayrollSyncRun[]>(INITIAL_PAYROLL_SYNCS);
   const [bankClearances, setBankClearances] = useState<BankClearanceEntry[]>(INITIAL_BANK_CLEARANCES);
@@ -1300,8 +1290,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     if (typeof window !== "undefined") {
       try {
         kvStore.setItem(`${FINANCE_STORAGE_KEY}-vouchers`, JSON.stringify(vouchers));
-        kvStore.setItem(`${FINANCE_STORAGE_KEY}-ar`, JSON.stringify(receivableInvoices));
-        kvStore.setItem(`${FINANCE_STORAGE_KEY}-ap`, JSON.stringify(payableInvoices));
         kvStore.setItem(`${FINANCE_STORAGE_KEY}-cashbook`, JSON.stringify(cashBookEntries));
       } catch { /* ignore */ }
     }
@@ -1369,6 +1357,16 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         if (Array.isArray(jr?.data)) setJournalEntries(jr.data);
       } catch (jErr) {
         console.warn("[FinanceStore] journals load notice:", jErr);
+      }
+      try {
+        const [arRes, apRes]: any[] = await Promise.all([
+          apiRequest("/api/accounting/ar-invoices"),
+          apiRequest("/api/accounting/ap-invoices"),
+        ]);
+        if (Array.isArray(arRes?.data)) setReceivableInvoices(arRes.data);
+        if (Array.isArray(apRes?.data)) setPayableInvoices(apRes.data);
+      } catch (invErr) {
+        console.warn("[FinanceStore] invoice registers load notice:", invErr);
       }
 
       // 3. Synthesize "PDC Received" (Entry 1 only) for every PDC in the system.
@@ -1957,16 +1955,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       // 6. Reload kvStore caches for AP/AR/Cashbook (vouchers are maintained authoritatively above)
       if (typeof window !== "undefined") {
         try {
-          const arDataSaved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-ar`);
-          if (arDataSaved) {
-            const parsed = JSON.parse(arDataSaved);
-            if (Array.isArray(parsed) && parsed.length) setReceivableInvoices(parsed);
-          }
-          const apDataSaved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-ap`);
-          if (apDataSaved) {
-            const parsed = JSON.parse(apDataSaved);
-            if (Array.isArray(parsed) && parsed.length) setPayableInvoices(parsed);
-          }
           const cbDataSaved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-cashbook`);
           if (cbDataSaved) {
             const parsed = JSON.parse(cbDataSaved);
@@ -2466,19 +2454,28 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     toast.success(`GRN ${newGrn.grn_no} cost allocated & posted to ${newGrn.mapped_gl}!`);
   }
 
+  /** Runs a backend invoice action, then reloads the registers and ledgers from the database. */
+  async function invoiceAction<T = any>(path: string, body: unknown): Promise<T | null> {
+    try {
+      const res: any = await apiRequest(path, { method: "POST", body: JSON.stringify(body) });
+      window.dispatchEvent(new Event("finance_vouchers_updated"));
+      void fetchDbData(false);
+      return res as T;
+    } catch (err: any) {
+      toast.error(err?.message || "The action failed");
+      return null;
+    }
+  }
+
   function addPayableInvoice(inv: Omit<PayableInvoice, "id" | "status">) {
     const periodCheck = isPostingPeriodClosed(inv.voucher_date || inv.date);
     if (periodCheck.closed) {
       toast.error(`Posting rejected: Accounting period ${periodCheck.periodName} is CLOSED.`);
       return;
     }
-    const newInv: PayableInvoice = {
-      ...inv,
-      id: `ap-${Date.now()}`,
-      status: "Unpaid"
-    };
-    setPayableInvoices(prev => [newInv, ...prev]);
-    toast.success(`AP Invoice ${newInv.invoice_no} created and posted!`);
+    void invoiceAction("/api/accounting/ap-invoices", inv).then((r) => {
+      if (r) toast.success(`AP Invoice ${inv.invoice_no} created and posted!`);
+    });
   }
 
   function markPayableInvoicePaid(invoiceNo: string) {
@@ -2488,31 +2485,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       toast.error(`Cannot generate Payment Voucher: Current period ${periodCheck.periodName} is CLOSED.`);
       return;
     }
-    setPayableInvoices(prev => prev.map(inv => {
-      if (inv.invoice_no === invoiceNo) {
-        // Also auto-record a Payment Voucher
-        const pv: FinanceVoucher = {
-          id: `vch-pay-${Date.now()}`,
-          voucher_no: `VCH-PAY-${Math.floor(1000 + Math.random() * 9000)}`,
-          property_name: inv.property,
-          tenant_name: inv.vendor,
-          voucher_type: "Payment Voucher",
-          date: new Date().toISOString().split("T")[0],
-          name: `${inv.vendor} — Settlement for Invoice ${invoiceNo}`,
-          debit: "Trade Payables - Vendors",
-          debit_code: "22100001",
-          credit: "Bank Operating Account",
-          credit_code: "12000001",
-          amount: inv.amount,
-          method: "Bank Transfer",
-          status: "Posted",
-        };
-        setVouchers(v => [pv, ...v]);
-        return { ...inv, status: "Paid" as const };
-      }
-      return inv;
-    }));
-    toast.success(`Invoice ${invoiceNo} marked as Paid. Payment Voucher generated.`);
+    void invoiceAction(`/api/accounting/ap-invoices/${encodeURIComponent(invoiceNo)}/pay`, { date: todayStr }).then((r) => {
+      if (r) toast.success(`Invoice ${invoiceNo} marked as Paid. Payment Voucher generated.`);
+    });
   }
 
   function addVoucher(vch: Omit<FinanceVoucher, "id" | "status">, options?: { skipDbPersist?: boolean }) {
@@ -2586,63 +2561,24 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       toast.error(`Posting rejected: Accounting period ${periodCheck.periodName} is CLOSED.`);
       return;
     }
-    const targetPeriod = (inv.billingPeriod || inv.date || "").slice(0, 7);
-    const cleanUnit = (inv.unit || "").trim().toLowerCase();
-    const cleanProp = (inv.property || "").trim().toLowerCase();
-    if (cleanUnit && targetPeriod) {
-      const duplicate = receivableInvoices.find(existing => {
-        const exU = (existing.unit || "").trim().toLowerCase();
-        const exP = (existing.property || "").trim().toLowerCase();
-        const exPeriod = (existing.billingPeriod || existing.date || "").slice(0, 7);
-        return exU === cleanUnit && (!cleanProp || !exP || exP === cleanProp) && exPeriod === targetPeriod;
-      });
-      if (duplicate) {
-        toast.error(`Duplicate Invoice Restricted: Unit ${inv.unit} is already invoiced (${duplicate.invoice_no}) for period ${targetPeriod}.`);
-        return;
-      }
-    }
-    const newInv: ReceivableInvoice = {
-      ...inv,
-      billingPeriod: inv.billingPeriod || targetPeriod,
-      id: `ar-${Date.now()}`,
-      status: "Pending"
-    };
-    setReceivableInvoices(prev => [newInv, ...prev]);
-    toast.success(`AR Invoice ${newInv.invoice_no} generated and posted!`);
+    void invoiceAction("/api/accounting/ar-invoices", { invoices: [inv] }).then((r: any) => {
+      if (!r) return;
+      if (r.skipped?.length) toast.error(`Duplicate Invoice Restricted: ${r.skipped[0].reason}`);
+      else toast.success(`AR Invoice ${inv.invoice_no} generated and posted!`);
+    });
   }
 
   function addBulkReceivableInvoices(invoices: Omit<ReceivableInvoice, "id" | "status">[]) {
-    if (invoices.length > 0) {
-      const periodCheck = isPostingPeriodClosed(invoices[0].date);
-      if (periodCheck.closed) {
-        toast.error(`Bulk billing rejected: Accounting period ${periodCheck.periodName} is CLOSED.`);
-        return;
-      }
+    if (invoices.length === 0) return;
+    const periodCheck = isPostingPeriodClosed(invoices[0].date);
+    if (periodCheck.closed) {
+      toast.error(`Bulk billing rejected: Accounting period ${periodCheck.periodName} is CLOSED.`);
+      return;
     }
-    const timestamp = Date.now();
-    setReceivableInvoices(prev => {
-      const seenKeys = new Set(
-        prev.map(existing => `${(existing.unit || "").trim().toLowerCase()}__${(existing.billingPeriod || existing.date || "").slice(0, 7)}`)
-      );
-      const uniqueInvoices: ReceivableInvoice[] = [];
-      invoices.forEach((inv, idx) => {
-        const periodKey = (inv.billingPeriod || inv.date || "").slice(0, 7);
-        const unitKey = `${(inv.unit || "").trim().toLowerCase()}__${periodKey}`;
-        if (seenKeys.has(unitKey)) return;
-        seenKeys.add(unitKey);
-        uniqueInvoices.push({
-          ...inv,
-          billingPeriod: inv.billingPeriod || periodKey,
-          id: `ar-bulk-${timestamp}-${idx}`,
-          status: "Pending" as const
-        });
-      });
-      if (uniqueInvoices.length === 0) {
-        toast.error("Duplicate Invoice Restricted: Selected unit(s) already have invoices for this period.");
-        return prev;
-      }
-      toast.success(`${uniqueInvoices.length} AR Invoices generated and posted successfully!`);
-      return [...uniqueInvoices, ...prev];
+    void invoiceAction("/api/accounting/ar-invoices", { invoices }).then((r: any) => {
+      if (!r) return;
+      if (!r.created?.length) toast.error("Duplicate Invoice Restricted: Selected unit(s) already have invoices for this period.");
+      else toast.success(`${r.created.length} AR Invoices generated and posted successfully!${r.skipped?.length ? ` ${r.skipped.length} skipped as duplicates.` : ""}`);
     });
   }
 
@@ -2653,45 +2589,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       toast.error(`Cannot generate Receipt Voucher: Current period ${periodCheck.periodName} is CLOSED.`);
       return;
     }
-    const targetInv = receivableInvoices.find(inv => inv.invoice_no === invoiceNo);
-    setReceivableInvoices(prev => prev.map(inv => (inv.invoice_no === invoiceNo ? { ...inv, status: "Paid" as const } : inv)));
-    if (targetInv) {
-      const canonicalProp = resolveCanonicalPropertyName(targetInv.property, targetInv.unit, targetInv.property || "");
-      const rv: FinanceVoucher = {
-        id: `vch-rec-${Date.now()}`,
-        voucher_no: `VCH-REC-${Math.floor(1000 + Math.random() * 9000)}`,
-        voucher_type: "Receipt Voucher",
-        date: todayStr,
-        name: `${targetInv.tenant} — Receipt for Rent Invoice ${invoiceNo} (${targetInv.unit})`,
-        property_name: canonicalProp,
-        unit_ref: targetInv.unit,
-        tenant_name: targetInv.tenant,
-        debit: "Commercial Bank of Qatar (CBQ)",
-        debit_code: "12000001",
-        credit: "Tenant Receivables — Unit SL",
-        credit_code: "12413001",
-        amount: targetInv.amount,
-        method: "Bank Transfer",
-        status: "Posted",
-      };
-      setVouchers(v => [rv, ...v]);
-      void Promise.resolve(
-        insertVoucherOnce({
-          voucher_number: rv.voucher_no,
-          voucher_date: rv.date,
-          voucher_type: "RV",
-          reference_no: rv.debit_code,
-          description: rv.name,
-          total_amount: rv.amount,
-          status: "posted",
-          posted_at: new Date().toISOString(),
-        })
-      ).then(({ data }: any) => {
-        const insertedId = Array.isArray(data) ? data[0]?.id : (data as any)?.id;
-        if (insertedId) seenVoucherIds.current.add(String(insertedId));
-      }).catch(() => {});
-    }
-    toast.success(`AR Invoice ${invoiceNo} marked as Collected.`);
+    void invoiceAction(`/api/accounting/ar-invoices/${encodeURIComponent(invoiceNo)}/collect`, { date: todayStr }).then((r) => {
+      if (r) toast.success(`AR Invoice ${invoiceNo} marked as Collected.`);
+    });
   }
 
   function addLegalEscalation(esc: Omit<LegalReceivable, "id">) {
