@@ -27,6 +27,7 @@ import {
   fetchJournalEntries, fetchARLedgers, fetchGLAccounts,
   createJournalEntry, createAREntry, settleAREntry, createGLAccount, createCoaAccount,
   fetchERPChartOfAccounts, fetchUnitCOAs, fetchCoaHierarchyTree, fetchPropertyCoaMappings, fetchCoaSLByGL,
+  fetchPropertyOptions, savePropertyCoaMapping,
   type JournalEntry, type ARLedger, type GLAccount, type ERPChartOfAccount, type UnitCOA,
   type CoaType, type CoaGroup, type CoaClass, type CoaGL, type CoaSL, type PropertyCoaMapping, type UnitCoaMapping
 } from "@/lib/db";
@@ -1795,6 +1796,53 @@ function ChartOfAccountsSubModule() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'tree' | 'master' | 'units' | 'properties'>('tree');
   const [bulkCoaOpen, setBulkCoaOpen] = useState(false);
+  const [propRuleOpen, setPropRuleOpen] = useState(false);
+  const [propRuleSaving, setPropRuleSaving] = useState(false);
+  const [propOptions, setPropOptions] = useState<{ id: string; title: string; property_code: string | null }[]>([]);
+  const emptyPropRule = { property_id: "", rental_revenue_gl_code: "", property_management_fee_gl_code: "", other_income_gl_code: "", gain_loss_disposal_gl_code: "" };
+  const [propRuleForm, setPropRuleForm] = useState(emptyPropRule);
+
+  const openPropRule = async (existing?: PropertyCoaMapping) => {
+    const opts = await fetchPropertyOptions().catch(() => []);
+    setPropOptions(opts);
+    setPropRuleForm(existing ? {
+      property_id: existing.property_id,
+      rental_revenue_gl_code: existing.rental_revenue_gl_code || "",
+      property_management_fee_gl_code: existing.property_management_fee_gl_code || "",
+      other_income_gl_code: existing.other_income_gl_code || "",
+      gain_loss_disposal_gl_code: existing.gain_loss_disposal_gl_code || "",
+    } : emptyPropRule);
+    setPropRuleOpen(true);
+  };
+
+  const savePropRule = async () => {
+    const f = propRuleForm;
+    const codes = [f.rental_revenue_gl_code, f.property_management_fee_gl_code, f.other_income_gl_code, f.gain_loss_disposal_gl_code].map(c => c.trim());
+    if (!f.property_id) { toast.error("Select a property."); return; }
+    if (codes.some(c => !c)) { toast.error("Enter all four GL codes."); return; }
+    const unknown = codes.filter(c => !erpAccounts.some(a => a.code === c));
+    if (unknown.length) { toast.error(`Not in the Chart of Accounts: ${unknown.join(", ")}`); return; }
+    const prop = propOptions.find(p => p.id === f.property_id);
+    setPropRuleSaving(true);
+    try {
+      await savePropertyCoaMapping({
+        property_id: f.property_id,
+        property_code: prop?.property_code || null,
+        property_name: prop?.title || "",
+        rental_revenue_gl_code: codes[0],
+        property_management_fee_gl_code: codes[1],
+        other_income_gl_code: codes[2],
+        gain_loss_disposal_gl_code: codes[3],
+      });
+      setPropertyMappings(await fetchPropertyCoaMappings());
+      setPropRuleOpen(false);
+      toast.success("Property rules saved.");
+    } catch (e: any) {
+      toast.error("Failed to save property rules: " + e.message);
+    } finally {
+      setPropRuleSaving(false);
+    }
+  };
   const [bulkUnitLedgerOpen, setBulkUnitLedgerOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
@@ -2150,6 +2198,9 @@ function ChartOfAccountsSubModule() {
             </button>
           </div>
 
+          {tab === 'properties' && (
+            <Button size="sm" onClick={() => openPropRule()} className="gap-2"><Plus className="h-4 w-4" /> Set Property Rules</Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => setBulkCoaOpen(true)} className="gap-2">
             <FileSpreadsheet className="h-4 w-4" /> Bulk Upload (Excel)
           </Button>
@@ -2174,6 +2225,44 @@ function ChartOfAccountsSubModule() {
               loadData();
             }}
           />
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: PROPERTY RULES (four revenue GL codes per property) */}
+      <Dialog open={propRuleOpen} onOpenChange={setPropRuleOpen}>
+        <DialogContent className="max-w-lg bg-card p-6">
+          <DialogHeader>
+            <DialogTitle>Property Rules</DialogTitle>
+            <DialogDescription>Choose a property and the four GL accounts its revenue posts to. All four are required.</DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3">
+            <div className="space-y-1">
+              <p className="text-xs font-medium text-muted-foreground">Property</p>
+              <Select value={propRuleForm.property_id} onValueChange={(v) => setPropRuleForm((f) => ({ ...f, property_id: v }))}>
+                <SelectTrigger className="bg-background"><SelectValue placeholder="Select property" /></SelectTrigger>
+                <SelectContent>
+                  {propOptions.map((p) => (
+                    <SelectItem key={p.id} value={p.id}>{p.title}{p.property_code ? ` (${p.property_code})` : ""}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            {([
+              ["rental_revenue_gl_code", "Rental Revenue GL"],
+              ["property_management_fee_gl_code", "Property Management Fee GL"],
+              ["other_income_gl_code", "Other Income GL"],
+              ["gain_loss_disposal_gl_code", "Gain / Loss on Disposal GL"],
+            ] as const).map(([key, label]) => (
+              <div key={key} className="space-y-1">
+                <p className="text-xs font-medium text-muted-foreground">{label}</p>
+                <Input value={propRuleForm[key]} onChange={(e) => setPropRuleForm((f) => ({ ...f, [key]: e.target.value }))} placeholder="Account code, e.g. 41100" />
+              </div>
+            ))}
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setPropRuleOpen(false)}>Cancel</Button>
+            <Button onClick={savePropRule} disabled={propRuleSaving}>{propRuleSaving ? "Saving..." : "Save Property Rules"}</Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
@@ -2491,7 +2580,7 @@ function ChartOfAccountsSubModule() {
             </TableHeader>
             <TableBody>
               {filteredProperties.map(p => (
-                <TableRow key={p.id} className="hover:bg-muted/30 text-xs">
+                <TableRow key={p.id} className="hover:bg-muted/30 text-xs cursor-pointer" onClick={() => openPropRule(p)}>
                   <TableCell className="font-semibold text-foreground">{p.property_name}</TableCell>
                   <TableCell><Badge variant="outline" className="font-mono text-emerald-700 bg-emerald-50 border-emerald-200">{p.rental_revenue_gl_code || '41100'}</Badge></TableCell>
                   <TableCell><Badge variant="outline" className="font-mono text-blue-700 bg-blue-50 border-blue-200">{p.property_management_fee_gl_code || '41101'}</Badge></TableCell>

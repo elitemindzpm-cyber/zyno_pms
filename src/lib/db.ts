@@ -1937,9 +1937,46 @@ export async function fetchUnitCoaMappings() {
 }
 
 export async function fetchPropertyCoaMappings() {
-  const { data, error } = await db.from('property_coa_mapping').select('*').order('property_name');
+  const { data, error } = await db.from('property_coa_mapping').select('*, properties(title, property_code)').order('property_name');
   if (error) throw error;
-  return data as PropertyCoaMapping[];
+  return (data as any[]).map((m) => ({
+    ...m,
+    property_name: m.properties?.title || m.property_name || '',
+    property_code: m.properties?.property_code || m.property_code || '',
+  })) as PropertyCoaMapping[];
+}
+
+export async function fetchPropertyOptions() {
+  const { data, error } = await db.from('properties').select('id, title, property_code').order('title');
+  if (error) throw error;
+  return (data || []) as { id: string; title: string; property_code: string | null }[];
+}
+
+export type PropertyRulesInput = {
+  property_id: string;
+  property_code: string | null;
+  property_name: string;
+  rental_revenue_gl_code: string;
+  property_management_fee_gl_code: string;
+  other_income_gl_code: string;
+  gain_loss_disposal_gl_code: string;
+};
+
+// One rule set per property: update the existing row, or insert it.
+export async function savePropertyCoaMapping(input: PropertyRulesInput) {
+  const { data: existing, error: findErr } = await db
+    .from('property_coa_mapping')
+    .select('id')
+    .eq('property_id', input.property_id)
+    .maybeSingle();
+  if (findErr) throw findErr;
+  if (existing?.id) {
+    const { error } = await db.from('property_coa_mapping').update({ ...input, is_active: true }).eq('id', existing.id);
+    if (error) throw error;
+    return;
+  }
+  const { error } = await db.from('property_coa_mapping').insert({ ...input, is_active: true });
+  if (error) throw error;
 }
 
 export async function fetchCoaSLByGL(glIdOrCode: string) {
