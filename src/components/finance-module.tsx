@@ -7338,6 +7338,35 @@ type TrialBalanceAccount = {
   balance: number;
 };
 
+/** Trial balance accounts for a period, computed by the backend from posted voucher lines. */
+function useTrialBalanceFromDb(fromDate: string, toDate: string) {
+  const [accounts, setAccounts] = useState<TrialBalanceAccount[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const load = useCallback(async () => {
+    setLoading(true);
+    try {
+      const qs = new URLSearchParams();
+      if (fromDate) qs.set("from", fromDate);
+      if (toDate) qs.set("to", toDate);
+      const res: any = await apiRequest(`/api/accounting/trial-balance${qs.toString() ? `?${qs}` : ""}`);
+      setAccounts(Array.isArray(res?.data) ? res.data : []);
+      setError(null);
+    } catch (e: any) {
+      setError(e?.message || "Could not load the trial balance");
+    } finally {
+      setLoading(false);
+    }
+  }, [fromDate, toDate]);
+  useEffect(() => {
+    void load();
+    const onChange = () => { void load(); };
+    window.addEventListener("finance_vouchers_updated", onChange);
+    return () => window.removeEventListener("finance_vouchers_updated", onChange);
+  }, [load]);
+  return { accounts, loading, error };
+}
+
 function getTrialBalanceForPeriod(
   chartAccounts: TrialBalanceAccount[],
   transactions: Array<{
@@ -7397,18 +7426,10 @@ function summarizeTrialBalance(accounts: TrialBalanceAccount[]) {
 }
 
 function TrialBalanceSimpleSubModule() {
-  const { trialBalanceDetailed, allLedgerTransactions } = useFinanceStore();
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-  const trialBalanceSummary = useMemo(
-    () => summarizeTrialBalance(getTrialBalanceForPeriod(
-      trialBalanceDetailed,
-      allLedgerTransactions,
-      fromDate,
-      toDate,
-    )),
-    [trialBalanceDetailed, allLedgerTransactions, fromDate, toDate]
-  );
+  const { accounts: dbAccounts, error: tbError } = useTrialBalanceFromDb(fromDate, toDate);
+  const trialBalanceSummary = useMemo(() => summarizeTrialBalance(dbAccounts), [dbAccounts]);
   const { assets, liabilities, capital, revenue, expenses, totalDebit, totalCredit, isBalanced } = trialBalanceSummary;
 
   return (
@@ -7417,6 +7438,7 @@ function TrialBalanceSimpleSubModule() {
         <div>
           <h3 className="text-sm font-semibold">Trial Balance (Simple Summary)</h3>
           <p className="text-xs text-muted-foreground">Summary totals across Asset, Liability, Equity, Revenue, and Expense classes for the selected posting period.</p>
+          {tbError && <p className="text-xs text-red-600 mt-1">{tbError}</p>}
         </div>
         <div className="flex flex-wrap items-end gap-2">
           <div className="space-y-1">
@@ -7486,15 +7508,10 @@ function TrialBalanceSimpleSubModule() {
 }
 
 function TrialBalanceFullSubModule() {
-  const { trialBalanceDetailed, allLedgerTransactions } = useFinanceStore();
   const [viewMode, setViewMode] = useState<"net" | "gross">("net");
   const [fromDate, setFromDate] = useState("");
   const [toDate, setToDate] = useState("");
-
-  const periodTrialBalance = useMemo(
-    () => getTrialBalanceForPeriod(trialBalanceDetailed, allLedgerTransactions, fromDate, toDate),
-    [trialBalanceDetailed, allLedgerTransactions, fromDate, toDate]
-  );
+  const { accounts: periodTrialBalance, error: tbFullError } = useTrialBalanceFromDb(fromDate, toDate);
 
   // Net Period Balances mode: compute net Dr / Cr per account
   const netAccounts = useMemo(() => {
@@ -7517,6 +7534,7 @@ function TrialBalanceFullSubModule() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
         <div>
           <h3 className="text-sm font-semibold">Detailed General Ledger Trial Balance</h3>
+          {tbFullError && <p className="text-xs text-red-600">{tbFullError}</p>}
           <p className="text-xs text-muted-foreground">
             {viewMode === "net"
               ? "Net debit and credit movements per account for the selected posting period."
@@ -9180,65 +9198,34 @@ function RevenueGenerationSubModule() {
 }
 
 function ProfitAndLossSubModule() {
-  const { profitAndLossReport: plOverall, allLedgerTransactions, isSyncing, refreshFinanceData } = useFinanceStore();
+  // The statement is computed by the backend from posted voucher lines.
   const [selectedPeriod, setSelectedPeriod] = useState<string>("all");
-
-  const periodOptions = useMemo(() => {
-    const set = new Set<string>();
-    allLedgerTransactions.forEach(tx => {
-      if (tx.date && tx.date.length >= 7) {
-        set.add(tx.date.slice(0, 7));
-      }
-    });
-    set.add("2026-10");
-    return Array.from(set).sort((a, b) => b.localeCompare(a));
-  }, [allLedgerTransactions]);
-
-  const pl = useMemo(() => {
-    if (selectedPeriod === "all") return plOverall;
-    let rentalRevenue = 0;
-    let otherRevenue = 0;
-    let maintenanceExpense = 0;
-    let payrollExpense = 0;
-    let utilitiesExpense = 0;
-    let cleaningExpense = 0;
-    let totalRevenue = 0;
-    let totalExpenses = 0;
-
-    allLedgerTransactions.forEach(tx => {
-      if (!tx.date || !tx.date.startsWith(selectedPeriod)) return;
-      if (tx.account_type === "Revenue") {
-        const netRev = (tx.credit || 0) - (tx.debit || 0);
-        totalRevenue += netRev;
-        if (tx.account_code.startsWith("411")) rentalRevenue += netRev;
-        else otherRevenue += netRev;
-      } else if (tx.account_type === "Expenses") {
-        const netExp = (tx.debit || 0) - (tx.credit || 0);
-        totalExpenses += netExp;
-        if (tx.account_code.startsWith("51101")) payrollExpense += netExp;
-        else if (tx.account_code.startsWith("51003")) utilitiesExpense += netExp;
-        else if (
-          tx.account_code === "51004007" ||
-          tx.account_code === "51001002" ||
-          tx.account_code === "51002002"
-        ) cleaningExpense += netExp;
-        else maintenanceExpense += netExp;
-      }
-    });
-
-    const netProfit = totalRevenue - totalExpenses;
-    return {
-      rentalRevenue,
-      otherRevenue,
-      totalRevenue,
-      maintenanceExpense,
-      payrollExpense,
-      utilitiesExpense,
-      cleaningExpense,
-      totalExpenses,
-      netProfit,
-    };
-  }, [selectedPeriod, plOverall, allLedgerTransactions]);
+  const emptyPl = { rentalRevenue: 0, otherRevenue: 0, totalRevenue: 0, maintenanceExpense: 0, payrollExpense: 0, utilitiesExpense: 0, cleaningExpense: 0, totalExpenses: 0, netProfit: 0 };
+  const [pl, setPl] = useState<typeof emptyPl>(emptyPl);
+  const [periodMonths, setPeriodMonths] = useState<string[]>([]);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [plError, setPlError] = useState<string | null>(null);
+  const loadPl = useCallback(async () => {
+    setIsSyncing(true);
+    try {
+      const res: any = await apiRequest(`/api/accounting/profit-loss${selectedPeriod === "all" ? "" : `?month=${selectedPeriod}`}`);
+      setPl({ ...emptyPl, ...(res?.data || {}) });
+      setPeriodMonths(Array.isArray(res?.months) ? res.months : []);
+      setPlError(null);
+    } catch (e: any) {
+      setPlError(e?.message || "Could not load the profit and loss");
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [selectedPeriod]);
+  useEffect(() => {
+    void loadPl();
+    const onChange = () => { void loadPl(); };
+    window.addEventListener("finance_vouchers_updated", onChange);
+    return () => window.removeEventListener("finance_vouchers_updated", onChange);
+  }, [loadPl]);
+  const refreshFinanceData = () => { void loadPl(); };
+  const periodOptions = periodMonths;
 
   const exportPnLToCSV = () => {
     const rows = [
@@ -9273,6 +9260,7 @@ function ProfitAndLossSubModule() {
       <div className="flex justify-between items-center gap-3 flex-wrap">
         <div>
           <h3 className="text-sm font-semibold">Profit and Loss Statement (P&amp;L — Vertical Statement Format)</h3>
+          {plError && <p className="text-xs text-red-600">{plError}</p>}
           <p className="text-xs text-muted-foreground">
             {selectedPeriod === "all" ? "Consolidated vertical financial performance across all periods" : `Performance report for month: ${selectedPeriod === "2026-10" ? "Oct-26 (October 2026)" : selectedPeriod}`}
           </p>
@@ -9388,7 +9376,30 @@ function ProfitAndLossSubModule() {
 }
 
 function BalanceSheetSubModule() {
-  const { balanceSheetReport: bs, isSyncing, refreshFinanceData } = useFinanceStore();
+  // The balance sheet is computed by the backend from posted voucher lines.
+  const emptyBs = { bankCashAssets: 0, pdcInHandAssets: 0, arReceivablesAssets: 0, legalReceivablesAssets: 0, fixedAssets: 0, totalAssets: 0, apLiabilities: 0, securityDepositLiabilities: 0, pdcCustomerLiabilities: 0, totalLiabilities: 0, ownerCapital: 0, retainedNetProfit: 0, totalEquity: 0, totalLiabilitiesAndEquity: 0, isBalanced: true };
+  const [bs, setBs] = useState<typeof emptyBs>(emptyBs);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [bsError, setBsError] = useState<string | null>(null);
+  const loadBs = useCallback(async () => {
+    setIsSyncing(true);
+    try {
+      const res: any = await apiRequest("/api/accounting/balance-sheet");
+      setBs({ ...emptyBs, ...(res?.data || {}) });
+      setBsError(null);
+    } catch (e: any) {
+      setBsError(e?.message || "Could not load the balance sheet");
+    } finally {
+      setIsSyncing(false);
+    }
+  }, []);
+  useEffect(() => {
+    void loadBs();
+    const onChange = () => { void loadBs(); };
+    window.addEventListener("finance_vouchers_updated", onChange);
+    return () => window.removeEventListener("finance_vouchers_updated", onChange);
+  }, [loadBs]);
+  const refreshFinanceData = () => { void loadBs(); };
 
   const exportBalanceSheetToCSV = () => {
     const rows = [
@@ -10559,106 +10570,34 @@ interface CashBookEntry {
 }
 
 function CashBookSubModule() {
-  const { cashBookEntries, addCashBookEntry, isSyncing, refreshFinanceData } = useFinanceStore();
-  const [open, setOpen] = useState(false);
-  const [directEntries, setDirectEntries] = useState<CashBookEntry[]>([]);
+  // The cash book is read from the backend: every posted movement on the Cash In Hand accounts (12100*).
+  const [rows, setRows] = useState<Array<{ id: string; date: string; voucher: string; description: string; cash_in: number; cash_out: number; balance: number }>>([]);
   const [loadingDirect, setLoadingDirect] = useState(true);
-  const [form, setForm] = useState({
-    date: new Date().toISOString().split("T")[0],
-    voucher: `CSH-${Math.floor(10 + Math.random() * 90)}`,
-    description: "",
-    type: "in",
-    amount: "",
-  });
-
-  // Fetch PDC deposits and cash receipts directly from DB (mirrors how PDC Management loads data)
-  useEffect(() => {
-    async function fetchCashEntries() {
-      setLoadingDirect(true);
-      try {
-        const [finRes, evtRes] = await Promise.all([
-          db.from("fin_pdc_register").select("id, cheque_number, amount, status, deposit_date, cheque_date").order("cheque_date", { ascending: false }),
-          db.from("fin_accounting_events").select("id, event_type, event_date, posting_date, total_debit, total_credit, description, reference_number, metadata").order("event_date", { ascending: false }).limit(300),
-        ]);
-
-        const synthesized: CashBookEntry[] = [];
-        let runBal = 0;
-
-        // PDC deposits → Cash In (money arrived in bank from deposited cheque)
-        for (const p of (finRes.data || [])) {
-          const rawStatus = (p.status || "").toLowerCase();
-          if (rawStatus !== "deposited" && rawStatus !== "cleared" && rawStatus !== "partial cash") continue;
-          const amt = Number(p.amount || 0);
-          if (amt <= 0) continue;
-          const date = p.deposit_date || p.cheque_date || new Date().toISOString().split("T")[0];
-          const desc = `PDC Deposited [Cheque #${p.cheque_number}]`;
-          runBal += amt;
-          synthesized.push({ id: `cb-pdc-${p.id}`, date, voucher: `VCH-PDC-DEP-${p.cheque_number}`, description: desc, cash_in: amt, cash_out: 0, balance: runBal });
-        }
-
-        // Accounting events → Cash In / Out
-        for (const e of (evtRes.data || [])) {
-          const evtType = (e.event_type || "").toLowerCase();
-          const meta = (e.metadata as any) || {};
-          const amt = Number(e.total_debit || e.total_credit || 0);
-          if (amt <= 0) continue;
-          const date = e.event_date || e.posting_date || new Date().toISOString().split("T")[0];
-          const voucher = e.reference_number || `EVT-${String(e.id).slice(0, 8).toUpperCase()}`;
-          const isCashIn = evtType.includes("receiv") || evtType.includes("deposit") || evtType.includes("collect");
-          if (isCashIn) {
-            runBal += amt;
-            synthesized.push({ id: `cb-evt-${e.id}`, date, voucher, description: e.description || e.event_type, cash_in: amt, cash_out: 0, balance: runBal });
-          } else if (evtType.includes("pay") || evtType.includes("refund") || evtType.includes("expense")) {
-            runBal -= amt;
-            synthesized.push({ id: `cb-evt-${e.id}`, date, voucher, description: e.description || e.event_type, cash_in: 0, cash_out: amt, balance: runBal });
-          }
-        }
-
-        setDirectEntries(synthesized);
-      } catch (err) {
-        console.warn("[CashBook] Direct fetch failed:", err);
-      } finally {
-        setLoadingDirect(false);
-      }
+  const [cbError, setCbError] = useState<string | null>(null);
+  const loadCashBook = useCallback(async () => {
+    setLoadingDirect(true);
+    try {
+      const res: any = await apiRequest("/api/accounting/cash-book");
+      setRows(Array.isArray(res?.data) ? res.data : []);
+      setCbError(null);
+    } catch (e: any) {
+      setCbError(e?.message || "Could not load the cash book");
+    } finally {
+      setLoadingDirect(false);
     }
-    void fetchCashEntries();
   }, []);
+  useEffect(() => {
+    void loadCashBook();
+    const onChange = () => { void loadCashBook(); };
+    window.addEventListener("finance_vouchers_updated", onChange);
+    return () => window.removeEventListener("finance_vouchers_updated", onChange);
+  }, [loadCashBook]);
+  const isSyncing = loadingDirect;
+  const refreshFinanceData = () => { void loadCashBook(); };
 
-  function handleAdd() {
-    const amt = parseFloat(form.amount) || 0;
-    addCashBookEntry({
-      date: form.date,
-      voucher: form.voucher,
-      description: form.description || "Cash Transaction",
-      type: form.type as "in" | "out",
-      amount: amt
-    });
-    setOpen(false);
-  }
-
-  // Merge manual + direct entries (deduplicated by id), sorted newest first
-  const allCashEntries = useMemo(() => {
-    const seenIds = new Set<string>();
-    const merged: CashBookEntry[] = [];
-    for (const e of [...cashBookEntries, ...directEntries]) {
-      if (e && !seenIds.has(e.id)) { seenIds.add(e.id); merged.push(e); }
-    }
-    return merged.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
-  }, [cashBookEntries, directEntries]);
-
-  // Recompute running balance across ALL entries (chronological)
-  const displayRows = useMemo(() => {
-    const chrono = [...allCashEntries].sort((a, b) => (a.date || "").localeCompare(b.date || ""));
-    let runBal = 0;
-    const withBal = chrono.map(r => {
-      runBal += (r.cash_in || 0) - (r.cash_out || 0);
-      return { ...r, computedRunningBal: runBal };
-    });
-    return withBal.reverse();
-  }, [allCashEntries]);
-
-  const totalIn = allCashEntries.reduce((s, r) => s + (r.cash_in || 0), 0);
-  const totalOut = allCashEntries.reduce((s, r) => s + (r.cash_out || 0), 0);
+  const displayRows = rows.map((r) => ({ ...r, computedRunningBal: r.balance }));
+  const totalIn = rows.reduce((s, r) => s + (r.cash_in || 0), 0);
+  const totalOut = rows.reduce((s, r) => s + (r.cash_out || 0), 0);
   const currentNetBalance = totalIn - totalOut;
 
   return (
@@ -10666,7 +10605,8 @@ function CashBookSubModule() {
       <div className="flex justify-between items-center">
         <div>
           <h3 className="text-sm font-semibold">Main Cash Book — Live</h3>
-          <p className="text-xs text-muted-foreground">All physical cash receipts, PDC deposits, vault deposits, and disbursements — synced with Cash On Hand report.</p>
+          <p className="text-xs text-muted-foreground">Every posted movement on the Cash In Hand accounts (12100), read from the ledger. Cash is recorded by posting a receipt or payment, not typed in here.</p>
+          {cbError && <p className="text-xs text-red-600 mt-1">{cbError}</p>}
         </div>
         <div className="flex items-center gap-2">
           <Button
@@ -10680,7 +10620,6 @@ function CashBookSubModule() {
             <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin text-primary" : ""}`} />
             {isSyncing ? "Syncing..." : "Refresh"}
           </Button>
-          <Button size="sm" onClick={() => setOpen(true)} className="gap-2"><Plus className="h-4 w-4" /> Add Cash Entry</Button>
         </div>
       </div>
 
@@ -10729,57 +10668,6 @@ function CashBookSubModule() {
         </Table>
       </div>
 
-      <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-md">
-          <DialogHeader><DialogTitle>Add Cash Book Entry</DialogTitle></DialogHeader>
-          <div className="space-y-3 py-2 text-xs">
-            <div className="grid grid-cols-2 gap-3">
-              <div><Label>Date</Label><Input type="date" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} /></div>
-              <div><Label>Voucher Ref</Label><Input value={form.voucher} onChange={e => setForm({ ...form, voucher: e.target.value })} /></div>
-            </div>
-            <div><Label>Description</Label><Input placeholder="Reason for cash transaction" value={form.description} onChange={e => setForm({ ...form, description: e.target.value })} /></div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>Type</Label>
-                <Select value={form.type} onValueChange={v => setForm({ ...form, type: v })}>
-                  <SelectTrigger><SelectValue /></SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="in">Cash In (Receipt)</SelectItem>
-                    <SelectItem value="out">Cash Out (Payment)</SelectItem>
-                  </SelectContent>
-                </Select>
-              </div>
-              <div><Label>Amount (QAR)</Label><Input type="number" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
-            </div>
-
-            {/* Live GL / COA Impact Preview */}
-            {parseFloat(form.amount) > 0 && (
-              <div className="rounded-lg border border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-950/20 p-2.5 space-y-1.5 text-xs">
-                <div className="flex items-center gap-1.5 text-emerald-800 dark:text-emerald-300 font-semibold">
-                  <ShieldCheck className="h-4 w-4 text-emerald-600 dark:text-emerald-400" />
-                  <span>Ledgers / Accounts Updated by this Cash Entry</span>
-                </div>
-                <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
-                  <div className="bg-background p-2 rounded border border-emerald-200">
-                    <span className="text-emerald-700 dark:text-emerald-400 font-bold block">Debit (DR):</span>
-                    <span>{form.type === 'in' ? '10100 - Cash In Hand (Office Vault)' : '51004001 - Repair and Maintenance Cost'}</span>
-                    <span className="block font-bold text-emerald-600 mt-1">QR {parseFloat(form.amount || '0').toLocaleString()}</span>
-                  </div>
-                  <div className="bg-background p-2 rounded border border-rose-200">
-                    <span className="text-rose-600 dark:text-rose-400 font-bold block">Credit (CR):</span>
-                    <span>{form.type === 'in' ? '41100 - Rental Revenue / Customer' : '10100 - Cash In Hand (Office Vault)'}</span>
-                    <span className="block font-bold text-rose-600 mt-1">QR {parseFloat(form.amount || '0').toLocaleString()}</span>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={handleAdd}>Save Entry</Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }

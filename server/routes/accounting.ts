@@ -653,6 +653,165 @@ router.get('/general-ledger', async (req: Request, res: Response) => {
   } catch (e: any) { res.status(500).json({ error: 'Failed to load the general ledger' }); console.error('[general-ledger]', e?.message); }
 });
 
+// Trial Balance: debit / credit totals per account over posted voucher lines, computed in the database.
+const TB_TYPE: Record<string, string> = { assets: 'Assets', liabilities: 'Liabilities', capital: 'Capital', revenue: 'Revenue', expenditure: 'Expenses', expenses: 'Expenses' };
+const isoDate = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+
+router.get('/trial-balance', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view the trial balance' });
+    const from = isoDate(req.query.from);
+    const to = isoDate(req.query.to);
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT l.account_code AS code,
+             MAX(COALESCE(c.account_name, l.account_name)) AS name,
+             MAX(c.account_type) AS type,
+             SUM(l.debit_amount) AS debit,
+             SUM(l.credit_amount) AS credit
+        FROM fin_voucher_lines l
+        JOIN fin_vouchers v ON v.id = l.voucher_id
+        LEFT JOIN fin_coa_accounts c ON c.account_code = l.account_code
+       WHERE LOWER(v.status) = 'posted'
+         AND (${from} IS NULL OR v.voucher_date >= ${from})
+         AND (${to} IS NULL OR v.voucher_date <= ${to})
+       GROUP BY l.account_code
+       ORDER BY l.account_code`;
+    const data = rows.map((r) => {
+      const debit = Number(r.debit) || 0;
+      const credit = Number(r.credit) || 0;
+      return { code: r.code, name: r.name || r.code, type: TB_TYPE[String(r.type || '').toLowerCase()] || 'Assets', debit, credit, balance: debit - credit };
+    });
+    const totalDebit = data.reduce((a, r) => a + r.debit, 0);
+    const totalCredit = data.reduce((a, r) => a + r.credit, 0);
+    res.json({ data, totals: { debit: totalDebit, credit: totalCredit, balanced: Math.abs(totalDebit - totalCredit) < 0.01 } });
+  } catch (e: any) { console.error('[trial-balance]', e?.message); res.status(500).json({ error: 'Failed to load the trial balance' }); }
+});
+
+// Per-account totals of posted voucher lines (optionally for one calendar month, e.g. "2026-11").
+async function accountTotals(month: string | null) {
+  const rows = await prisma.$queryRaw<any[]>`
+    SELECT l.account_code AS code, MAX(c.account_type) AS type,
+           SUM(l.debit_amount) AS debit, SUM(l.credit_amount) AS credit
+      FROM fin_voucher_lines l
+      JOIN fin_vouchers v ON v.id = l.voucher_id
+      LEFT JOIN fin_coa_accounts c ON c.account_code = l.account_code
+     WHERE LOWER(v.status) = 'posted'
+       AND (${month} IS NULL OR DATE_FORMAT(v.voucher_date, '%Y-%m') = ${month})
+     GROUP BY l.account_code`;
+  return rows.map((r) => ({
+    code: String(r.code || ''),
+    type: TB_TYPE[String(r.type || '').toLowerCase()] || 'Assets',
+    debit: Number(r.debit) || 0,
+    credit: Number(r.credit) || 0,
+  }));
+}
+const isMonth = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}$/.test(v) ? v : null);
+
+function buildProfitLoss(accounts: Array<{ code: string; type: string; debit: number; credit: number }>) {
+  let rentalRevenue = 0, otherRevenue = 0, maintenanceExpense = 0, payrollExpense = 0, utilitiesExpense = 0, cleaningExpense = 0;
+  let totalRevenue = 0, totalExpenses = 0;
+  for (const a of accounts) {
+    if (a.type === 'Revenue') {
+      const net = a.credit - a.debit;
+      totalRevenue += net;
+      if (a.code.startsWith('411')) rentalRevenue += net; else otherRevenue += net;
+    } else if (a.type === 'Expenses') {
+      const net = a.debit - a.credit;
+      totalExpenses += net;
+      if (a.code.startsWith('51101') || a.code.startsWith('501') || a.code.startsWith('523')) payrollExpense += net;
+      else if (a.code.startsWith('51003')) utilitiesExpense += net;
+      else if (a.code === '51004007' || a.code === '51001002' || a.code === '51002002') cleaningExpense += net;
+      else maintenanceExpense += net;
+    }
+  }
+  return { rentalRevenue, otherRevenue, totalRevenue, maintenanceExpense, payrollExpense, utilitiesExpense, cleaningExpense, totalExpenses, netProfit: totalRevenue - totalExpenses };
+}
+
+// Profit & Loss from posted voucher lines. ?month=YYYY-MM limits it to one month.
+router.get('/profit-loss', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view the profit and loss' });
+    const months = await prisma.$queryRaw<any[]>`
+      SELECT DISTINCT DATE_FORMAT(v.voucher_date, '%Y-%m') AS m FROM fin_vouchers v WHERE LOWER(v.status) = 'posted' ORDER BY m DESC`;
+    const data = buildProfitLoss(await accountTotals(isMonth(req.query.month)));
+    res.json({ data, months: months.map((r) => r.m).filter(Boolean) });
+  } catch (e: any) { console.error('[profit-loss]', e?.message); res.status(500).json({ error: 'Failed to load the profit and loss' }); }
+});
+
+// Balance Sheet from posted voucher lines (all periods), with current-period profit carried into equity.
+router.get('/balance-sheet', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view the balance sheet' });
+    const accounts = await accountTotals(null);
+    let bankCashAssets = 0, pdcInHandAssets = 0, arReceivablesAssets = 0, legalReceivablesAssets = 0, fixedAssets = 0, totalAssets = 0;
+    let apLiabilities = 0, securityDepositLiabilities = 0, pdcCustomerLiabilities = 0, totalLiabilities = 0, ownerCapital = 0;
+    for (const a of accounts) {
+      if (a.type === 'Assets') {
+        const net = a.debit - a.credit;
+        totalAssets += net;
+        if (a.code.startsWith('121') || a.code.startsWith('12000') || a.code === '10000') bankCashAssets += net;
+        else if (a.code.startsWith('129')) pdcInHandAssets += net;
+        else if (a.code.startsWith('12411')) legalReceivablesAssets += net;
+        else if (a.code.startsWith('124') || a.code.startsWith('123')) arReceivablesAssets += net;
+        else if (a.code.startsWith('13')) fixedAssets += net;
+        else bankCashAssets += net;
+      } else if (a.type === 'Liabilities') {
+        const net = a.credit - a.debit;
+        totalLiabilities += net;
+        if (a.code.startsWith('221')) apLiabilities += net;
+        else if (a.code.startsWith('214')) pdcCustomerLiabilities += net;
+        else if (a.code.startsWith('215') || a.code.startsWith('211') || a.code.startsWith('213')) securityDepositLiabilities += net;
+        else apLiabilities += net;
+      } else if (a.type === 'Capital') {
+        ownerCapital += a.credit - a.debit;
+      }
+    }
+    const netProfit = buildProfitLoss(accounts).netProfit;
+    const totalEquity = ownerCapital + netProfit;
+    const totalLiabilitiesAndEquity = totalLiabilities + totalEquity;
+    res.json({
+      data: {
+        bankCashAssets, pdcInHandAssets, arReceivablesAssets, legalReceivablesAssets, fixedAssets, totalAssets,
+        apLiabilities, securityDepositLiabilities, pdcCustomerLiabilities, totalLiabilities,
+        ownerCapital, retainedNetProfit: netProfit, totalEquity, totalLiabilitiesAndEquity,
+        isBalanced: Math.abs(totalAssets - totalLiabilitiesAndEquity) < 0.01,
+      },
+    });
+  } catch (e: any) { console.error('[balance-sheet]', e?.message); res.status(500).json({ error: 'Failed to load the balance sheet' }); }
+});
+
+// Cash Book: every posted movement on the Cash In Hand accounts (12100*), with a running balance.
+router.get('/cash-book', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view the cash book' });
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT l.id AS id,
+             DATE_FORMAT(v.voucher_date, '%Y-%m-%d') AS date,
+             v.voucher_number AS voucher,
+             COALESCE(l.description, v.description) AS description,
+             l.debit_amount AS cash_in,
+             l.credit_amount AS cash_out
+        FROM fin_voucher_lines l
+        JOIN fin_vouchers v ON v.id = l.voucher_id
+       WHERE LOWER(v.status) = 'posted' AND l.account_code LIKE '12100%'
+       ORDER BY v.voucher_date ASC, v.created_at ASC, l.created_at ASC`;
+    let balance = 0;
+    const chrono = rows.map((r) => {
+      const cashIn = Number(r.cash_in) || 0;
+      const cashOut = Number(r.cash_out) || 0;
+      balance += cashIn - cashOut;
+      return { id: String(r.id), date: r.date, voucher: r.voucher, description: r.description || '', cash_in: cashIn, cash_out: cashOut, balance };
+    });
+    const totalIn = chrono.reduce((a, r) => a + r.cash_in, 0);
+    const totalOut = chrono.reduce((a, r) => a + r.cash_out, 0);
+    res.json({ data: chrono.reverse(), totals: { cash_in: totalIn, cash_out: totalOut, balance: totalIn - totalOut } });
+  } catch (e: any) { console.error('[cash-book]', e?.message); res.status(500).json({ error: 'Failed to load the cash book' }); }
+});
+
 // Posting Engine Compliance View
 router.get('/compliance', async (_req: Request, res: Response) => {
   try {
