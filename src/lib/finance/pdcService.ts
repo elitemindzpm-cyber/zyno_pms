@@ -53,7 +53,7 @@ export class PdcStateError extends Error {
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const FIN_PDC_SELECT =
-  'id, amount, tenant_id, property_id, unit_id, bank_id, cheque_number, status, cheque_date, deposit_date, cleared_date, returned_date, original_pdc_id';
+  'id, amount, tenant_id, property_id, unit_id, lease_id, bank_id, cheque_number, status, cheque_date, deposit_date, cleared_date, returned_date, original_pdc_id';
 
 export interface PdcContextHints {
   amount?: number;
@@ -440,6 +440,8 @@ export async function receivePdc(payload: {
     const activeExisting = (existingRows || []).find((r: any) => {
       const st = String(r.status || '').toLowerCase();
       if (st === 'cancelled' || st === 'returned') return false;
+      // Same cheque on a different lease is a different PDC, even when the amount and date match.
+      if (payload.lease_id != null && r.lease_id != null && String(r.lease_id) !== String(payload.lease_id)) return false;
       if (payload.original_pdc_id != null && r.original_pdc_id != null) {
         return Number(r.original_pdc_id) === Number(payload.original_pdc_id);
       }
@@ -477,6 +479,7 @@ export async function receivePdc(payload: {
       property_id:   toBigintOrUndefined(payload.property_id),
       unit_id:       targetUnitId,
       bank_id:       targetBankId,
+      lease_id:      payload.lease_id != null ? String(payload.lease_id) : undefined,
       status:        'In Hand',
       ...(payload.original_pdc_id != null ? { original_pdc_id: payload.original_pdc_id } : {}),
     });
