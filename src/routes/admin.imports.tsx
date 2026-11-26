@@ -53,6 +53,7 @@ import {
   UserCheck,
   Truck,
   BookOpen,
+  Wallet,
   Loader2,
   Trash2,
   Search,
@@ -83,6 +84,7 @@ const MODULES: { key: ImportModule; label: string; icon: any; description: strin
   { key: "lease", label: "Lease", icon: FileSignature, description: "Lease agreements, terms, rent schedules & deposit tracking" },
   { key: "employee", label: "Employee", icon: UserCheck, description: "HRMS employees, designations, departments & payroll" },
   { key: "coa", label: "Chart of Accounts", icon: BookOpen, description: "5-tier COA: TYPE, GROUP, CLASS, GL and SL posting accounts" },
+  { key: "unit_ledger", label: "Unit Ledgers", icon: Wallet, description: "Per-unit PDC In Hand, Deposit and Receivables sub-ledgers" },
 ];
 
 export function AdminExcelImportPage() {

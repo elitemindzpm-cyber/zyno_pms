@@ -302,6 +302,200 @@ router.post('/coa', async (req: Request, res: Response) => {
   }
 });
 
+// ── Unit ledgers: one PDC In Hand, Deposit and Receivables sub-ledger per unit ──
+// Posting resolves a unit's SL from fin_unit_sl_accounts (unit + GL). unit_coa_mapping is the per-unit summary.
+const UNIT_LEDGER_GLS = { pdc: '12900', deposit: '21500', receivable: '12413' } as const;
+const UNIT_LEDGER_GL_CODES: string[] = Object.values(UNIT_LEDGER_GLS);
+const httpError = (status: number, message: string) => Object.assign(new Error(message), { status });
+
+// Lookup data for the Excel importer: units, properties, the three parent GLs and every code already in use.
+router.get('/unit-ledgers/context', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'coa_sl', 'read')) {
+      return res.status(403).json({ error: 'Not authorized to read Chart of Accounts' });
+    }
+    const [units, properties, glRows, coaSl, coaGl, finAccounts, unitSl, mappings] = await Promise.all([
+      prisma.units.findMany({ select: { id: true, property_id: true, unit_ref: true, unit_code: true, unit_name: true } }),
+      prisma.properties.findMany({ select: { id: true, title: true, property_code: true } }),
+      prisma.coa_gl.findMany({ where: { code: { in: UNIT_LEDGER_GL_CODES } }, select: { code: true, name: true } }),
+      prisma.coa_sl.findMany({ select: { code: true } }),
+      prisma.coa_gl.findMany({ select: { code: true } }),
+      prisma.fin_coa_accounts.findMany({ select: { account_code: true } }),
+      prisma.fin_unit_sl_accounts.findMany({ select: { unit_id: true, gl_code: true, sl_code: true } }),
+      prisma.unit_coa_mapping.findMany({ select: { unit_id: true } }),
+    ]);
+
+    const takenCodes = new Set<string>([
+      ...coaSl.map(r => r.code),
+      ...coaGl.map(r => r.code),
+      ...finAccounts.map(r => r.account_code),
+      ...unitSl.map(r => r.sl_code),
+    ]);
+    const unitsWithLedgers = new Set<string>([
+      ...unitSl.filter(r => UNIT_LEDGER_GL_CODES.includes(r.gl_code)).map(r => r.unit_id),
+      ...mappings.map(r => r.unit_id),
+    ]);
+
+    res.json({
+      data: {
+        units: units.map(u => ({
+          id: u.id,
+          property_id: u.property_id,
+          unit_code: u.unit_code || u.unit_ref,
+          unit_name: u.unit_name || u.unit_ref,
+        })),
+        properties: properties.map(p => ({ id: p.id, property_code: p.property_code, title: p.title })),
+        gls: Object.fromEntries(glRows.map(g => [g.code, { code: g.code, name: g.name }])),
+        takenCodes: [...takenCodes],
+        unitsWithLedgers: [...unitsWithLedgers],
+      },
+    });
+  } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Creates the PDC, deposit and receivable SLs for one unit in a single transaction (all or nothing).
+router.post('/unit-ledgers', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'coa_sl', 'write')) {
+      return res.status(403).json({ error: 'Not authorized to create unit ledgers' });
+    }
+
+    const body = req.body || {};
+    const unitId = String(body.unit_id ?? '').trim();
+    const propertyId = String(body.property_id ?? '').trim();
+    if (!unitId || !propertyId) {
+      return res.status(400).json({ error: 'unit_id and property_id are required' });
+    }
+
+    const specs = (
+      [
+        { kind: 'pdc', gl: UNIT_LEDGER_GLS.pdc, input: body.pdc },
+        { kind: 'deposit', gl: UNIT_LEDGER_GLS.deposit, input: body.deposit },
+        { kind: 'receivable', gl: UNIT_LEDGER_GLS.receivable, input: body.receivable },
+      ] as { kind: string; gl: string; input: any }[]
+    ).map(s => ({ ...s, code: String(s.input?.code ?? '').trim(), name: String(s.input?.name ?? '').trim() }));
+
+    const missing = specs.filter(s => !s.code || !s.name).map(s => `${s.kind} code and name`);
+    if (missing.length > 0) {
+      return res.status(400).json({ error: `Missing required fields: ${missing.join(', ')}` });
+    }
+    if (new Set(specs.map(s => s.code)).size !== specs.length) {
+      return res.status(400).json({ error: 'The PDC, deposit and receivable SL codes must be different' });
+    }
+    if (specs.some(s => UNIT_LEDGER_GL_CODES.includes(s.code))) {
+      return res.status(400).json({ error: 'An SL code cannot be the same as a GL code' });
+    }
+
+    const result = await prisma.$transaction(async (tx) => {
+      const unit = await tx.units.findUnique({
+        where: { id: unitId },
+        select: { id: true, property_id: true, unit_ref: true, unit_code: true },
+      });
+      if (!unit) throw httpError(404, 'Unit not found');
+      if ((unit.property_id ?? '') !== propertyId) {
+        throw httpError(400, 'Unit does not belong to the given property');
+      }
+      const unitLabel = unit.unit_code || unit.unit_ref;
+
+      const existingMapping = await tx.unit_coa_mapping.findUnique({ where: { unit_id: unitId } });
+      const existingSl = await tx.fin_unit_sl_accounts.findFirst({
+        where: { unit_id: unitId, gl_code: { in: UNIT_LEDGER_GL_CODES } },
+      });
+      if (existingMapping || existingSl) {
+        throw httpError(409, `Unit ${unitLabel} already has unit ledgers.`);
+      }
+
+      for (const s of specs) {
+        const taken =
+          (await tx.coa_sl.findUnique({ where: { code: s.code } })) ||
+          (await tx.coa_gl.findUnique({ where: { code: s.code } })) ||
+          (await tx.fin_coa_accounts.findUnique({ where: { account_code: s.code } })) ||
+          (await tx.fin_unit_sl_accounts.findUnique({ where: { sl_code: s.code } }));
+        if (taken) throw httpError(409, `Code "${s.code}" is already in use.`);
+      }
+
+      const created: Record<string, { coaSl: any; finSl: any }> = {};
+      for (const s of specs) {
+        const gl = await tx.coa_gl.findUnique({ where: { code: s.gl } });
+        if (!gl) throw httpError(422, `GL ${s.gl} is not in the Chart of Accounts. Upload the chart first.`);
+        const finGl = await tx.fin_coa_accounts.findUnique({ where: { account_code: s.gl } });
+        if (!finGl) throw httpError(422, `GL ${s.gl} is missing from the posting chart (fin_coa_accounts).`);
+
+        const coaSl = await tx.coa_sl.create({
+          data: {
+            gl_id: gl.id,
+            class_id: gl.class_id,
+            group_id: gl.group_id,
+            type_id: gl.type_id,
+            gl_code: gl.code,
+            class_code: gl.class_code,
+            group_code: gl.group_code,
+            type_code: gl.type_code,
+            code: s.code,
+            name: s.name,
+            normal_balance: gl.normal_balance,
+            is_active: true,
+          },
+        });
+
+        const finSl = await tx.fin_coa_accounts.create({
+          data: {
+            account_code: s.code,
+            account_name: s.name,
+            account_type: finGl.account_type,
+            parent_id: finGl.id,
+            parent_account_id: finGl.id,
+            group_name: finGl.group_name,
+            class_name: finGl.class_name,
+            account_level: 'SL',
+            is_active: true,
+          },
+        });
+
+        await tx.fin_unit_sl_accounts.create({
+          data: {
+            unit_id: unitId,
+            property_id: propertyId,
+            gl_code: s.gl,
+            sl_code: s.code,
+            sl_name: s.name,
+            coa_account_id: finSl.id,
+            is_active: true,
+          },
+        });
+
+        created[s.kind] = { coaSl, finSl };
+      }
+
+      const mapping = await tx.unit_coa_mapping.create({
+        data: {
+          unit_id: unitId,
+          property_id: propertyId,
+          unit_code: unitLabel,
+          pdc_sl_id: created.pdc.coaSl.id,
+          pdc_sl_code: specs[0].code,
+          pdc_sl_name: specs[0].name,
+          deposit_sl_id: created.deposit.coaSl.id,
+          deposit_sl_code: specs[1].code,
+          deposit_sl_name: specs[1].name,
+          receivable_sl_id: created.receivable.coaSl.id,
+          receivable_sl_code: specs[2].code,
+          receivable_sl_name: specs[2].name,
+          status: 'Active',
+        },
+      });
+
+      return { unit_id: unitId, unit_code: unitLabel, mapping };
+    });
+
+    res.status(201).json({ data: result });
+  } catch (e: any) {
+    res.status(e?.status || 500).json({ error: e.message || 'Failed to create unit ledgers' });
+  }
+});
+
 // Posting Engine Compliance View
 router.get('/compliance', async (_req: Request, res: Response) => {
   try {
