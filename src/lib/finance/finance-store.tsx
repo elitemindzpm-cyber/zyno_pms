@@ -2,6 +2,7 @@ import { kvStore } from "@/lib/kv-store";
 import { createContext, useContext, useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 import { db } from "@/lib/db";
+import { request as apiRequest } from "@/lib/api-client";
 import { insertVoucherOnce } from "./voucher-persist";
 import { resolveAccountingAccounts } from "./account-resolver";
 import { postVoucher } from "./posting-engine";
@@ -1133,13 +1134,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   // ── States ────────────────────────────────────────────────────────────────
   const [voucherDateCorrections, setVoucherDateCorrections] = useState<Record<string, VoucherDateCorrection>>(() => getStoredVoucherDateCorrections());
-  const [journalEntries, setJournalEntries] = useState<JournalLedgerEntry[]>(() => {
-    if (typeof window === "undefined") return INITIAL_JOURNAL_LEDGER;
-    try {
-      const saved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-journals`);
-      return saved ? JSON.parse(saved) : INITIAL_JOURNAL_LEDGER;
-    } catch { return INITIAL_JOURNAL_LEDGER; }
-  });
+  // Journals are read from the backend (posted journal vouchers); nothing is kept in the browser.
+  const [journalEntries, setJournalEntries] = useState<JournalLedgerEntry[]>([]);
   const [grnMappings, setGrnMappings] = useState<GrnCostMapping[]>(INITIAL_GRN_MAPPINGS);
   const [payableInvoices, setPayableInvoices] = useState<PayableInvoice[]>(() => {
     if (typeof window === "undefined") return INITIAL_PAYABLE_INVOICES;
@@ -1308,7 +1304,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     if (typeof window !== "undefined") {
       try {
         kvStore.setItem(`${FINANCE_STORAGE_KEY}-vouchers`, JSON.stringify(vouchers));
-        kvStore.setItem(`${FINANCE_STORAGE_KEY}-journals`, JSON.stringify(journalEntries));
         kvStore.setItem(`${FINANCE_STORAGE_KEY}-ar`, JSON.stringify(receivableInvoices));
         kvStore.setItem(`${FINANCE_STORAGE_KEY}-ap`, JSON.stringify(payableInvoices));
         kvStore.setItem(`${FINANCE_STORAGE_KEY}-cashbook`, JSON.stringify(cashBookEntries));
@@ -1372,37 +1367,12 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         vData.forEach((r: { id: string }) => seenVoucherIds.current.add(r.id));
       }
 
-      // 2. Pull journal_entries from Db
-      const { data: jData, error: jError } = await db
-        .from("journal_entries")
-        .select("*, journal_lines(*, gl_accounts(code, name_en))")
-        .order("posting_date", { ascending: false })
-        .limit(50);
-
-      if (!jError && jData?.length) {
-        setJournalEntries(prev => {
-          const existingNos = new Set(prev.map(j => j.je_no));
-          const mapped: JournalLedgerEntry[] = jData
-            .filter((r: any) => !existingNos.has(r.je_no))
-            .map((r: any) => {
-              const drLine = r.journal_lines?.find((l: any) => l.debit > 0);
-              const crLine = r.journal_lines?.find((l: any) => l.credit > 0);
-              return {
-                id: r.id,
-                je_no: r.je_no,
-                posting_date: r.posting_date,
-                reference: r.source_id || r.je_no,
-                narration: r.narration || "",
-                dr_account: drLine?.gl_accounts?.name_en || "General Account",
-                dr_code: drLine?.gl_accounts?.code || "10000",
-                cr_account: crLine?.gl_accounts?.name_en || "General Account",
-                cr_code: crLine?.gl_accounts?.code || "10000",
-                amount: drLine?.debit || 0,
-                status: r.status || "Posted",
-              };
-            });
-          return mapped.length ? [...mapped, ...prev] : prev;
-        });
+      // 2. Journals come from the backend (posted journal vouchers with their lines).
+      try {
+        const jr: any = await apiRequest("/api/accounting/journals");
+        if (Array.isArray(jr?.data)) setJournalEntries(jr.data);
+      } catch (jErr) {
+        console.warn("[FinanceStore] journals load notice:", jErr);
       }
 
       // 3. Synthesize "PDC Received" (Entry 1 only) for every PDC in the system.
@@ -1991,11 +1961,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       // 6. Reload kvStore caches for AP/AR/Cashbook (vouchers are maintained authoritatively above)
       if (typeof window !== "undefined") {
         try {
-          const jDataSaved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-journals`);
-          if (jDataSaved) {
-            const parsed = JSON.parse(jDataSaved);
-            if (Array.isArray(parsed) && parsed.length) setJournalEntries(parsed);
-          }
           const arDataSaved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-ar`);
           if (arDataSaved) {
             const parsed = JSON.parse(arDataSaved);
@@ -2255,7 +2220,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       if (typeof window !== "undefined") {
         try {
           kvStore.setItem(`${FINANCE_STORAGE_KEY}-vouchers`, JSON.stringify(freshVouchers));
-          kvStore.setItem(`${FINANCE_STORAGE_KEY}-journals`, JSON.stringify([]));
         } catch {}
       }
 
@@ -2443,34 +2407,58 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   // ── Actions ───────────────────────────────────────────────────────────────
 
+  /** Posts a balanced voucher through the backend. Nothing is added to the browser: the ledger is read back from the database. */
+  async function postVoucherToBackend(args: {
+    type: "Journal" | "Receipt" | "Payment" | "Contra";
+    date: string;
+    reference?: string | null;
+    description?: string | null;
+    lines: Array<{ account_code: string; debit?: number; credit?: number; description?: string | null }>;
+  }): Promise<boolean> {
+    try {
+      await apiRequest("/api/accounting/post-voucher", {
+        method: "POST",
+        body: JSON.stringify({
+          voucher_date: args.date,
+          voucher_type: args.type,
+          reference_no: args.reference || undefined,
+          description: args.description || undefined,
+          lines: args.lines,
+        }),
+      });
+      window.dispatchEvent(new Event("finance_vouchers_updated"));
+      void fetchDbData(false);
+      return true;
+    } catch (err: any) {
+      toast.error(`Posting failed: ${err?.message || "the voucher was not saved"}`);
+      return false;
+    }
+  }
+
   function addJournalEntry(entry: Omit<JournalLedgerEntry, "id" | "status">) {
     const periodCheck = isPostingPeriodClosed(entry.posting_date);
     if (periodCheck.closed) {
       toast.error(`Posting rejected: Accounting period ${periodCheck.periodName} is CLOSED.`);
       return;
     }
-    const newEntry: JournalLedgerEntry = {
-      ...entry,
-      id: `je-${Date.now()}`,
-      status: "Posted",
-    };
-    setJournalEntries(prev => [newEntry, ...prev]);
-    toast.success(`Journal Entry ${newEntry.je_no} posted to General Ledger!`);
-
-    // Persist to DB journal_entries table (best-effort, fire-and-forget).
-    void Promise.resolve(
-      db.from("journal_entries").insert({
-        je_no: newEntry.je_no,
-        posting_date: newEntry.posting_date,
-        period: newEntry.posting_date?.slice(0, 7) ?? new Date().toISOString().slice(0, 7),
-        source_module: "Finance Store",
-        source_id: newEntry.reference || null,
-        narration: newEntry.narration || null,
-        status: "posted",
-      })
-    ).then(({ error }: any) => {
-      if (error) console.warn("[FinanceStore] journal_entries persist warn:", error.message);
-    });
+    const lines = entry.lines && entry.lines.length
+      ? entry.lines.map((l) => ({
+          account_code: l.account_code,
+          debit: l.type === "DR" ? l.amount : 0,
+          credit: l.type === "CR" ? l.amount : 0,
+          description: l.description || entry.narration,
+        }))
+      : [
+          { account_code: entry.dr_code, debit: entry.amount, credit: 0, description: entry.narration },
+          { account_code: entry.cr_code, debit: 0, credit: entry.amount, description: entry.narration },
+        ];
+    void postVoucherToBackend({
+      type: "Journal",
+      date: entry.posting_date,
+      reference: entry.je_no,
+      description: entry.narration || entry.reference,
+      lines,
+    }).then((ok) => { if (ok) toast.success(`Journal Entry ${entry.je_no} posted to General Ledger!`); });
   }
 
   function addGrnMapping(mapping: Omit<GrnCostMapping, "id">) {
@@ -2551,13 +2539,26 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       })),
     });
     const newVch: FinanceVoucher = normalizedVch;
+
+    // Not already posted by the server: post it through the backend and read it back from the database.
+    if (!options?.skipDbPersist) {
+      const kind = newVch.voucher_type === "Payment Voucher" ? "Payment" : newVch.voucher_type === "Receipt Voucher" ? "Receipt" : newVch.voucher_type === "Contra Voucher" ? "Contra" : "Journal";
+      const vLines = newVch.lines && newVch.lines.length
+        ? newVch.lines.map((l) => ({ account_code: l.account_code, debit: l.type === "DR" ? l.amount : 0, credit: l.type === "CR" ? l.amount : 0, description: l.description || newVch.name }))
+        : [
+            { account_code: newVch.debit_code, debit: newVch.amount, credit: 0, description: newVch.name },
+            { account_code: newVch.credit_code, debit: 0, credit: newVch.amount, description: newVch.name },
+          ];
+      void postVoucherToBackend({ type: kind, date: newVch.date, reference: newVch.voucher_no, description: newVch.name, lines: vLines })
+        .then((ok) => { if (ok) toast.success(`${newVch.voucher_type} ${newVch.voucher_no} posted successfully!`); });
+      return;
+    }
+
     setVouchers(prev => {
       if (prev.some(v => v.voucher_no === newVch.voucher_no)) return prev;
       return [newVch, ...prev];
     });
     toast.success(`${newVch.voucher_type} ${newVch.voucher_no} posted successfully!`);
-
-    if (options?.skipDbPersist) return;
 
     // Persist to DB fin_vouchers (best-effort, fire-and-forget).
     const typeCode = newVch.voucher_type === "Payment Voucher" ? "PV" : newVch.voucher_type === "Receipt Voucher" ? "RV" : "JV";

@@ -4,6 +4,7 @@ import { Router, Request, Response } from 'express';
 import prisma from '../lib/prisma';
 import { tenantMiddleware, parsePagination, paginatedResponse } from '../lib/middleware';
 import { dbAllowed } from '../lib/db-policy';
+import { postManualVoucher } from '../lib/finance-rpc';
 
 const router = Router();
 router.use(tenantMiddleware);
@@ -651,6 +652,64 @@ router.get('/general-ledger', async (req: Request, res: Response) => {
     const totalCredit = data.reduce((a, r) => a + r.credit, 0);
     res.json({ data, totals: { debit: totalDebit, credit: totalCredit, balanced: Math.abs(totalDebit - totalCredit) < 0.01 } });
   } catch (e: any) { res.status(500).json({ error: 'Failed to load the general ledger' }); console.error('[general-ledger]', e?.message); }
+});
+
+// Post a hand-entered voucher / journal. The server builds the event and lines and posts them atomically.
+router.post('/post-voucher', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'write')) return res.status(403).json({ error: 'Not authorized to post vouchers' });
+    const b = req.body || {};
+    const result = await postManualVoucher({
+      voucher_date: b.voucher_date,
+      voucher_type: b.voucher_type,
+      reference_no: b.reference_no,
+      description: b.description,
+      lines: Array.isArray(b.lines) ? b.lines : [],
+      property_id: b.property_id,
+      unit_id: b.unit_id,
+      customer_id: b.customer_id,
+      created_by: (req as any).user?.id ?? null,
+    });
+    res.status(201).json({ data: result });
+  } catch (e: any) {
+    if (e?.status) return res.status(e.status).json({ error: e.message });
+    console.error('[post-voucher]', e?.message);
+    res.status(500).json({ error: 'Failed to post the voucher' });
+  }
+});
+
+// Journal ledger: posted journal vouchers, shaped for the Journal Ledger page.
+router.get('/journals', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view journals' });
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT v.id AS vid, v.voucher_number AS je_no, DATE_FORMAT(v.voucher_date, '%Y-%m-%d') AS posting_date,
+             v.reference_no AS reference, v.description AS narration, v.total_amount AS amount,
+             l.id AS lid, l.account_code, COALESCE(c.account_name, l.account_name) AS account_name,
+             l.debit_amount AS debit, l.credit_amount AS credit
+        FROM fin_vouchers v
+        JOIN fin_voucher_lines l ON l.voucher_id = v.id
+        LEFT JOIN fin_coa_accounts c ON c.account_code = l.account_code
+       WHERE LOWER(v.status) = 'posted' AND LOWER(v.voucher_type) IN ('journal', 'jv', 'journal voucher')
+       ORDER BY v.voucher_date DESC, v.created_at DESC, l.created_at ASC
+       LIMIT 5000`;
+    const byVoucher = new Map<string, any>();
+    for (const r of rows) {
+      let j = byVoucher.get(r.vid);
+      if (!j) {
+        j = { id: String(r.vid), je_no: r.je_no, posting_date: r.posting_date, reference: r.reference || r.je_no, narration: r.narration || '',
+          dr_account: '', dr_code: '', cr_account: '', cr_code: '', amount: Number(r.amount) || 0, status: 'Posted', lines: [] as any[] };
+        byVoucher.set(r.vid, j);
+      }
+      const debit = Number(r.debit) || 0; const credit = Number(r.credit) || 0;
+      j.lines.push({ id: String(r.lid), type: debit > 0 ? 'DR' : 'CR', account: r.account_name || r.account_code, account_code: r.account_code, amount: debit > 0 ? debit : credit });
+      if (debit > 0 && !j.dr_code) { j.dr_code = r.account_code; j.dr_account = r.account_name || r.account_code; }
+      if (credit > 0 && !j.cr_code) { j.cr_code = r.account_code; j.cr_account = r.account_name || r.account_code; }
+    }
+    res.json({ data: Array.from(byVoucher.values()) });
+  } catch (e: any) { console.error('[journals]', e?.message); res.status(500).json({ error: 'Failed to load journals' }); }
 });
 
 // Trial Balance: debit / credit totals per account over posted voucher lines, computed in the database.

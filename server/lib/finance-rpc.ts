@@ -442,3 +442,97 @@ export async function ensureUnitCoaMapping(unit: { id: string; property_id: stri
     },
   });
 }
+
+// ───────────────────────────────────────────────────────────────────────────────
+// postManualVoucher — a hand-entered journal / receipt / payment / contra voucher.
+// The server creates the accounting event and its lines, then posts it through postAccountingEvent,
+// so the voucher and its lines land in fin_vouchers / fin_voucher_lines (the ledger source of truth).
+// ───────────────────────────────────────────────────────────────────────────────
+const VOUCHER_PREFIX: Record<string, string> = { Journal: 'JV', Receipt: 'RV', Payment: 'PV', Contra: 'CV' };
+
+export interface ManualVoucherInput {
+  voucher_date: string;
+  voucher_type?: 'Journal' | 'Receipt' | 'Payment' | 'Contra';
+  reference_no?: string | null;
+  description?: string | null;
+  lines: Array<{ account_code: string; debit?: number; credit?: number; description?: string | null }>;
+  property_id?: string | null;
+  unit_id?: string | null;
+  customer_id?: string | null;
+  created_by?: string | null;
+}
+
+export async function postManualVoucher(input: ManualVoucherInput): Promise<PostResult[]> {
+  const date = String(input.voucher_date || '').slice(0, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new HttpError(400, 'voucher_date must be YYYY-MM-DD');
+  const lines = (input.lines || []).map((l) => ({
+    account_code: String(l.account_code || '').trim(),
+    debit: money(l.debit),
+    credit: money(l.credit),
+    description: l.description ? String(l.description) : null,
+  })).filter((l) => l.account_code && (l.debit > 0 || l.credit > 0));
+  if (lines.length < 2) throw new HttpError(400, 'A voucher needs at least two accounting lines.');
+  if (lines.some((l) => l.debit > 0 && l.credit > 0)) throw new HttpError(400, 'A line cannot have both a debit and a credit.');
+  const totalDebit = money(lines.reduce((a, l) => a + l.debit, 0));
+  const totalCredit = money(lines.reduce((a, l) => a + l.credit, 0));
+  if (totalDebit <= 0 || totalDebit !== totalCredit) {
+    throw new HttpError(400, `Total Debits (${totalDebit}) must equal Total Credits (${totalCredit}).`);
+  }
+
+  // Every account must exist and be active in the posting chart.
+  const codes = Array.from(new Set(lines.map((l) => l.account_code)));
+  const found = await prisma.$queryRawUnsafe<any[]>(
+    `SELECT account_code, account_name FROM fin_coa_accounts WHERE is_active = TRUE AND account_code IN (${codes.map(() => '?').join(',')})`,
+    ...codes,
+  );
+  const names = new Map(found.map((r) => [String(r.account_code), String(r.account_name)]));
+  const missing = codes.filter((c) => !names.has(c));
+  if (missing.length) throw new HttpError(400, `Account code(s) not in the chart of accounts: ${missing.join(', ')}`);
+
+  // Closed posting periods accept no entries.
+  const y = Number(date.slice(0, 4)); const m = Number(date.slice(5, 7));
+  const period = await prisma.$queryRaw<{ status: string }[]>`SELECT status FROM fin_posting_periods WHERE year = ${String(y)} AND month = ${m} LIMIT 1`;
+  if (period.length && String(period[0].status).toLowerCase() === 'closed') {
+    throw new HttpError(403, `Financial Period ${y}-${String(m).padStart(2, '0')} is closed for entries. Contact Super-Admin to reopen`);
+  }
+
+  const type = input.voucher_type && VOUCHER_PREFIX[input.voucher_type] ? input.voucher_type : 'Journal';
+  const seq = await nextIntSequence(`voucher_${type.toLowerCase()}_${y}`);
+  const reference = (input.reference_no && String(input.reference_no).trim()) || `${VOUCHER_PREFIX[type]}-${y}-${String(seq).padStart(6, '0')}`;
+  const idempotencyKey = `MANUAL|${type}|${reference}|${date}`;
+
+  // A repeat of the same voucher returns the one already posted.
+  const existing = await prisma.$queryRaw<any[]>`SELECT id, status FROM fin_accounting_events WHERE idempotency_key = ${idempotencyKey} LIMIT 1`;
+  if (existing.length && existing[0].status === 'POSTED') return postAccountingEvent(String(existing[0].id));
+  if (existing.length) {
+    await prisma.$executeRaw`DELETE FROM fin_accounting_event_lines WHERE event_id = ${existing[0].id}`;
+    await prisma.$executeRaw`DELETE FROM fin_accounting_events WHERE id = ${existing[0].id}`;
+  }
+
+  const eventId = randomUUID();
+  await txn(async (tx) => {
+    await tx.$executeRaw`INSERT INTO fin_accounting_events
+      (id, event_type, status, event_date, posting_date, source_type, reference_number, description, idempotency_key,
+       property_id, unit_id, customer_id, total_debit, total_credit, created_by)
+      VALUES (${eventId}, 'MANUAL_JOURNAL', 'DRAFT', ${date}, ${date}, 'MANUAL_VOUCHER', ${reference}, ${input.description || null},
+              ${idempotencyKey}, ${input.property_id || null}, ${input.unit_id || null}, ${input.customer_id || null},
+              ${totalDebit}, ${totalCredit}, ${input.created_by || null})`;
+    let n = 0;
+    for (const l of lines) {
+      n += 1;
+      await tx.$executeRaw`INSERT INTO fin_accounting_event_lines
+        (id, event_id, line_number, account_code, account_name, debit, credit, description, property_id, unit_id, customer_id)
+        VALUES (${randomUUID()}, ${eventId}, ${n}, ${l.account_code}, ${names.get(l.account_code) || null}, ${l.debit}, ${l.credit},
+                ${l.description}, ${input.property_id || null}, ${input.unit_id || null}, ${input.customer_id || null})`;
+    }
+  });
+
+  try {
+    return await postAccountingEvent(eventId);
+  } catch (err) {
+    // Nothing was posted: remove the unposted event so a failed attempt leaves no half-finished record.
+    await prisma.$executeRaw`DELETE FROM fin_accounting_event_lines WHERE event_id = ${eventId}`;
+    await prisma.$executeRaw`DELETE FROM fin_accounting_events WHERE id = ${eventId} AND status <> 'POSTED'`;
+    throw err;
+  }
+}
