@@ -179,22 +179,12 @@ export async function createAccountingEvent(
             return concurrent;
         }
 
-        console.warn('[createAccountingEvent] database write notice:', eventError?.message);
-        return {
-            id: `evt-${Date.now()}`,
-            event_type: payload.event_type,
-            status: 'DRAFT',
-            event_date: payload.event_date || new Date().toISOString().split('T')[0],
-            posting_date: payload.posting_date || new Date().toISOString().split('T')[0],
-            source_type: payload.source_type,
-            source_id: payload.source_id || null,
-            reference_number: payload.reference_number || null,
-            description: payload.description || null,
-            idempotency_key: payload.idempotency_key,
-            total_debit: totals.debit,
-            total_credit: totals.credit,
-            metadata: payload.metadata || {},
-        };
+        // Never fabricate a local event id: it does not exist in the database, so the later
+        // post_accounting_event_atomic call fails with a misleading "event not found" 404 and
+        // hides the real cause. Surface the actual insert error instead.
+        throw new Error(
+            `Could not save accounting event (${payload.event_type}, ref ${payload.reference_number ?? payload.idempotency_key}): ${eventError?.message || 'unknown database error'}`,
+        );
     }
 
     /*

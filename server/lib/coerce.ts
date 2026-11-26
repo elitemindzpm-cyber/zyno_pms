@@ -6,8 +6,11 @@ import { Prisma } from '@prisma/client';
 const dateTimeFields: Record<string, Set<string>> = {};
 // Optional string fields: an empty string is stored as NULL, so unique columns (e.g. email) don't collide on "".
 const optionalStringFields: Record<string, Set<string>> = {};
+// String columns (e.g. JSON-in-LongText `metadata`): the UI sends objects, Prisma only accepts strings.
+const stringFields: Record<string, Set<string>> = {};
 for (const m of ((Prisma as any).dmmf?.datamodel?.models ?? []) as any[]) {
   dateTimeFields[m.name] = new Set(m.fields.filter((f: any) => f.type === 'DateTime').map((f: any) => f.name));
+  stringFields[m.name] = new Set(m.fields.filter((f: any) => f.type === 'String' && !f.isList).map((f: any) => f.name));
   optionalStringFields[m.name] = new Set(
     m.fields.filter((f: any) => f.type === 'String' && !f.isRequired && !f.isList).map((f: any) => f.name)
   );
@@ -23,6 +26,9 @@ function coerceRow(modelName: string, row: any) {
   for (const key of Object.keys(out)) {
     if (fields.has(key) && typeof out[key] === 'string' && DATE_ONLY.test(out[key])) {
       out[key] = `${out[key]}T00:00:00.000Z`;
+    }
+    if (stringFields[modelName]?.has(key) && out[key] !== null && typeof out[key] === 'object' && !(out[key] instanceof Date)) {
+      out[key] = JSON.stringify(out[key]);
     }
     if (optional?.has(key) && out[key] === '') {
       out[key] = null;
