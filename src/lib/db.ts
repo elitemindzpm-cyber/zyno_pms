@@ -1929,6 +1929,35 @@ export async function createCoaAccount(payload: CreateCoaAccountPayload) {
   return res.data;
 }
 
+export interface UnitLedgerContext {
+  units: { id: string; property_id: string | null; unit_code: string; unit_name: string }[];
+  properties: { id: string; property_code: string | null; title: string }[];
+  gls: Record<string, { code: string; name: string }>;
+  takenCodes: string[];
+  unitsWithLedgers: string[];
+}
+
+export async function fetchUnitLedgerContext(): Promise<UnitLedgerContext> {
+  const res = await request<{ data: UnitLedgerContext }>('/api/accounting/unit-ledgers/context');
+  return res.data;
+}
+
+export interface CreateUnitLedgersPayload {
+  unit_id: string;
+  property_id: string;
+  pdc: { code: string; name: string };
+  deposit: { code: string; name: string };
+  receivable: { code: string; name: string };
+}
+
+export async function createUnitLedgers(payload: CreateUnitLedgersPayload) {
+  const res = await request<{ data: { unit_id: string; unit_code: string } }>('/api/accounting/unit-ledgers', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+  return res.data;
+}
+
 export async function createInventoryPart(payload: Omit<InventoryPart, 'id'>) {
   const { data, error } = await db.from('inventory_parts').insert([payload]).select().single();
   if (error) throw error;

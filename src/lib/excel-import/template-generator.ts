@@ -9,6 +9,7 @@ import { leaseAdapter } from './adapters/lease-adapter';
 import { employeeAdapter } from './adapters/employee-adapter';
 import { vendorAdapter } from './adapters/vendor-adapter';
 import { coaAdapter } from './adapters/coa-adapter';
+import { unitLedgerAdapter } from './adapters/unit-ledger-adapter';
 
 const adapters: Record<ImportModule, any> = {
   property: propertyAdapter,
@@ -19,6 +20,7 @@ const adapters: Record<ImportModule, any> = {
   employee: employeeAdapter,
   vendor: vendorAdapter,
   coa: coaAdapter,
+  unit_ledger: unitLedgerAdapter,
 };
 
 export async function generateTemplateWorkbook(module: ImportModule, operation: ImportOperation): Promise<Uint8Array> {

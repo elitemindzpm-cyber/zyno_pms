@@ -1795,6 +1795,7 @@ function ChartOfAccountsSubModule() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'tree' | 'master' | 'units' | 'properties'>('tree');
   const [bulkCoaOpen, setBulkCoaOpen] = useState(false);
+  const [bulkUnitLedgerOpen, setBulkUnitLedgerOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [typeFilter, setTypeFilter] = useState<string>("all");
   const [page, setPage] = useState(1);
@@ -2152,6 +2153,9 @@ function ChartOfAccountsSubModule() {
           <Button variant="outline" size="sm" onClick={() => setBulkCoaOpen(true)} className="gap-2">
             <FileSpreadsheet className="h-4 w-4" /> Bulk Upload (Excel)
           </Button>
+          <Button variant="outline" size="sm" onClick={() => setBulkUnitLedgerOpen(true)} className="gap-2">
+            <FileSpreadsheet className="h-4 w-4" /> Unit Ledgers (Excel)
+          </Button>
           <Button size="sm" onClick={() => setOpen(true)} className="gap-2">
             <Plus className="h-4 w-4" /> Add Account
           </Button>
@@ -2166,6 +2170,21 @@ function ChartOfAccountsSubModule() {
             operations={["CREATE"]}
             title="Chart of Accounts: Excel Bulk Upload"
             description="Upload SL (posting) accounts with their TYPE, GROUP, CLASS and GL parents. Missing parents are created automatically; existing parents are reused."
+            onCompleted={() => {
+              loadData();
+            }}
+          />
+        </DialogContent>
+      </Dialog>
+
+      {/* MODAL: UNIT LEDGER IMPORT (PDC In Hand, Deposit, Receivables per unit) */}
+      <Dialog open={bulkUnitLedgerOpen} onOpenChange={setBulkUnitLedgerOpen}>
+        <DialogContent className="max-w-6xl max-h-[92vh] overflow-y-auto bg-card p-6">
+          <ExcelImportEmbedded
+            module="unit_ledger"
+            operations={["CREATE"]}
+            title="Unit Ledgers: Excel Bulk Upload"
+            description="One row per existing unit: its PDC In Hand (12900), Deposit (21500) and Receivables (12413) sub-ledger codes and names. Units that already have ledgers are rejected."
             onCompleted={() => {
               loadData();
             }}
