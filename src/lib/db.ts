@@ -161,7 +161,47 @@ class QueryBuilder<T = any> {
     return this;
   }
 
-  or(_clause: string) {
+  // PostgREST-style OR filter: "col.eq.x,col.ilike.%y%,col.is.null,col.in.(a,b)".
+  // Must be applied: if ignored, update()/delete() chained with .or() hit EVERY row.
+  or(clause: string) {
+    const parts: string[] = [];
+    let depth = 0;
+    let cur = '';
+    for (const ch of String(clause || '')) {
+      if (ch === '(') depth++;
+      if (ch === ')') depth--;
+      if (ch === ',' && depth === 0) { parts.push(cur); cur = ''; } else cur += ch;
+    }
+    if (cur) parts.push(cur);
+
+    const conds: any[] = [];
+    for (const part of parts) {
+      const m = part.match(/^([^.]+)\.([^.]+)\.(.*)$/s);
+      if (!m) continue;
+      const [, col, op, rawVal] = m;
+      if (op === 'eq') conds.push({ [col]: rawVal });
+      else if (op === 'neq') conds.push({ [col]: { not: rawVal } });
+      else if (op === 'gt' || op === 'gte' || op === 'lt' || op === 'lte') conds.push({ [col]: { [op]: rawVal } });
+      else if (op === 'is') conds.push({ [col]: rawVal === 'null' ? null : rawVal === 'true' });
+      else if (op === 'in') conds.push({ [col]: { in: rawVal.replace(/^\(|\)$/g, '').split(',').map((s) => s.trim().replace(/^"|"$/g, '')) } });
+      else if (op === 'like' || op === 'ilike') {
+        const starts = rawVal.startsWith('%');
+        const ends = rawVal.endsWith('%');
+        const core = rawVal.replace(/^%|%$/g, '');
+        if (starts && ends) conds.push({ [col]: { contains: core } });
+        else if (ends) conds.push({ [col]: { startsWith: core } });
+        else if (starts) conds.push({ [col]: { endsWith: core } });
+        else conds.push({ [col]: core });
+      }
+    }
+    if (conds.length) {
+      // Combine with any existing OR groups via AND so multiple .or() calls all apply.
+      const existing = this._where.AND ? [].concat(this._where.AND) : [];
+      this._where.AND = [...existing, { OR: conds }];
+    } else {
+      // An unparseable clause must never widen a write to the whole table.
+      this._where.AND = [...(this._where.AND ? [].concat(this._where.AND) : []), { id: '__no_match__' }];
+    }
     return this;
   }
 
@@ -1213,7 +1253,11 @@ export async function createPDC(payload: Omit<PDC, 'id' | 'created_at' | 'update
   const voucherNo = `VCH-PDC-RCV-${chequeNo}`;
   const today = new Date().toISOString().split('T')[0];
   try {
-    const { data: vData, error: vErr } = await db.from('fin_vouchers').insert({
+    // voucher_number is unique: skip if this cheque's receipt voucher was already posted (avoids 409 and duplicate ledger lines).
+    const { data: existingV } = await db.from('fin_vouchers').select('id').eq('voucher_number', voucherNo).maybeSingle();
+    const { data: vData, error: vErr } = existingV?.id
+      ? { data: null, error: { message: 'duplicate voucher' } as any }
+      : await db.from('fin_vouchers').insert({
       voucher_number: voucherNo,
       voucher_date: (pdc as any).deposit_date || (pdc as any).maturity_date || today,
       voucher_type: 'RV',

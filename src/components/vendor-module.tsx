@@ -22,6 +22,7 @@ import {
   FileSpreadsheet, Download, Loader2
 } from "lucide-react";
 import { db } from "@/lib/db";
+import { insertVoucherOnce } from "@/lib/finance/voucher-persist";
 import { FinVendorsApi, type FinVendor } from "@/lib/db-finance";
 import { ApInvoicesApi, type ProcApInvoice, type PaymentReceipt } from "@/lib/proc-invoices-api";
 import { PaymentReceiptDialog } from "@/components/payment-receipt-dialog";
@@ -105,7 +106,7 @@ function postAdvanceVoucherToGL(params: {
 
   // Also record in db if available
   try {
-    db.from("fin_vouchers").insert({
+    void insertVoucherOnce({
       voucher_number: pvNo,
       voucher_date: vDate,
       voucher_type: "Payment Voucher",
@@ -113,7 +114,7 @@ function postAdvanceVoucherToGL(params: {
       description: `Vendor Advance Disbursement to ${params.vendorName}`,
       total_amount: params.amount,
       status: "POSTED"
-    }).then(() => {});
+    });
   } catch {}
 
   window.dispatchEvent(new CustomEvent("finance_vouchers_updated"));
