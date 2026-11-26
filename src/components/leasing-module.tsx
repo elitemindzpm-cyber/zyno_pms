@@ -2226,6 +2226,9 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     noticePeriodDays: "60",
   });
 
+  // Direct lease (no reservation): the property / unit / customer the agreement is created for.
+  const [directLeaseParty, setDirectLeaseParty] = useState({ property: "", unit: "", customerId: "" });
+
   const [releaseOpen, setReleaseOpen] = useState(false);
   const [selectedReservationForRelease, setSelectedReservationForRelease] = useState<Reservation | null>(null);
   const [releaseReason, setReleaseReason] = useState("");
@@ -9013,6 +9016,61 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           </div>
 
           <div className="p-6 overflow-y-auto space-y-4 flex-1">
+            {!selectedReservationForLease && (() => {
+              const allUnits = realUnits.length > 0 ? realUnits : units;
+              const norm = (v: any) => String(v ?? "").toLowerCase().trim();
+              const isFree = (u: any) => ["available", "vacant"].includes(norm(u.status));
+              const isLeased = (u: any) => leases.some((l) => norm(l.unit) === norm(u.unit) && norm(l.property) === norm(u.property) && l.status !== "closed" && l.status !== "checkout");
+              const freeUnits = allUnits.filter((u: any) => isFree(u) && !isLeased(u));
+              const propertyOptions = Array.from(new Set(freeUnits.map((u: any) => u.property).filter(Boolean))).sort().map((p: any) => ({ label: p, value: p }));
+              const unitOptions = freeUnits
+                .filter((u: any) => directLeaseParty.property && norm(u.property) === norm(directLeaseParty.property))
+                .map((u: any) => ({ label: `${u.unit}${u.rent ? ` (QR ${Number(u.rent).toLocaleString()})` : ""}`, value: u.unit }));
+              const customerOptions = (customers || [])
+                .filter((c: any) => c.status !== "duplicate")
+                .map((c: any) => ({ label: `${c.name}${c.customerId ? ` · ${c.customerId}` : ""}`, value: c.id }));
+              return (
+                <div className="rounded-xl border bg-muted/20 p-4 space-y-3">
+                  <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                    <Building2 className="h-3.5 w-3.5 text-primary" /> Property, Unit & Customer
+                  </span>
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                    <Field label="Property *">
+                      <SearchableSelect
+                        value={directLeaseParty.property}
+                        onValueChange={(property) => setDirectLeaseParty((p) => ({ ...p, property, unit: "" }))}
+                        placeholder="Select Property"
+                        emptyText="No property with a vacant unit."
+                        options={propertyOptions}
+                      />
+                    </Field>
+                    <Field label="Unit *">
+                      <SearchableSelect
+                        value={directLeaseParty.unit}
+                        onValueChange={(unit) => {
+                          const u: any = freeUnits.find((x: any) => x.unit === unit && norm(x.property) === norm(directLeaseParty.property));
+                          setDirectLeaseParty((p) => ({ ...p, unit }));
+                          if (u?.rent) setCreateLeaseForm((f) => ({ ...f, monthlyRent: f.monthlyRent || String(u.rent), securityDeposit: f.securityDeposit || String(u.rent) }));
+                        }}
+                        disabled={!directLeaseParty.property}
+                        placeholder="Select Unit"
+                        emptyText="No vacant unit for this property."
+                        options={unitOptions}
+                      />
+                    </Field>
+                    <Field label="Customer *">
+                      <SearchableSelect
+                        value={directLeaseParty.customerId}
+                        onValueChange={(customerId) => setDirectLeaseParty((p) => ({ ...p, customerId }))}
+                        placeholder="Select Customer"
+                        emptyText="No customers. Add one in Customer Master."
+                        options={customerOptions}
+                      />
+                    </Field>
+                  </div>
+                </div>
+              );
+            })()}
             <div className="rounded-xl border bg-muted/20 p-4 space-y-3">
               <span className="text-[11px] font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
                 <CalendarClock className="h-3.5 w-3.5 text-primary" /> Lease Period & Duration
@@ -9114,7 +9172,29 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                   alert("Start Date, End Date and Monthly Rent are required.");
                   return;
                 }
-                if (selectedReservationForLease) createLeaseFromReservation(selectedReservationForLease, createLeaseForm);
+                if (selectedReservationForLease) {
+                  createLeaseFromReservation(selectedReservationForLease, createLeaseForm);
+                  return;
+                }
+                const party = directLeaseParty;
+                const cust: any = (customers || []).find((c: any) => c.id === party.customerId);
+                if (!party.property || !party.unit || !cust) {
+                  alert("Select the Property, Unit and Customer for this agreement.");
+                  return;
+                }
+                // No reservation: build a transient one so the same lease creation path is used.
+                createLeaseFromReservation({
+                  id: `direct-${Date.now()}`,
+                  customerId: cust.id,
+                  property: party.property,
+                  unit: party.unit,
+                  tenantName: cust.name,
+                  startDate: createLeaseForm.startDate,
+                  validUntil: createLeaseForm.startDate,
+                  rent: Number(createLeaseForm.monthlyRent) || 0,
+                  status: "reserved",
+                } as Reservation, createLeaseForm);
+                setDirectLeaseParty({ property: "", unit: "", customerId: "" });
               }}
             >
               <FileSignature className="mr-2 h-4 w-4" /> Create Lease
