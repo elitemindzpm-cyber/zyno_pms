@@ -227,11 +227,10 @@ export async function createAccountingEvent(
             .from('fin_accounting_event_lines')
             .insert(lines);
 
-        if (linesError) {
-            console.warn('[createAccountingEvent] lines insert notice:', linesError.message);
-        }
+        if (linesError) throw linesError;
     } catch (e: any) {
-        console.warn('[createAccountingEvent] lines insert error:', e?.message);
+        // A saved event without lines can never post and only shows up later as "Internal server error".
+        throw new Error(`Could not save the accounting lines for event ${payload.reference_number ?? payload.idempotency_key}: ${e?.message || 'unknown error'}`);
     }
 
     /*
