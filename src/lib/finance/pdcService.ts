@@ -413,6 +413,8 @@ export async function receivePdc(payload: {
   original_pdc_id?: number;
   /** Whether this PDC is for rent or a deposit. Defaults to 'RENT_PDC'. */
   pdcType?:       PdcType;
+  /** When true, a failed register insert or GL posting throws instead of only logging a warning. */
+  strict?:        boolean;
 }) {
   // Helper to ensure values inserted into bigint columns of fin_pdc_register are purely numeric
   const toBigintOrUndefined = (val: string | number | undefined | null): string | undefined => {
@@ -479,6 +481,7 @@ export async function receivePdc(payload: {
       ...(payload.original_pdc_id != null ? { original_pdc_id: payload.original_pdc_id } : {}),
     });
   } catch (err: any) {
+    if (payload.strict) throw err;
     console.warn('[receivePdc] fin_pdc_register insert notice:', err?.message || err);
   }
 
@@ -495,6 +498,7 @@ export async function receivePdc(payload: {
       payload.lease_id,
     );
   } catch (err: any) {
+    if (payload.strict) throw err;
     console.warn('[receivePdc] GL posting notice:', err?.message || err);
   }
 

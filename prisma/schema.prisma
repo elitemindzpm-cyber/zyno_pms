@@ -1731,6 +1731,7 @@ model leases {
   payment_frequency                                                 String?              @default("Monthly") @db.Text
   security_deposit                                                  Decimal?             @default(0.0000) @db.Decimal(18, 4)
   security_deposit_status                                           String?              @default("Pending") @db.Text
+  collection_status                                                 String?              @db.VarChar(32)
   grace_period_days                                                 Int?                 @default(5)
   late_penalty_percentage                                           Decimal?             @default(0.0000) @db.Decimal(18, 4)
   late_penalty_fixed                                                Decimal?             @default(0.0000) @db.Decimal(18, 4)
