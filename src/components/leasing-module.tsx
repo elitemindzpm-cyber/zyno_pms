@@ -23,6 +23,7 @@ import { Pagination, PaginationContent, PaginationEllipsis, PaginationItem, Pagi
 import { useAppData } from "@/lib/app-data-context";
 import { buildUnitTenantCustomers } from "@/lib/unit-tenant-customers";
 import { fetchAssets, updateAsset, db, type Asset as DbAsset } from "@/lib/db";
+import { insertVoucherOnce } from "@/lib/finance/voucher-persist";
 import { getTodayIST, getCurrentISTDate, formatDateDDMMYYYY } from "@/lib/date-utils";
 import { DYNAMIC_MASTERS_UPDATED_EVENT, DynamicMastersService } from "@/lib/dynamic-masters-service";
 import { DEFAULT_COMPANY_BANK_ACCOUNTS } from "@/lib/finance/bankAccounts";
@@ -3140,9 +3141,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         tenant_name: lease.tenantName,
       });
 
-      void db
-        .from("fin_vouchers")
-        .insert({
+      void insertVoucherOnce({
           voucher_number: cnlVoucherNo,
           voucher_date: effectiveDate,
           voucher_type: "JV",
@@ -3151,8 +3150,6 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           status: "posted",
           posted_at: new Date().toISOString(),
         })
-        .select("id")
-        .single()
         .then(({ data: vData, error: vErr }) => {
           if (!vErr && vData?.id) {
             void db.from("fin_voucher_lines").insert([
@@ -4979,7 +4976,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     const lease = leases.find(l => l.id === leaseId);
     const tenantLabel = lease?.tenantName || lease?.tenant || "Tenant";
     const unitLabel = lease?.unit || lease?.unitRef || "";
-    void db.from("fin_vouchers").insert({
+    void insertVoucherOnce({
       voucher_number: `VCH-SD-RCV-${voucherRef}`,
       voucher_date: postingDate,
       voucher_type: "RV",
@@ -4987,7 +4984,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       total_amount: numAmount,
       status: "posted",
       posted_at: new Date().toISOString(),
-    }).select("id").single().then(({ data: vData, error: vErr }) => {
+    }).then(({ data: vData, error: vErr }) => {
       if (!vErr && vData?.id) {
         void db.from("fin_voucher_lines").insert([
           { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: numAmount, credit: 0, description: `Security Deposit — ${tenantLabel}` },
@@ -5442,7 +5439,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       const drCode = isPdc ? "12900001" : isCash ? "12100001" : "12000001";
       const drName = isPdc ? "Rent PDC In Hand" : isCash ? "Cash in Hand / Operating Cash" : "Bank Operating Account (QNB)";
       const postingDate = data.securityDeposit.chequeDate || today.toISOString().split("T")[0];
-      void db.from("fin_vouchers").insert({
+      void insertVoucherOnce({
         voucher_number: `VCH-SD-${sdRef}`,
         voucher_date: postingDate,
         voucher_type: "RV",
@@ -5450,7 +5447,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         total_amount: depositTopUp,
         status: "posted",
         posted_at: new Date().toISOString(),
-      }).select("id").single().then(({ data: vData, error: vErr }) => {
+      }).then(({ data: vData, error: vErr }) => {
         if (!vErr && vData?.id) {
           void db.from("fin_voucher_lines").insert([
             { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: depositTopUp, credit: 0, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
@@ -5809,7 +5806,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       const drCode = isPdc ? "12900001" : isCash ? "12100001" : "12000001";
       const drName = isPdc ? "Rent PDC In Hand" : isCash ? "Cash in Hand / Operating Cash" : "Bank Operating Account (QNB)";
       const postingDate = renewalResponseForm.rentPaymentDate || today.toISOString().split("T")[0];
-      void db.from("fin_vouchers").insert({
+      void insertVoucherOnce({
         voucher_number: `VCH-RENT-${rentRef}`,
         voucher_date: postingDate,
         voucher_type: "RV",
@@ -5817,7 +5814,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         total_amount: rentAmt,
         status: "posted",
         posted_at: new Date().toISOString(),
-      }).select("id").single().then(({ data: vData, error: vErr }) => {
+      }).then(({ data: vData, error: vErr }) => {
         if (!vErr && vData?.id) {
           void db.from("fin_voucher_lines").insert([
             { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: rentAmt, credit: 0, description: `Rent Differential — ${oldLease.tenantName}` },
@@ -5869,7 +5866,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       const drCode = isPdc ? "12900001" : isCash ? "12100001" : "12000001";
       const drName = isPdc ? "Rent PDC In Hand" : isCash ? "Cash in Hand / Operating Cash" : "Bank Operating Account (QNB)";
       const postingDate = renewalResponseForm.securityChequeDate || today.toISOString().split("T")[0];
-      void db.from("fin_vouchers").insert({
+      void insertVoucherOnce({
         voucher_number: `VCH-SD-${sdRef}`,
         voucher_date: postingDate,
         voucher_type: "RV",
@@ -5877,7 +5874,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         total_amount: depositTopUp,
         status: "posted",
         posted_at: new Date().toISOString(),
-      }).select("id").single().then(({ data: vData, error: vErr }) => {
+      }).then(({ data: vData, error: vErr }) => {
         if (!vErr && vData?.id) {
           void db.from("fin_voucher_lines").insert([
             { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: depositTopUp, credit: 0, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },

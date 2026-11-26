@@ -2,6 +2,7 @@ import { kvStore } from "@/lib/kv-store";
 import { createContext, useContext, useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { toast } from "sonner";
 import { db } from "@/lib/db";
+import { insertVoucherOnce } from "./voucher-persist";
 import { resolveAccountingAccounts } from "./account-resolver";
 import { postVoucher } from "./posting-engine";
 import {
@@ -2533,7 +2534,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     // Persist to DB fin_vouchers (best-effort, fire-and-forget).
     const typeCode = newVch.voucher_type === "Payment Voucher" ? "PV" : newVch.voucher_type === "Receipt Voucher" ? "RV" : "JV";
     void Promise.resolve(
-      db.from("fin_vouchers").insert({
+      insertVoucherOnce({
         voucher_number: newVch.voucher_no,
         voucher_date: newVch.date,
         voucher_type: typeCode,
@@ -2542,7 +2543,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         total_amount: newVch.amount,
         status: "posted",
         posted_at: new Date().toISOString(),
-      }).select("id")
+      })
     ).then(({ error, data }: any) => {
       if (error) {
         console.warn("[FinanceStore] fin_vouchers persist warn:", error.message);
@@ -2650,7 +2651,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       };
       setVouchers(v => [rv, ...v]);
       void Promise.resolve(
-        db.from("fin_vouchers").insert({
+        insertVoucherOnce({
           voucher_number: rv.voucher_no,
           voucher_date: rv.date,
           voucher_type: "RV",
@@ -2659,7 +2660,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
           total_amount: rv.amount,
           status: "posted",
           posted_at: new Date().toISOString(),
-        }).select("id")
+        })
       ).then(({ data }: any) => {
         const insertedId = Array.isArray(data) ? data[0]?.id : (data as any)?.id;
         if (insertedId) seenVoucherIds.current.add(String(insertedId));
