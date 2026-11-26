@@ -1502,8 +1502,44 @@ function FinanceDashboardSubModule() {
       );
     return sum + ((lease.monthlyRent || 0) * monthsRemaining);
   }, 0);
-  const totalPdcs = 0;
-  const totalVouchers = (sharedVouchers || []).reduce((s, v) => s + (Number(v.amount) || 0), 0);
+  // Live figures from the database (these cards used to be fixed placeholders).
+  const [live, setLive] = useState<{
+    pdcCount: number; pdcTotal: number; depositTotal: number; voucherCount: number; voucherTotal: number;
+    debit: number; credit: number; recent: Array<{ no: string; date: string; desc: string; amount: number }>;
+  } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const num = (v: any) => Number(v) || 0;
+        const [pdcRes, depRes, vchRes, lineRes] = await Promise.all([
+          db.from("fin_pdc_register").select("amount, status"),
+          db.from("fin_deposits").select("amount, status"),
+          db.from("fin_vouchers").select("voucher_number, voucher_date, description, total_amount, created_at").order("created_at", { ascending: false }),
+          db.from("fin_voucher_lines").select("debit_amount, credit_amount"),
+        ]);
+        const pdcs = (pdcRes.data || []).filter((p: any) => String(p.status || "").toLowerCase().replace(/s+/g, "") === "inhand");
+        const deps = (depRes.data || []).filter((d: any) => !["refunded", "cancelled"].includes(String(d.status || "").toLowerCase()));
+        const vchs = vchRes.data || [];
+        const lines = lineRes.data || [];
+        if (cancelled) return;
+        setLive({
+          pdcCount: pdcs.length,
+          pdcTotal: pdcs.reduce((a: number, p: any) => a + num(p.amount), 0),
+          depositTotal: deps.reduce((a: number, d: any) => a + num(d.amount), 0),
+          voucherCount: vchs.length,
+          voucherTotal: vchs.reduce((a: number, v: any) => a + num(v.total_amount), 0),
+          debit: lines.reduce((a: number, l: any) => a + num(l.debit_amount), 0),
+          credit: lines.reduce((a: number, l: any) => a + num(l.credit_amount), 0),
+          recent: vchs.slice(0, 6).map((v: any) => ({ no: v.voucher_number, date: String(v.voucher_date || "").slice(0, 10), desc: v.description || "", amount: num(v.total_amount) })),
+        });
+      } catch { /* keep placeholders if the database is unreachable */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
+  const totalPdcs = live?.pdcTotal ?? 0;
+  const totalVouchers = live ? live.voucherTotal : (sharedVouchers || []).reduce((s, v) => s + (Number(v.amount) || 0), 0);
+  const ledgerBalanced = !live || Math.abs(live.debit - live.credit) < 0.01;
 
   return (
     <div className="space-y-6">
@@ -1519,20 +1555,20 @@ function FinanceDashboardSubModule() {
           <CardContent className="p-4">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">PDCs Under Custody</p>
             <h3 className="text-xl font-bold mt-1 text-emerald-600 font-mono">QR {totalPdcs.toLocaleString()}</h3>
-            <p className="text-[10px] text-muted-foreground mt-1">0 Registered Cheques</p>
+            <p className="text-[10px] text-muted-foreground mt-1">{live?.pdcCount ?? 0} Cheques In Hand</p>
           </CardContent>
         </Card>
         <Card className="bg-blue-500/5 border-blue-500/20 shadow-sm">
           <CardContent className="p-4">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Posted Vouchers</p>
             <h3 className="text-xl font-bold mt-1 text-blue-600 font-mono">QR {totalVouchers.toLocaleString()}</h3>
-            <p className="text-[10px] text-muted-foreground mt-1">{sharedVouchers?.length || 19} Ledger Transactions</p>
+            <p className="text-[10px] text-muted-foreground mt-1">{live ? live.voucherCount : sharedVouchers?.length || 0} Ledger Transactions</p>
           </CardContent>
         </Card>
         <Card className="bg-amber-500/5 border-amber-500/20 shadow-sm">
           <CardContent className="p-4">
             <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wider">Security Deposits Held</p>
-            <h3 className="text-xl font-bold mt-1 text-amber-600 font-mono">QR 0</h3>
+            <h3 className="text-xl font-bold mt-1 text-amber-600 font-mono">QR {(live?.depositTotal ?? 0).toLocaleString()}</h3>
             <p className="text-[10px] text-muted-foreground mt-1">GL Account 21500</p>
           </CardContent>
         </Card>
@@ -1541,7 +1577,23 @@ function FinanceDashboardSubModule() {
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <Card className="shadow-sm">
           <CardHeader className="pb-2"><CardTitle className="text-sm">Recent Financial Transactions</CardTitle></CardHeader>
-          <CardContent className="text-xs text-muted-foreground py-8 text-center">No recent financial transactions found.</CardContent>
+          <CardContent className="text-xs">
+            {live && live.recent.length > 0 ? (
+              <div className="divide-y">
+                {live.recent.map((r) => (
+                  <div key={r.no} className="flex items-center justify-between py-2 gap-3">
+                    <div className="min-w-0">
+                      <p className="font-mono font-semibold truncate">{r.no}</p>
+                      <p className="text-[10px] text-muted-foreground truncate">{r.date}{r.desc ? ` · ${r.desc}` : ""}</p>
+                    </div>
+                    <span className="font-mono font-bold">QR {r.amount.toLocaleString()}</span>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-muted-foreground py-8 text-center">No recent financial transactions found.</p>
+            )}
+          </CardContent>
         </Card>
 
         <Card className="shadow-sm">
@@ -1550,16 +1602,16 @@ function FinanceDashboardSubModule() {
             <div className="flex items-center justify-between p-2.5 rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200">
               <div className="flex items-center gap-2">
                 <CheckCircle2 className="h-4 w-4 text-emerald-600" />
-                <span className="font-semibold">General Ledger In Balance</span>
+                <span className="font-semibold">{ledgerBalanced ? "General Ledger In Balance" : "General Ledger Out of Balance"}</span>
               </div>
-              <span className="font-mono text-xs font-bold">Dr = Cr (OK)</span>
+              <span className="font-mono text-xs font-bold">{live ? `Dr ${live.debit.toLocaleString()} / Cr ${live.credit.toLocaleString()}` : "Dr = Cr (OK)"}</span>
             </div>
             <div className="flex items-center justify-between p-2.5 rounded-lg bg-blue-50 text-blue-800 border border-blue-200">
               <div className="flex items-center gap-2">
                 <Landmark className="h-4 w-4 text-blue-600" />
                 <span className="font-semibold">PDC Register Linkage</span>
               </div>
-              <span className="font-mono text-xs font-bold">0 Cheques Reconciled</span>
+              <span className="font-mono text-xs font-bold">{live?.pdcCount ?? 0} Cheques In Hand · QR {(live?.pdcTotal ?? 0).toLocaleString()}</span>
             </div>
           </CardContent>
         </Card>

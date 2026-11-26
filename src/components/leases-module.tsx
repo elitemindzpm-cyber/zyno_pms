@@ -572,10 +572,24 @@ export function LeasesModule({ role }: LeasesModuleProps) {
       });
 
       const allLeases = [...dbLeases];
+      // A lease created in the app is saved to the database as "LS-<local id>" (local "l1" -> "LS-L1").
+      // Treat those as one lease, and fill the DB row's blank unit / tenant from the local copy.
+      const norm = (v: any) => String(v ?? '').trim().toUpperCase();
+      const findSame = (id: any, num: any) =>
+        allLeases.find(l =>
+          norm(l.id) === norm(id) ||
+          (num && norm(l.lease_number) === norm(num)) ||
+          norm(l.lease_number) === `LS-${norm(id)}` ||
+          norm(l.lease_number) === `LS-${norm(num)}`);
+      const fillFromLocal = (target: any, local: any) => {
+        if (!target.unit_code && local.unit_code) target.unit_code = local.unit_code;
+        if (!target.tenant_name && local.tenant_name) target.tenant_name = local.tenant_name;
+        if ((!target.properties || !target.properties.title) && local.properties?.title) target.properties = local.properties;
+      };
       for (const mc of mappedContext) {
-        if (!allLeases.some(l => l.id === mc.id || l.lease_number === mc.lease_number)) {
-          allLeases.push(mc);
-        }
+        const same = findSame(mc.id, mc.lease_number);
+        if (same) fillFromLocal(same, mc);
+        else allLeases.push(mc);
       }
 
       // Also merge any newly created leases from Leasing Module kvStore ('pms_leasing_v2_leases')
@@ -587,7 +601,10 @@ export function LeasesModule({ role }: LeasesModuleProps) {
             for (const vl of parsedV2) {
               const vlId = vl.id || vl.lease_number;
               const vlNum = vl.lease_number || vl.id;
-              if (!allLeases.some(l => l.id === vlId || l.lease_number === vlNum)) {
+              const sameV2 = findSame(vlId, vlNum);
+              if (sameV2) {
+                fillFromLocal(sameV2, { unit_code: vl.unit || vl.unit_code || '', tenant_name: vl.tenantName || vl.tenant_name || '', properties: { title: vl.property || vl.property_name || '' } });
+              } else {
                 const sDate = vl.startDate || vl.commencement_date || '';
                 const eDate = vl.endDate || vl.expiry_date || '';
                 const mRent = Number(vl.monthlyRent || 0);
