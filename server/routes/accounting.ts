@@ -871,6 +871,87 @@ router.get('/cash-book', async (req: Request, res: Response) => {
   } catch (e: any) { console.error('[cash-book]', e?.message); res.status(500).json({ error: 'Failed to load the cash book' }); }
 });
 
+// Petty cash: movements on the Petty Cash account (12100002). Credits are expenses paid, debits are float top-ups.
+const PETTY_CASH_CODE = '12100002';
+const CASH_IN_HAND_CODE = '12100001';
+router.get('/petty-cash', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view petty cash' });
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT l.id AS id, DATE_FORMAT(v.voucher_date, '%Y-%m-%d') AS date, v.voucher_number AS voucher,
+             COALESCE(l.description, v.description) AS description, l.debit_amount AS debit, l.credit_amount AS credit
+        FROM fin_voucher_lines l
+        JOIN fin_vouchers v ON v.id = l.voucher_id
+       WHERE LOWER(v.status) = 'posted' AND l.account_code = ${PETTY_CASH_CODE}
+       ORDER BY v.voucher_date ASC, v.created_at ASC, l.created_at ASC`;
+    let balance = 0;
+    const entries = rows.map((r) => {
+      const debit = Number(r.debit) || 0; const credit = Number(r.credit) || 0;
+      balance += debit - credit;
+      const text = String(r.description || '');
+      const m = text.match(/^(.*?)\s*\|\s*Paid to:\s*(.*)$/i);
+      return { id: String(r.id), date: r.date, voucher: r.voucher, expense: m ? m[1] : text, paid_to: m ? m[2] : '', amount: credit > 0 ? credit : debit, kind: credit > 0 ? 'expense' : 'topup', balance };
+    });
+    const spent = entries.filter((e) => e.kind === 'expense').reduce((a, e) => a + e.amount, 0);
+    const funded = entries.filter((e) => e.kind === 'topup').reduce((a, e) => a + e.amount, 0);
+    res.json({ data: entries.reverse(), totals: { spent, funded, balance: funded - spent } });
+  } catch (e: any) { console.error('[petty-cash]', e?.message); res.status(500).json({ error: 'Failed to load petty cash' }); }
+});
+
+// Cash on hand: balances of the Cash In Hand and Petty Cash accounts.
+router.get('/cash-on-hand', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view cash on hand' });
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT l.account_code AS code, SUM(l.debit_amount) AS debit, SUM(l.credit_amount) AS credit
+        FROM fin_voucher_lines l JOIN fin_vouchers v ON v.id = l.voucher_id
+       WHERE LOWER(v.status) = 'posted' AND l.account_code IN ('12100001', '12100002', '10100')
+       GROUP BY l.account_code`;
+    let vaultCash = 0; let pettyCashFloat = 0;
+    for (const r of rows) {
+      const net = (Number(r.debit) || 0) - (Number(r.credit) || 0);
+      if (r.code === PETTY_CASH_CODE) pettyCashFloat += net; else vaultCash += net;
+    }
+    res.json({ data: { vaultCash, pettyCashFloat, siteDesks: 0, totalCashOnHand: vaultCash + pettyCashFloat } });
+  } catch (e: any) { console.error('[cash-on-hand]', e?.message); res.status(500).json({ error: 'Failed to load cash on hand' }); }
+});
+
+// Cash flow statement from posted voucher lines: cash and bank movements classified by the other side of each voucher.
+router.get('/cash-flow', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view the cash flow' });
+    const CASH = new Set(['10100', '12000', '12000001', '12000002', '12000003', '12000004', '12000005', '12000006', '12001', '12100', '12100001', '12100002']);
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT v.id AS vid, l.account_code AS code, COALESCE(l.description, v.description) AS description,
+             l.debit_amount AS debit, l.credit_amount AS credit
+        FROM fin_voucher_lines l JOIN fin_vouchers v ON v.id = l.voucher_id
+       WHERE LOWER(v.status) = 'posted'
+       LIMIT 100000`;
+    const byVoucher = new Map<string, any[]>();
+    for (const r of rows) { const b = byVoucher.get(r.vid) || []; b.push(r); byVoucher.set(r.vid, b); }
+    let operatingInflow = 0, operatingOutflow = 0, investingCash = 0, financingCash = 0;
+    byVoucher.forEach((lines) => {
+      const cashLines = lines.filter((l) => CASH.has(l.code));
+      const nonCash = lines.filter((l) => !CASH.has(l.code));
+      if (!cashLines.length || !nonCash.length) return;
+      const cashNet = cashLines.reduce((a, l) => a + (Number(l.debit) || 0) - (Number(l.credit) || 0), 0);
+      if (Math.abs(cashNet) < 0.005) return;
+      const narration = lines.map((l) => l.description || '').join(' ').toLowerCase();
+      if (narration.includes('pdc deposited')) return;
+      if (nonCash.some((l) => String(l.code).startsWith('13'))) investingCash += cashNet;
+      else if (nonCash.some((l) => String(l.code).startsWith('3'))) financingCash += cashNet;
+      else if (cashNet > 0) operatingInflow += cashNet;
+      else operatingOutflow += Math.abs(cashNet);
+    });
+    const endingCashBalance = rows.filter((l) => CASH.has(l.code)).reduce((a, l) => a + (Number(l.debit) || 0) - (Number(l.credit) || 0), 0);
+    const netOperatingCash = operatingInflow - operatingOutflow;
+    res.json({ data: { operatingInflow, operatingOutflow, netOperatingCash, investingCash, financingCash, netCashChange: netOperatingCash + investingCash + financingCash, endingCashBalance } });
+  } catch (e: any) { console.error('[cash-flow]', e?.message); res.status(500).json({ error: 'Failed to load the cash flow' }); }
+});
+
 // Posting Engine Compliance View
 router.get('/compliance', async (_req: Request, res: Response) => {
   try {

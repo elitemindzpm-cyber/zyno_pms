@@ -10500,7 +10500,28 @@ function GeneralLedgerReportSubModule() {
 }
 
 function CashFlowSubModule() {
-  const { cashFlowReport: cf, isSyncing, refreshFinanceData } = useFinanceStore();
+  // Computed by the backend from posted voucher lines.
+  const emptyCf = { operatingInflow: 0, operatingOutflow: 0, netOperatingCash: 0, investingCash: 0, financingCash: 0, netCashChange: 0, endingCashBalance: 0 };
+  const [cf, setCf] = useState<typeof emptyCf>(emptyCf);
+  const [isSyncing, setIsSyncing] = useState(false);
+  const loadCf = useCallback(async () => {
+    setIsSyncing(true);
+    try {
+      const res: any = await apiRequest("/api/accounting/cash-flow");
+      setCf({ ...emptyCf, ...(res?.data || {}) });
+    } catch (e: any) {
+      toast.error(e?.message || "Could not load the cash flow");
+    } finally {
+      setIsSyncing(false);
+    }
+  }, []);
+  useEffect(() => {
+    void loadCf();
+    const onChange = () => { void loadCf(); };
+    window.addEventListener("finance_vouchers_updated", onChange);
+    return () => window.removeEventListener("finance_vouchers_updated", onChange);
+  }, [loadCf]);
+  const refreshFinanceData = () => { void loadCf(); };
 
   return (
     <div className="space-y-4">
@@ -10673,26 +10694,97 @@ function CashBookSubModule() {
 }
 
 function PettyCashBookSubModule() {
-  const { pettyCashEntries, addPettyCashEntry, isSyncing, refreshFinanceData } = useFinanceStore();
+  // Petty cash is the ledger on the Petty Cash account (12100002), read from and posted through the backend.
+  type PettyRow = { id: string; date: string; voucher: string; expense: string; paid_to: string; amount: number; kind: "expense" | "topup"; balance: number };
+  const [rows, setRows] = useState<PettyRow[]>([]);
+  const [totals, setTotals] = useState({ spent: 0, funded: 0, balance: 0 });
+  const [isSyncing, setIsSyncing] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [open, setOpen] = useState(false);
-  const [form, setForm] = useState({
-    date: new Date().toISOString().split("T")[0],
-    expense: "",
-    paid_to: "",
-    amount: "",
-  });
+  const [fundOpen, setFundOpen] = useState(false);
+  const [expenseAccounts, setExpenseAccounts] = useState<Array<{ account_code: string; account_name: string }>>([]);
+  const today = new Date().toISOString().split("T")[0];
+  const [form, setForm] = useState({ date: today, expense: "", paid_to: "", amount: "", account_code: "" });
+  const [fundForm, setFundForm] = useState({ date: today, amount: "" });
 
-  function handleAdd() {
-    addPettyCashEntry({
-      date: form.date,
-      expense: form.expense,
-      paid_to: form.paid_to,
-      amount: parseFloat(form.amount) || 0
-    });
-    setOpen(false);
+  const loadPetty = useCallback(async () => {
+    setIsSyncing(true);
+    try {
+      const res: any = await apiRequest("/api/accounting/petty-cash");
+      setRows(Array.isArray(res?.data) ? res.data : []);
+      setTotals({ spent: 0, funded: 0, balance: 0, ...(res?.totals || {}) });
+    } catch (e: any) {
+      toast.error(e?.message || "Could not load petty cash");
+    } finally {
+      setIsSyncing(false);
+    }
+  }, []);
+  useEffect(() => {
+    void loadPetty();
+    const onChange = () => { void loadPetty(); };
+    window.addEventListener("finance_vouchers_updated", onChange);
+    return () => window.removeEventListener("finance_vouchers_updated", onChange);
+  }, [loadPetty]);
+  useEffect(() => {
+    (async () => {
+      try {
+        const { data } = await db.from("fin_coa_accounts").select("account_code, account_name, account_type, account_level, is_active").eq("account_type", "Expenditure").eq("account_level", "SL");
+        setExpenseAccounts((data || []).filter((x: any) => x.is_active !== false && x.is_active !== 0).map((x: any) => ({ account_code: x.account_code, account_name: x.account_name })).sort((p: any, q: any) => p.account_code.localeCompare(q.account_code)));
+      } catch { setExpenseAccounts([]); }
+    })();
+  }, []);
+  const refreshFinanceData = () => { void loadPetty(); };
+  const totalPetty = totals.spent;
+
+  async function post(body: any, okMessage: string) {
+    setSaving(true);
+    try {
+      await apiRequest("/api/accounting/post-voucher", { method: "POST", body: JSON.stringify(body) });
+      toast.success(okMessage);
+      window.dispatchEvent(new Event("finance_vouchers_updated"));
+      return true;
+    } catch (e: any) {
+      toast.error(e?.message || "Posting failed");
+      return false;
+    } finally {
+      setSaving(false);
+    }
   }
 
-  const totalPetty = pettyCashEntries.reduce((s, r) => s + r.amount, 0);
+  async function handleAdd() {
+    const amount = parseFloat(form.amount) || 0;
+    if (!form.expense.trim() || !form.account_code || amount <= 0) {
+      toast.error("Enter the expense, choose its expense account and an amount above zero.");
+      return;
+    }
+    const text = `${form.expense.trim()} | Paid to: ${form.paid_to.trim() || "-"}`;
+    const ok = await post({
+      voucher_date: form.date,
+      voucher_type: "Payment",
+      description: text,
+      lines: [
+        { account_code: form.account_code, debit: amount, credit: 0, description: text },
+        { account_code: "12100002", debit: 0, credit: amount, description: text },
+      ],
+    }, "Petty cash expense posted.");
+    if (ok) { setOpen(false); setForm({ date: today, expense: "", paid_to: "", amount: "", account_code: "" }); }
+  }
+
+  async function handleFund() {
+    const amount = parseFloat(fundForm.amount) || 0;
+    if (amount <= 0) { toast.error("Enter an amount above zero."); return; }
+    const text = "Petty cash float top-up from Cash In Hand";
+    const ok = await post({
+      voucher_date: fundForm.date,
+      voucher_type: "Contra",
+      description: text,
+      lines: [
+        { account_code: "12100002", debit: amount, credit: 0, description: text },
+        { account_code: "12100001", debit: 0, credit: amount, description: text },
+      ],
+    }, "Petty cash float topped up.");
+    if (ok) { setFundOpen(false); setFundForm({ date: today, amount: "" }); }
+  }
 
   return (
     <div className="space-y-4">
@@ -10713,6 +10805,7 @@ function PettyCashBookSubModule() {
             <RefreshCw className={`h-3.5 w-3.5 ${isSyncing ? "animate-spin text-primary" : ""}`} />
             {isSyncing ? "Syncing..." : "Refresh"}
           </Button>
+          <Button size="sm" variant="outline" onClick={() => setFundOpen(true)} className="gap-2"><Plus className="h-4 w-4" /> Top Up Float</Button>
           <Button size="sm" onClick={() => setOpen(true)} className="gap-2"><Plus className="h-4 w-4" /> Add Petty Cash Expense</Button>
         </div>
       </div>
@@ -10720,6 +10813,8 @@ function PettyCashBookSubModule() {
       <Card className="p-3 bg-amber-50 border-amber-200 inline-flex gap-3 items-center">
         <p className="text-xs font-semibold text-amber-700">Total Petty Cash Spent</p>
         <p className="font-mono font-bold text-amber-800">QR {totalPetty.toLocaleString()}</p>
+        <p className="text-xs font-semibold text-emerald-700 ml-3">Float Balance</p>
+        <p className="font-mono font-bold text-emerald-800">QR {totals.balance.toLocaleString()}</p>
       </Card>
 
       <div className="border rounded-lg overflow-hidden bg-card">
@@ -10727,18 +10822,25 @@ function PettyCashBookSubModule() {
           <TableHeader>
             <TableRow className="bg-muted/50 text-xs">
               <TableHead className="font-bold">Date</TableHead>
+              <TableHead className="font-bold">Voucher #</TableHead>
               <TableHead className="font-bold">Expense Description</TableHead>
               <TableHead className="font-bold">Paid To</TableHead>
               <TableHead className="text-right font-bold">Amount (QAR)</TableHead>
+              <TableHead className="text-right font-bold">Float Balance</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody className="text-xs">
-            {[...pettyCashEntries].sort((a, b) => new Date(b.date || "").getTime() - new Date(a.date || "").getTime()).map((row) => (
+            {rows.length === 0 && (
+              <TableRow><TableCell colSpan={6} className="text-center py-6 text-muted-foreground">No petty cash movements recorded yet.</TableCell></TableRow>
+            )}
+            {rows.map((row) => (
               <TableRow key={row.id} className="hover:bg-muted/30">
                 <TableCell className="font-mono">{row.date}</TableCell>
+                <TableCell className="font-mono text-primary">{row.voucher}</TableCell>
                 <TableCell className="font-medium">{row.expense}</TableCell>
                 <TableCell>{row.paid_to}</TableCell>
-                <TableCell className="text-right font-mono font-bold text-rose-600">{row.amount.toLocaleString()}</TableCell>
+                <TableCell className={`text-right font-mono font-bold ${row.kind === "expense" ? "text-rose-600" : "text-emerald-600"}`}>{row.kind === "expense" ? "-" : "+"}{row.amount.toLocaleString()}</TableCell>
+                <TableCell className="text-right font-mono">{row.balance.toLocaleString()}</TableCell>
               </TableRow>
             ))}
           </TableBody>
@@ -10754,6 +10856,16 @@ function PettyCashBookSubModule() {
               <div><Label>Expense Item</Label><Input value={form.expense} onChange={e => setForm({ ...form, expense: e.target.value })} /></div>
               <div><Label>Paid To</Label><Input value={form.paid_to} onChange={e => setForm({ ...form, paid_to: e.target.value })} /></div>
               <div><Label>Amount (QAR)</Label><Input type="number" value={form.amount} onChange={e => setForm({ ...form, amount: e.target.value })} /></div>
+              <div className="col-span-2">
+                <Label>Expense Account *</Label>
+                <Select value={form.account_code} onValueChange={(v) => setForm({ ...form, account_code: v })}>
+                  <SelectTrigger><SelectValue placeholder="Select expense account" /></SelectTrigger>
+                  <SelectContent>
+                    {expenseAccounts.length === 0 && <SelectItem value="__none__" disabled>No expense accounts in the chart</SelectItem>}
+                    {expenseAccounts.map((x) => <SelectItem key={x.account_code} value={x.account_code}>{x.account_code} — {x.account_name}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
 
             {/* Live GL / COA Impact Preview */}
@@ -10766,12 +10878,12 @@ function PettyCashBookSubModule() {
                 <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
                   <div className="bg-background p-2 rounded border border-emerald-200">
                     <span className="text-emerald-700 dark:text-emerald-400 font-bold block">Debit (Expense):</span>
-                    <span>50800 - General Office & Hospitality</span>
+                    <span>{form.account_code ? `${form.account_code} - ${expenseAccounts.find((x) => x.account_code === form.account_code)?.account_name ?? ""}` : "Choose an expense account"}</span>
                     <span className="block font-bold text-emerald-600 mt-1">QR {parseFloat(form.amount || '0').toLocaleString()}</span>
                   </div>
                   <div className="bg-background p-2 rounded border border-rose-200">
                     <span className="text-rose-600 dark:text-rose-400 font-bold block">Credit (Asset/Float):</span>
-                    <span>10200 - Petty Cash Float Imprest</span>
+                    <span>12100002 - Petty Cash</span>
                     <span className="block font-bold text-rose-600 mt-1">QR {parseFloat(form.amount || '0').toLocaleString()}</span>
                   </div>
                 </div>
@@ -10780,7 +10892,24 @@ function PettyCashBookSubModule() {
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
-            <Button onClick={handleAdd}>Save Expense</Button>
+            <Button onClick={handleAdd} disabled={saving}>{saving ? "Posting..." : "Save Expense"}</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={fundOpen} onOpenChange={setFundOpen}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader><DialogTitle>Top Up Petty Cash Float</DialogTitle></DialogHeader>
+          <div className="space-y-3 py-2 text-xs">
+            <div className="grid grid-cols-2 gap-3">
+              <div><Label>Date</Label><Input type="date" value={fundForm.date} onChange={e => setFundForm({ ...fundForm, date: e.target.value })} /></div>
+              <div><Label>Amount (QAR)</Label><Input type="number" value={fundForm.amount} onChange={e => setFundForm({ ...fundForm, amount: e.target.value })} /></div>
+            </div>
+            <p className="text-muted-foreground">Moves cash from Cash In Hand (12100001) to Petty Cash (12100002).</p>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setFundOpen(false)}>Cancel</Button>
+            <Button onClick={handleFund} disabled={saving}>{saving ? "Posting..." : "Top Up"}</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
@@ -10789,7 +10918,27 @@ function PettyCashBookSubModule() {
 }
 
 function CashOnHandSubModule() {
-  const { cashOnHandPosition: co, isSyncing, refreshFinanceData } = useFinanceStore();
+  // Computed by the backend from the Cash In Hand and Petty Cash accounts.
+  const [co, setCo] = useState({ vaultCash: 0, pettyCashFloat: 0, siteDesks: 0, totalCashOnHand: 0 });
+  const [isSyncing, setIsSyncing] = useState(false);
+  const loadCo = useCallback(async () => {
+    setIsSyncing(true);
+    try {
+      const res: any = await apiRequest("/api/accounting/cash-on-hand");
+      setCo((prev) => ({ ...prev, ...(res?.data || {}) }));
+    } catch (e: any) {
+      toast.error(e?.message || "Could not load cash on hand");
+    } finally {
+      setIsSyncing(false);
+    }
+  }, []);
+  useEffect(() => {
+    void loadCo();
+    const onChange = () => { void loadCo(); };
+    window.addEventListener("finance_vouchers_updated", onChange);
+    return () => window.removeEventListener("finance_vouchers_updated", onChange);
+  }, [loadCo]);
+  const refreshFinanceData = () => { void loadCo(); };
 
   return (
     <div className="space-y-4">
