@@ -496,6 +496,100 @@ router.post('/unit-ledgers', async (req: Request, res: Response) => {
   }
 });
 
+// ── Company bank accounts: each account gets the next GL code from 12000001 and its own posting SL under GL 12000 ──
+const BANK_GL_PARENT = '12000';
+const BANK_GL_FIRST = 12000001;
+
+router.post('/bank-accounts', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'coa_sl', 'write')) {
+      return res.status(403).json({ error: 'Not authorized to create bank accounts' });
+    }
+
+    const body = req.body || {};
+    const bankId = Number(body.bank_id);
+    const accountNumber = String(body.account_number ?? '').trim();
+    const accountTitle = String(body.account_title ?? '').trim();
+    const currency = String(body.currency ?? 'QAR').trim() || 'QAR';
+
+    if (!Number.isInteger(bankId) || bankId <= 0) return res.status(400).json({ error: 'bank_id is required' });
+    if (!accountNumber || !accountTitle) return res.status(400).json({ error: 'Account number and account title are required' });
+    if (currency !== 'QAR') return res.status(400).json({ error: 'Only QAR bank accounts are supported' });
+
+    const result = await prisma.$transaction(async (tx) => {
+      const bank = await tx.fin_banks.findUnique({ where: { id: bankId } });
+      if (!bank) throw httpError(404, 'Bank not found');
+
+      const duplicate = await tx.fin_bank_accounts.findUnique({ where: { account_number: accountNumber } });
+      if (duplicate) throw httpError(409, `Account number ${accountNumber} already exists`);
+
+      // Next code after the highest one in use; never below 12000001, so 12000000 is never assigned.
+      const used = await tx.fin_bank_accounts.findMany({ where: { gl_code: { not: null } }, select: { gl_code: true } });
+      const highest = used.reduce((m: number, r: any) => Math.max(m, Number(r.gl_code)), BANK_GL_FIRST - 1);
+      const glCode = String(highest + 1);
+
+      const parentGl = await tx.coa_gl.findUnique({ where: { code: BANK_GL_PARENT } });
+      if (!parentGl) throw httpError(422, `GL ${BANK_GL_PARENT} (Bank) is not in the Chart of Accounts.`);
+      const parentFin = await tx.fin_coa_accounts.findUnique({ where: { account_code: BANK_GL_PARENT } });
+      if (!parentFin) throw httpError(422, `GL ${BANK_GL_PARENT} (Bank) is missing from the posting chart.`);
+
+      // A code that already exists in the chart (12000001 is the generic "Bank" SL) is reused, not duplicated.
+      let coaSl = await tx.coa_sl.findUnique({ where: { code: glCode } });
+      if (!coaSl) {
+        coaSl = await tx.coa_sl.create({
+          data: {
+            gl_id: parentGl.id,
+            class_id: parentGl.class_id,
+            group_id: parentGl.group_id,
+            type_id: parentGl.type_id,
+            gl_code: parentGl.code,
+            class_code: parentGl.class_code,
+            group_code: parentGl.group_code,
+            type_code: parentGl.type_code,
+            code: glCode,
+            name: `${bank.name} - ${accountTitle}`,
+            normal_balance: parentGl.normal_balance,
+            is_active: true,
+          },
+        });
+      }
+      let finSl = await tx.fin_coa_accounts.findUnique({ where: { account_code: glCode } });
+      if (!finSl) {
+        finSl = await tx.fin_coa_accounts.create({
+          data: {
+            account_code: glCode,
+            account_name: `${bank.name} - ${accountTitle}`,
+            account_type: parentFin.account_type,
+            parent_id: parentFin.id,
+            parent_account_id: parentFin.id,
+            group_name: parentFin.group_name,
+            class_name: parentFin.class_name,
+            account_level: 'SL',
+            is_active: true,
+          },
+        });
+      }
+
+      const account = await tx.fin_bank_accounts.create({
+        data: {
+          bank_id: bankId,
+          account_number: accountNumber,
+          account_title: accountTitle,
+          currency,
+          opening_balance: 0,
+          gl_code: glCode,
+        },
+      });
+      return { account, glCode, bankName: bank.name, coaSlId: coaSl.id, finAccountId: finSl.id };
+    });
+
+    res.status(201).json({ data: result });
+  } catch (e: any) {
+    res.status(e?.status || 500).json({ error: e.message || 'Failed to create bank account' });
+  }
+});
+
 // Posting Engine Compliance View
 router.get('/compliance', async (_req: Request, res: Response) => {
   try {

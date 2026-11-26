@@ -1205,7 +1205,7 @@ async function handleSaveInvoice() {
                   <Field label="Billing Currency">
                     <Select value={vendorForm.currency} onValueChange={v => setVendorForm({ ...vendorForm, currency: v })}>
                       <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                      <SelectContent>{["QAR","USD","EUR","AED","SAR","GBP"].map(c=><SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                      <SelectContent>{["QAR"].map(c=><SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                     </Select>
                   </Field>
                   <Field label="Payment Terms">
@@ -1349,7 +1349,7 @@ async function handleSaveInvoice() {
                 <Field label="Disbursement Currency">
                   <Select value={vendorForm.bank_currency} onValueChange={v => setVendorForm({ ...vendorForm, bank_currency: v })}>
                     <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
-                    <SelectContent>{["QAR","USD","EUR","AED"].map(c=><SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
+                    <SelectContent>{["QAR"].map(c=><SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent>
                   </Select>
                 </Field>
               </div>
@@ -1445,7 +1445,7 @@ async function handleSaveInvoice() {
               <Field label="IBAN"><Input value={bankForm.iban} onChange={e => setBankForm({ ...bankForm, iban: e.target.value })} className="h-8 text-xs font-mono" /></Field>
               <Field label="SWIFT / BIC"><Input value={bankForm.swift_code} onChange={e => setBankForm({ ...bankForm, swift_code: e.target.value })} className="h-8 text-xs font-mono" /></Field>
             </div>
-            <Field label="Currency"><Select value={bankForm.currency} onValueChange={v => setBankForm({ ...bankForm, currency: v })}><SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent>{["QAR","USD","EUR","AED"].map(c=><SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></Field>
+            <Field label="Currency"><Select value={bankForm.currency} onValueChange={v => setBankForm({ ...bankForm, currency: v })}><SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger><SelectContent>{["QAR"].map(c=><SelectItem key={c} value={c}>{c}</SelectItem>)}</SelectContent></Select></Field>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setShowBankModal(false)}>Cancel</Button>

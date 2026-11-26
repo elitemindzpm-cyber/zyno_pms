@@ -32,6 +32,8 @@ export type DepositCollectionPayload = {
   unit_name?: string;
   /** How the deposit was paid: Cash, Bank, Cheque or Split. Stored on the deposit record. */
   paymentMode?: string;
+  /** For a bank receipt: the GL code of the company bank account that received it. */
+  bankGlCode?: string;
   ref: string;
 };
 
@@ -83,6 +85,7 @@ export async function collectSecurityDeposit(payload: DepositCollectionPayload) 
     payload.unit_name,
     depositType,
     payload.lease_id,
+    payload.bankGlCode,
   );
 
   // Map depositType to COA account code for subledger recording

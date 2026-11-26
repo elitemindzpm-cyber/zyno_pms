@@ -26,7 +26,7 @@ import { fetchAssets, updateAsset, db, type Asset as DbAsset } from "@/lib/db";
 import { insertVoucherOnce } from "@/lib/finance/voucher-persist";
 import { getTodayIST, getCurrentISTDate, formatDateDDMMYYYY } from "@/lib/date-utils";
 import { DYNAMIC_MASTERS_UPDATED_EVENT, DynamicMastersService } from "@/lib/dynamic-masters-service";
-import { DEFAULT_COMPANY_BANK_ACCOUNTS } from "@/lib/finance/bankAccounts";
+import { fetchCompanyBankAccounts, type CompanyBankAccount } from "@/lib/finance/bankAccounts";
 import { HrmsApi } from "@/lib/hrmsService";
 import {
   AlertCircle,
@@ -99,7 +99,7 @@ import { useFinanceStore } from "@/lib/finance/finance-store";
 import { executeFinalSettlement, settleEarlyLeaseVacate } from "@/lib/finance/settlement-engine";
 import { collectSecurityDeposit } from "@/lib/finance/depositService";
 import { receivePdc } from "@/lib/finance/pdcService";
-import { postGuaranteeCheque } from "@/lib/finance/posting-engine";
+import { postGuaranteeCheque, postRentReceipt } from "@/lib/finance/posting-engine";
 import { getDocumentBranding } from "@/lib/document-branding";
 import { getImpersonationSession } from "@/lib/impersonation";
 import { getCurrentProfile } from "@/lib/auth-guards";
@@ -2232,6 +2232,10 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
   const [releaseType, setReleaseType] = useState<"expired" | "released">("released");
   const [releaseRefundMode, setReleaseRefundMode] = useState<"Cash" | "Bank Transfer" | "Cheque">("Cash");
   const [releaseRefundBank, setReleaseRefundBank] = useState("12000001");
+  const [companyBanks, setCompanyBanks] = useState<CompanyBankAccount[]>([]);
+  useEffect(() => {
+    fetchCompanyBankAccounts().then(setCompanyBanks).catch(() => setCompanyBanks([]));
+  }, []);
   const [releaseRefundVoucherNo, setReleaseRefundVoucherNo] = useState("");
 
   const [renewalNoticeOpen, setRenewalNoticeOpen] = useState(false);
@@ -2417,6 +2421,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     payerName: "",
     // Non-PDC Rent Collection Details (for Cash, Cheque, Bank Transfer, Guarantee Cheque)
     rentPaymentReference: "",
+    rentReceivingBankGl: "",
     rentPaymentDate: today.toISOString().split("T")[0],
     rentPaymentReceiptNo: "",
     rentChequeNo: "",
@@ -2439,6 +2444,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     depositSplitBank: "0",
     depositSplitCheque: "0",
     depositSplitBankRef: "",
+    receivingBankGl: "",
     depositSplitChequeNo: "",
     depositSplitChequeBank: "QNB",
     depositSplitChequeDate: today.toISOString().split("T")[0],
@@ -2691,6 +2697,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     rentGuaranteeChequeFile: "",
     // Bank Transfer
     rentPaymentReference: "",
+    rentReceivingBankGl: "",
     rentBankAmount: "",
     // PDCs
     pdcCount: 12,
@@ -2724,6 +2731,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     depositSplitBank: "0",
     depositSplitCheque: "0",
     depositSplitBankRef: "",
+    receivingBankGl: "",
     depositSplitChequeNo: "",
     depositSplitChequeBank: "Qatar National Bank (QNB)",
     depositSplitChequeDate: today.toISOString().split("T")[0],
@@ -4240,6 +4248,17 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     const includeRent = scope === "both" || scope === "rent_only";
     const includeDeposit = scope === "both" || scope === "deposit_only";
     const isPdcMode = collectForm.paymentMode === "PDC";
+    // A bank transfer must go to a named company bank account, not the generic bank code.
+    const depositUsesBank = includeDeposit && (collectForm.depositIsSplit ? Number(collectForm.depositSplitBank) > 0 : collectForm.depositMode === "Bank Transfer");
+    if (depositUsesBank && !collectForm.receivingBankGl) {
+      toast.error("Select the receiving bank account for the bank transfer.");
+      return;
+    }
+    const rentUsesBank = includeRent && !isPdcMode && collectForm.paymentMode === "Bank Transfer";
+    if (rentUsesBank && !collectForm.rentReceivingBankGl) {
+      toast.error("Select the receiving bank account for the rent bank transfer.");
+      return;
+    }
 
     // ── Filter only rows that have both cheque no and amount filled for PDC mode ──
     let nextPdcs: Pdc[] = [];
@@ -4544,8 +4563,16 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           }
         }
 
-        const depositCollections: Array<{ amount: number; type: "SECURITY" | "QATAR_COOL" | "KAHRAMAA" | "SERVICE_FEE" | "RESERVATION"; mode: "Cash" | "Bank"; paymentMode?: string }> = [
-          { amount: depAmt, type: "SECURITY", mode: (collectForm.depositIsSplit ? (splitCash > 0 ? "Cash" : "Bank") : (collectForm.depositMode === "Cash" ? "Cash" : "Bank")), paymentMode: collectForm.depositIsSplit ? "Split" : String(collectForm.depositMode || "") },
+        const depositCollections: Array<{ amount: number; type: "SECURITY" | "QATAR_COOL" | "KAHRAMAA" | "SERVICE_FEE" | "RESERVATION"; mode: "Cash" | "Bank"; paymentMode?: string; bankGlCode?: string; refSuffix?: string }> = [
+          ...(collectForm.depositIsSplit
+            ? [
+                // Each payment method is posted on its own: cash to cash, bank to the chosen account.
+                { amount: splitCash, type: "SECURITY" as const, mode: "Cash" as const, paymentMode: "Cash", bankGlCode: undefined, refSuffix: "-CSH" },
+                { amount: splitBank, type: "SECURITY" as const, mode: "Bank" as const, paymentMode: "Bank", bankGlCode: collectForm.receivingBankGl || undefined, refSuffix: "-BNK" },
+                // Cheque and token remainder keeps the previous posting until PDC handling is added for it.
+                { amount: Math.max(0, depAmt - splitCash - splitBank), type: "SECURITY" as const, mode: "Bank" as const, paymentMode: "Cheque", bankGlCode: undefined, refSuffix: "-REM" },
+              ]
+            : [{ amount: depAmt, type: "SECURITY" as const, mode: (collectForm.depositMode === "Cash" ? "Cash" as const : "Bank" as const), paymentMode: String(collectForm.depositMode || ""), bankGlCode: collectForm.receivingBankGl || undefined, refSuffix: "" }]),
           { amount: utilityAmt, type: "KAHRAMAA", mode: "Cash" },
           { amount: qatarCoolAmt, type: "QATAR_COOL", mode: "Cash" },
           { amount: reservationAmt, type: "RESERVATION", mode: "Cash" },
@@ -4562,8 +4589,24 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
             mode: deposit.mode,
             depositType: deposit.type,
             paymentMode: deposit.paymentMode,
+            bankGlCode: deposit.bankGlCode,
             unit_name: lease.unit,
-            ref: `RV-${lease.id}-${deposit.type}`,
+            ref: `RV-${lease.id}-${deposit.type}${deposit.refSuffix ?? ""}`,
+          });
+        }
+
+        // Non-PDC rent in cash or by bank transfer is posted to the ledger here.
+        if (includeRent && !isPdcMode && (collectForm.paymentMode === "Cash" || collectForm.paymentMode === "Bank Transfer") && rentTotal > 0) {
+          await postRentReceipt({
+            amount: rentTotal,
+            paymentMethod: collectForm.paymentMode === "Cash" ? "CASH" : "BANK",
+            tenantId: String(financeLease.customer_id),
+            propertyId: String(financeLease.property_id),
+            unitId: String(financeLease.unit_id),
+            leaseId: String(financeLease.id),
+            receiptNumber: `RV-${lease.id}-RENT`,
+            unitCode: lease.unit,
+            bankGlCode: collectForm.paymentMode === "Bank Transfer" ? collectForm.rentReceivingBankGl : undefined,
           });
         }
 
@@ -9173,7 +9216,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                       <Select value={releaseRefundBank} onValueChange={setReleaseRefundBank}>
                         <SelectTrigger className="bg-background"><SelectValue /></SelectTrigger>
                         <SelectContent>
-                          {DEFAULT_COMPANY_BANK_ACCOUNTS.map((bank) => (
+                          {companyBanks.map((bank) => (
                             <SelectItem key={bank.glCode} value={bank.glCode}>
                               {bank.bankName} ({bank.glCode})
                             </SelectItem>
@@ -9739,6 +9782,16 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                         <Field label="Bank Transfer Reference No.">
                           <Input value={collectForm.rentPaymentReference} onChange={(e) => setCollectForm((f) => ({ ...f, rentPaymentReference: e.target.value }))} placeholder="e.g. TRF-QNB-2024-00112" />
                         </Field>
+                        <Field label="Receiving Bank Account">
+                          <Select value={collectForm.rentReceivingBankGl} onValueChange={(v) => setCollectForm((f) => ({ ...f, rentReceivingBankGl: v }))}>
+                            <SelectTrigger className="bg-background"><SelectValue placeholder="Select bank account" /></SelectTrigger>
+                            <SelectContent>
+                              {companyBanks.map((bank) => (
+                                <SelectItem key={bank.glCode} value={bank.glCode}>{bank.bankName} – {bank.accountTitle} ({bank.glCode})</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </Field>
                         <Field label="Bank / Account">
                           <Input value={collectForm.chequeBank} onChange={(e) => setCollectForm((f) => ({ ...f, chequeBank: e.target.value }))} placeholder="e.g. QNB, CBQ, QIIB" />
                         </Field>
@@ -10099,6 +10152,20 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                           <Input type="number" value={collectForm.depositAmount} onChange={(e) => setCollectForm((f) => ({ ...f, depositAmount: e.target.value }))} placeholder={`${signatureWorkflowLease?.securityDeposit || 5600}`} />
                         </Field>
                       </div>
+                      {collectForm.depositMode === "Bank Transfer" && (
+                        <div className="grid grid-cols-2 gap-3">
+                          <Field label="Receiving Bank Account">
+                            <Select value={collectForm.receivingBankGl} onValueChange={(v) => setCollectForm((f) => ({ ...f, receivingBankGl: v }))}>
+                              <SelectTrigger className="bg-background"><SelectValue placeholder="Select bank account" /></SelectTrigger>
+                              <SelectContent>
+                                {companyBanks.map((bank) => (
+                                  <SelectItem key={bank.glCode} value={bank.glCode}>{bank.bankName} – {bank.accountTitle} ({bank.glCode})</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </Field>
+                        </div>
+                      )}
                       {(collectForm.depositMode === "PDC" || collectForm.depositMode === "Guarantee Cheque") && (
                         <div className="grid grid-cols-2 gap-3">
                           <Field label="Deposit Cheque No.">
@@ -10129,6 +10196,16 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                       <div className="grid grid-cols-3 gap-3">
                         <Field label="Bank Transfer Ref No.">
                           <Input value={collectForm.depositSplitBankRef} onChange={(e) => setCollectForm((f) => ({ ...f, depositSplitBankRef: e.target.value }))} placeholder="e.g. TRF-QNB-001" />
+                        </Field>
+                        <Field label="Receiving Bank Account">
+                          <Select value={collectForm.receivingBankGl} onValueChange={(v) => setCollectForm((f) => ({ ...f, receivingBankGl: v }))}>
+                            <SelectTrigger className="bg-background"><SelectValue placeholder="Select bank account" /></SelectTrigger>
+                            <SelectContent>
+                              {companyBanks.map((bank) => (
+                                <SelectItem key={bank.glCode} value={bank.glCode}>{bank.bankName} – {bank.accountTitle} ({bank.glCode})</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
                         </Field>
                         <Field label="Cheque No.">
                           <Input value={collectForm.depositSplitChequeNo} onChange={(e) => setCollectForm((f) => ({ ...f, depositSplitChequeNo: e.target.value }))} placeholder="e.g. CHQ-SEC-01" />
