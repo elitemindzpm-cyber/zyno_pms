@@ -563,7 +563,6 @@ const INITIAL_BANK_CLEARANCES: BankClearanceEntry[] = [];
 const INITIAL_BANK_RECONCILIATIONS: BankReconciliationRecord[] = [];
 const INITIAL_RECON_STATEMENTS: ReconciliationStatementArchive[] = [];
 const INITIAL_CASH_BOOK: CashBookEntry[] = [];
-const INITIAL_PETTY_CASH: PettyCashEntry[] = [];
 
 
 // ── Finance Context Interface ───────────────────────────────────────────────
@@ -621,8 +620,6 @@ export interface FinanceStoreContextType {
   cashBookEntries: CashBookEntry[];
   addCashBookEntry: (entry: { date: string; voucher: string; description: string; type: "in" | "out"; amount: number }) => void;
 
-  pettyCashEntries: PettyCashEntry[];
-  addPettyCashEntry: (entry: Omit<PettyCashEntry, "id">) => void;
 
   // Real-Time Derived Reports & Ledgers
   allLedgerTransactions: LedgerTransaction[];
@@ -1296,7 +1293,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       return saved ? JSON.parse(saved) : INITIAL_CASH_BOOK;
     } catch { return INITIAL_CASH_BOOK; }
   });
-  const [pettyCashEntries, setPettyCashEntries] = useState<PettyCashEntry[]>(INITIAL_PETTY_CASH);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
 
   // Sync to local storage on changes
@@ -2881,15 +2877,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     toast.success("Cash Book entry recorded.");
   }
 
-  function addPettyCashEntry(entry: Omit<PettyCashEntry, "id">) {
-    const newPetty: PettyCashEntry = {
-      ...entry,
-      id: `pc-${Date.now()}`
-    };
-    setPettyCashEntries(prev => [newPetty, ...prev]);
-    toast.success("Petty Cash expense recorded.");
-  }
-
   async function correctVoucherDate(params: {
     voucherNo: string;
     newDate: string;
@@ -4005,8 +3992,6 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         addReconciliationStatement,
         cashBookEntries,
         addCashBookEntry,
-        pettyCashEntries,
-        addPettyCashEntry,
 
         allLedgerTransactions,
         trialBalanceSummary,
