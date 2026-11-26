@@ -14867,7 +14867,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
               label="Total Vouchers"
               value={vouchersLoading ? "…" : allVouchers.length}
               icon={<Receipt className="h-4 w-4 text-blue-600" />}
-              description="1,809 PDCs + 341 Deposits"
+              description="PDC receipts, deposits and other leasing vouchers"
             />
             <Metric
               label="PDC Receipts"

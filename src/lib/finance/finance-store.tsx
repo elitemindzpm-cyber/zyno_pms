@@ -1328,6 +1328,34 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         .select("*, fin_voucher_lines(account_code, account_name, debit_amount, credit_amount)")
         .order("voucher_date", { ascending: false });
 
+      // fin_vouchers has no property/unit/tenant columns; take them from the posting event (which carries
+      // the lease, property, unit and customer ids) so ledgers can show them instead of "—".
+      if (!vError && vData?.length) {
+        try {
+          const evIds = Array.from(new Set(vData.map((r: any) => r.accounting_event_id).filter(Boolean).map(String)));
+          if (evIds.length) {
+            const { data: evs } = await db.from("fin_accounting_events").select("id, property_id, unit_id, customer_id, tenant_id").in("id", evIds);
+            const ids = (k: string) => Array.from(new Set((evs || []).map((e: any) => e[k]).filter(Boolean).map(String)));
+            const [pr, un, cu] = await Promise.all([
+              db.from("properties").select("id, title, property_code").in("id", ids("property_id")),
+              db.from("units").select("id, unit_ref, unit_code").in("id", ids("unit_id")),
+              db.from("customers").select("*").in("id", [...ids("customer_id"), ...ids("tenant_id")]),
+            ]);
+            const mk = (r: any) => new Map<string, any>((r?.data || []).map((x: any) => [String(x.id), x]));
+            const pM = mk(pr), uM = mk(un), cM = mk(cu);
+            const eM = new Map<string, any>((evs || []).map((e: any) => [String(e.id), e]));
+            for (const r of vData as any[]) {
+              const e = eM.get(String(r.accounting_event_id));
+              if (!e) continue;
+              const p = pM.get(String(e.property_id)), u = uM.get(String(e.unit_id)), c = cM.get(String(e.customer_id)) || cM.get(String(e.tenant_id));
+              r.property_name = r.property_name || p?.title || p?.property_code;
+              r.unit_ref = r.unit_ref || u?.unit_ref || u?.unit_code;
+              r.tenant_name = r.tenant_name || c?.display_name || c?.full_name || c?.name;
+            }
+          }
+        } catch { /* best-effort labels */ }
+      }
+
       if (!vError && vData) {
         setVouchers(prev => {
           const existingNos = new Set(prev.map(v => v.voucher_no));
