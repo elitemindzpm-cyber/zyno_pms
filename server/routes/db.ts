@@ -174,7 +174,8 @@ router.post('/:table/query', async (req: Request, res: Response) => {
 
     // Filter out unsupported columns or format conditions
     const cleanWhere: Record<string, any> = {};
-    for (const [key, val] of Object.entries(where)) {
+    // Plain dates ("2026-12-01") in a filter on a DateTime column must be full ISO timestamps for Prisma.
+    for (const [key, val] of Object.entries(coerceForModel(modelName, where) as Record<string, any>)) {
       if (val !== undefined) {
         cleanWhere[key] = val;
       }

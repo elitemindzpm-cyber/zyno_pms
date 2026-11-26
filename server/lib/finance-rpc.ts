@@ -195,9 +195,17 @@ export async function postAccountingEvent(eventId: string): Promise<PostResult[]
       return [{ event_id: eventId, voucher_id: existingVoucher[0].id, voucher_number: existingVoucher[0].voucher_number, status: 'POSTED' }];
     }
 
-    const voucherNumber = String(ev.reference_number || '').trim() !== ''
+    const baseVoucherNumber = String(ev.reference_number || '').trim() !== ''
       ? String(ev.reference_number).trim()
       : 'EVT-' + String(eventId).replace(/-/g, '').slice(0, 8).toUpperCase();
+    // Two postings can legitimately share one reference (e.g. a cheque's receipt and its follow-up entry).
+    // voucher_number is unique, so a repeat gets a numeric suffix instead of failing the whole post.
+    let voucherNumber = baseVoucherNumber;
+    for (let n = 2; n < 50; n++) {
+      const clash = await tx.$queryRaw<any[]>`SELECT id FROM fin_vouchers WHERE voucher_number = ${voucherNumber} LIMIT 1`;
+      if (!clash.length) break;
+      voucherNumber = `${baseVoucherNumber}-${n}`;
+    }
     const voucherId = randomUUID();
     const description = ev.description || `${ev.event_type} - ${ev.source_type}`;
 
