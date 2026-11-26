@@ -225,6 +225,8 @@ type Reservation = {
   tokenRefunded?: boolean;
   // Payment mode details
   tokenCashierName?: string;
+  tokenBankGl?: string;
+  tokenBankName?: string;
   tokenPayerBank?: string;
   tokenTransferRef?: string;
   tokenTransferDate?: string;
@@ -2968,6 +2970,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     // Cash specifics
     tokenCashierName: "",
     // Bank Transfer specifics
+    tokenBankGl: "",
     tokenPayerBank: "Qatar National Bank (QNB)",
     tokenTransferRef: "",
     tokenTransferDate: today.toISOString().split("T")[0],
@@ -3412,6 +3415,11 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     if (!unit || !isEligible) return;
 
     const tokAmt = reservationForm.isHold ? (Number(reservationForm.tokenAmount) || 0) : 0;
+    const tokBank = companyBanks.find((b) => b.glCode === reservationForm.tokenBankGl);
+    if (tokAmt > 0 && reservationForm.tokenPaymentMode === "Bank Transfer" && !tokBank) {
+      toast.error("Select the Receiving Bank Account for the bank transfer.");
+      return;
+    }
     const tokReceiptNo = reservationForm.tokenReceiptNo || `RV-HOLD-${unit.unit.replace(/\W/g, "")}-${Date.now().toString().slice(-4)}`;
 
     const reservation: Reservation = {
@@ -3431,6 +3439,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       tokenPaymentMode: reservationForm.tokenPaymentMode,
       tokenReceiptNo: tokAmt > 0 ? tokReceiptNo : undefined,
       tokenCashierName: reservationForm.tokenCashierName || undefined,
+      tokenBankGl: reservationForm.tokenPaymentMode === "Bank Transfer" ? tokBank?.glCode : undefined,
+      tokenBankName: reservationForm.tokenPaymentMode === "Bank Transfer" && tokBank ? `${tokBank.bankName} – ${tokBank.accountTitle}` : undefined,
       tokenPayerBank: reservationForm.tokenPaymentMode === "Bank Transfer" ? reservationForm.tokenPayerBank : undefined,
       tokenTransferRef: reservationForm.tokenPaymentMode === "Bank Transfer" ? reservationForm.tokenTransferRef : undefined,
       tokenTransferDate: reservationForm.tokenPaymentMode === "Bank Transfer" ? reservationForm.tokenTransferDate : undefined,
@@ -3491,7 +3501,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         period: "Unit Hold Token Advance",
         debit:
           reservation.tokenPaymentMode === "Bank Transfer"
-            ? "Bank Operating Account (12000)"
+            ? (tokBank ? `${tokBank.bankName} – ${tokBank.accountTitle} (${tokBank.glCode})` : "Bank Operating Account (12000)")
             : reservation.tokenPaymentMode === "Cheque"
               ? "PDC In Hand Account (12900)"
               : "Cash In Hand (12100)",
@@ -3508,13 +3518,13 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         name: `Reservation Token Advance — ${reservation.tenantName} (${unit.unit}) [${paymentDetailText}]`,
         debit:
           reservation.tokenPaymentMode === "Bank Transfer"
-            ? "Bank Operating Account"
+            ? (tokBank ? `${tokBank.bankName} – ${tokBank.accountTitle}` : "Bank Operating Account")
             : reservation.tokenPaymentMode === "Cheque"
               ? "PDC In Hand Account"
               : "Cash In Hand",
         debit_code:
           reservation.tokenPaymentMode === "Bank Transfer"
-            ? "12000"
+            ? (tokBank?.glCode || "12000")
             : reservation.tokenPaymentMode === "Cheque"
               ? "12900"
               : "12100",
@@ -3543,6 +3553,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       tenantName: "",
       remarks: "",
       tokenReceiptNo: "",
+      tokenBankGl: "",
       tokenTransferRef: "",
       tokenChequeNo: "",
       tokenChequeFile: "",
@@ -7321,6 +7332,20 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                     {/* Mode specific supplementary inputs */}
                     {reservationForm.tokenPaymentMode === "Bank Transfer" && (
                       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1 border-t border-border/50">
+                        <Field label="Receiving Bank Account *">
+                          <Select
+                            value={reservationForm.tokenBankGl}
+                            onValueChange={(v) => setReservationForm((f) => ({ ...f, tokenBankGl: v }))}
+                          >
+                            <SelectTrigger className="bg-background text-xs h-9"><SelectValue placeholder="Select bank account" /></SelectTrigger>
+                            <SelectContent>
+                              {companyBanks.length === 0 && <SelectItem value="__none__" disabled>No bank accounts. Add one in Finance → Banking.</SelectItem>}
+                              {companyBanks.filter((b) => b.glCode).map((bank) => (
+                                <SelectItem key={bank.glCode} value={bank.glCode}>{bank.bankName} – {bank.accountTitle} ({bank.glCode})</SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                        </Field>
                         <Field label="Payer Bank">
                           <Input
                             placeholder="e.g. Qatar National Bank (QNB)"
