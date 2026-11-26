@@ -699,10 +699,11 @@ model fin_bank_reconciliations {
 }
 
 model fin_banks {
-  id                Int                 @id
+  id                Int                 @id @default(autoincrement())
   code              String              @unique @db.VarChar(255)
   name              String              @db.VarChar(255)
   swift_code        String?             @db.Text
+  status            String              @default("Active") @db.VarChar(20)
   fin_bank_accounts fin_bank_accounts[]
 }
 
