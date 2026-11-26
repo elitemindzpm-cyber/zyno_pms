@@ -147,6 +147,11 @@ export function CustomerStatementSubModule({
 
   // Live PDC register & pdcs rows fetched directly from DB so unlinked fin_pdc_register rows & status changes sync cleanly
   const [liveDbPdcs, setLiveDbPdcs] = useState<any[]>([]);
+  // Company bank accounts, read from fin_bank_accounts and fin_banks. Nothing is typed in.
+  const [companyBankAccounts, setCompanyBankAccounts] = useState<{ bankName: string; accountTitle: string; accountNumber: string; swift: string }[]>([]);
+  const primaryBank = companyBankAccounts[0];
+  // How each lease's security deposit was paid, keyed by lease ID (from fin_deposits.payment_mode).
+  const [depositModeByLease, setDepositModeByLease] = useState<Map<string, string>>(new Map());
   const [pdcSyncTick, setPdcSyncTick] = useState(0);
 
   useEffect(() => {
@@ -171,19 +176,41 @@ export function CustomerStatementSubModule({
     let cancelled = false;
     async function fetchLivePdcs() {
       try {
-        const [finRes, pdcsRes, banksRes, bankAcctsRes, vchRes] = await Promise.all([
+        const [finRes, pdcsRes, banksRes, bankAcctsRes, vchRes, depRes] = await Promise.all([
           db.from("fin_pdc_register").select("*").order("cheque_date", { ascending: true }).limit(2000),
           db.from("pdcs").select("*").order("created_at", { ascending: true }).limit(2000),
-          db.from("fin_banks").select("id, code, name"),
+          db.from("fin_banks").select("id, code, name, swift_code"),
           db.from("fin_bank_accounts").select("id, bank_id, account_title, account_number"),
           db
             .from("fin_vouchers")
             .select("voucher_number, voucher_date, description, total_amount")
             .or("voucher_number.ilike.VCH-PDC-REC-%,voucher_number.ilike.VCH-DEP-%,voucher_number.ilike.VCH-CLR-%")
             .limit(500),
+          db.from("fin_deposits").select("lease_id, payment_mode").limit(2000),
         ]);
 
         if (cancelled) return;
+
+        setDepositModeByLease(
+          new Map(
+            (depRes.data || [])
+              .filter((d: any) => d.lease_id && d.payment_mode)
+              .map((d: any) => [String(d.lease_id), String(d.payment_mode)] as [string, string])
+          )
+        );
+
+        const banksById = new Map<number, any>((banksRes.data || []).map((b: any) => [Number(b.id), b]));
+        setCompanyBankAccounts(
+          (bankAcctsRes.data || []).map((ba: any) => {
+            const bank = banksById.get(Number(ba.bank_id));
+            return {
+              bankName: bank?.name || "",
+              accountTitle: ba.account_title || "",
+              accountNumber: ba.account_number || "",
+              swift: bank?.swift_code || "",
+            };
+          })
+        );
 
         const bankAcctMap = new Map<number, { title: string; bankId?: number }>();
         for (const ba of bankAcctsRes.data || []) {
@@ -895,7 +922,7 @@ export function CustomerStatementSubModule({
             deductions: 0,
             refundPaid: 0,
             runningBalance: balance,
-            paymentMode: "Cheque / Transfer",
+            paymentMode: depositModeByLease.get(String(l.id)) || "Not recorded",
             status: "Held in Custody",
           });
         }
@@ -941,7 +968,7 @@ export function CustomerStatementSubModule({
         netHeld: balance,
       },
     };
-  }, [currentCustomer, vouchers, customerLeases]);
+  }, [currentCustomer, vouchers, customerLeases, depositModeByLease]);
 
   // ──────────────────────────────────────────────────────────────────────────
   // PDC IN HAND & CUSTODY REGISTER (CUSTOMER-WISE)
@@ -2171,10 +2198,16 @@ export function CustomerStatementSubModule({
             <span className="font-bold text-[10px] uppercase tracking-wider text-primary flex items-center gap-1">
               <ShieldCheck className="h-3.5 w-3.5" /> Remittance &amp; Bank Transfer Details (EN)
             </span>
-            <p className="text-muted-foreground">Bank: <strong className="text-foreground">Commercial Bank of Qatar (CBQ) / Dukhan Bank</strong></p>
-            <p className="text-muted-foreground">Account Name: <strong className="text-foreground">{branding.legalEntityName || "Al Ameen Real Estate W.L.L"}</strong></p>
-            <p className="text-muted-foreground font-mono">IBAN: <strong className="text-foreground">QA52 CBQA 0000 0000 1289 4012 34</strong></p>
-            <p className="text-muted-foreground font-mono">SWIFT: <strong className="text-foreground">CBQAQAQA</strong></p>
+            {primaryBank ? (
+              <>
+                <p className="text-muted-foreground">Bank: <strong className="text-foreground">{primaryBank.bankName || "—"}</strong></p>
+                <p className="text-muted-foreground">Account Name: <strong className="text-foreground">{primaryBank.accountTitle || "—"}</strong></p>
+                <p className="text-muted-foreground font-mono">Account No.: <strong className="text-foreground">{primaryBank.accountNumber || "—"}</strong></p>
+                {primaryBank.swift && <p className="text-muted-foreground font-mono">SWIFT: <strong className="text-foreground">{primaryBank.swift}</strong></p>}
+              </>
+            ) : (
+              <p className="text-muted-foreground">No bank account is set up. Add one under Finance › Banking.</p>
+            )}
             <div className="pt-2">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">For {branding.companyName || "Al Ameen Real Estate"}</p>
               <div className="h-10 flex items-center">
@@ -2190,10 +2223,16 @@ export function CustomerStatementSubModule({
             <span className="font-bold text-[10px] uppercase tracking-wider text-primary flex items-center justify-end gap-1">
               <ShieldCheck className="h-3.5 w-3.5" /> تعليمات التحويل البنكي والاعتماد (AR)
             </span>
-            <p className="text-muted-foreground">البنك: <strong className="text-foreground">البنك التجاري (CBQ) / بنك دخان</strong></p>
-            <p className="text-muted-foreground">اسم الحساب: <strong className="text-foreground">شركة الأمين للعقارات ذ.م.م</strong></p>
-            <p className="text-muted-foreground font-mono">الآيبان: <strong className="text-foreground">QA52 CBQA 0000 0000 1289 4012 34</strong></p>
-            <p className="text-muted-foreground font-mono">السويفت كود: <strong className="text-foreground">CBQAQAQA</strong></p>
+            {primaryBank ? (
+              <>
+                <p className="text-muted-foreground">البنك: <strong className="text-foreground">{primaryBank.bankName || "—"}</strong></p>
+                <p className="text-muted-foreground">اسم الحساب: <strong className="text-foreground">{primaryBank.accountTitle || "—"}</strong></p>
+                <p className="text-muted-foreground font-mono">رقم الحساب: <strong className="text-foreground">{primaryBank.accountNumber || "—"}</strong></p>
+                {primaryBank.swift && <p className="text-muted-foreground font-mono">السويفت كود: <strong className="text-foreground">{primaryBank.swift}</strong></p>}
+              </>
+            ) : (
+              <p className="text-muted-foreground">لا يوجد حساب بنكي مسجل. أضفه من المالية › البنوك.</p>
+            )}
             <div className="pt-2">
               <p className="text-[10px] text-muted-foreground uppercase tracking-wider font-semibold">عن شركة الأمين للعقارات</p>
               <div className="h-10 flex items-center justify-start">

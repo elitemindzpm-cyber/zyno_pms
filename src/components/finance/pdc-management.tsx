@@ -694,8 +694,10 @@ export function PdcManagement() {
         if (u.unit) unitsMap.set(u.unit.toLowerCase().trim(), u);
       });
       const leasesByUnit = new Map<string, any>();
+      const leasesById = new Map<string, any>();
       (leases || []).forEach(l => {
         if (l.unit) leasesByUnit.set(String(l.unit).toLowerCase().trim(), l);
+        if (l.id) leasesById.set(String(l.id), l);
       });
 
       const localHintsByChq = new Map<string, any[]>();
@@ -752,6 +754,14 @@ export function PdcManagement() {
         let propName = String(f.property_name || f.property_code || "").trim();
         let leaseId = f.lease_id;
         let hintedBank: string | undefined;
+
+        // A PDC saved with its lease ID takes the unit, property and tenant from that lease.
+        const leaseById = leaseId ? leasesById.get(String(leaseId)) : undefined;
+        if (leaseById) {
+          uRef = uRef || String(leaseById.unit || "").trim();
+          tenantName = tenantName || String(leaseById.tenantName || "").trim();
+          propName = propName || String(leaseById.property || "").trim();
+        }
 
         const localMatches = (localHintsByChq.get(chq) || []).filter(h => {
           const hAmt = Number(h.amount) || 0;
