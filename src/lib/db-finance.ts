@@ -178,6 +178,7 @@ export type FinDeposit = {
   property_id?: string;
   unit_id?: string;
   lease_id?: string;
+  payment_mode?: string;
   status: string;
   receipt_ref?: string;
   deduction_amount?: number;
