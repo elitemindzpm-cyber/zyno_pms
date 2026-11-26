@@ -1912,10 +1912,22 @@ export async function fetchCoaHierarchyTree() {
   };
 }
 
+// Unit sub-ledgers come from unit_coa_mapping, the table the system writes when a unit is created.
 export async function fetchUnitCOAs() {
-  const { data, error } = await db.from('unit_coas').select('*').order('unit_code');
+  const { data, error } = await db.from('unit_coa_mapping').select('*, properties(title)').order('unit_code');
   if (error) throw error;
-  return data as UnitCOA[];
+  return (data as any[]).map((m) => ({
+    id: m.id,
+    property_name: m.properties?.title || m.property_name || '',
+    unit_code: m.unit_code || '',
+    pdc_in_hand_code: m.pdc_sl_code || '',
+    pdc_in_hand_name: m.pdc_sl_name || '',
+    deposit_code: m.deposit_sl_code || '',
+    deposit_name: m.deposit_sl_name || '',
+    receivables_code: m.receivable_sl_code || '',
+    receivables_name: m.receivable_sl_name || '',
+    created_at: m.created_at,
+  })) as UnitCOA[];
 }
 
 export async function fetchUnitCoaMappings() {
