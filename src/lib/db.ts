@@ -1253,7 +1253,11 @@ export async function createPDC(payload: Omit<PDC, 'id' | 'created_at' | 'update
   const voucherNo = `VCH-PDC-RCV-${chequeNo}`;
   const today = new Date().toISOString().split('T')[0];
   try {
-    const { data: vData, error: vErr } = await db.from('fin_vouchers').insert({
+    // voucher_number is unique: skip if this cheque's receipt voucher was already posted (avoids 409 and duplicate ledger lines).
+    const { data: existingV } = await db.from('fin_vouchers').select('id').eq('voucher_number', voucherNo).maybeSingle();
+    const { data: vData, error: vErr } = existingV?.id
+      ? { data: null, error: { message: 'duplicate voucher' } as any }
+      : await db.from('fin_vouchers').insert({
       voucher_number: voucherNo,
       voucher_date: (pdc as any).deposit_date || (pdc as any).maturity_date || today,
       voucher_type: 'RV',
