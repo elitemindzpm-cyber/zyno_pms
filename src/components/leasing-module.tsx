@@ -970,6 +970,34 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         db.from("pdcs").select("*").order("cheque_date", { ascending: false }).range(from, to)
       );
 
+      // fin_pdc_register stores only lease_id (its unit/property/tenant columns are numeric), so fill the
+      // property, unit and tenant labels from the lease for rows that do not carry them.
+      try {
+        const needLease = Array.from(new Set(pdcsTableData
+          .filter((p: any) => p.lease_id && !(p.unit_name || p.unit_ref) && !(p.property_code || p.property_name) && !(p.tenant_name || p.drawer_name))
+          .map((p: any) => String(p.lease_id))));
+        if (needLease.length > 0) {
+          const { data: lrows } = await db.from("leases").select("id, unit_id, property_id, customer_id").in("id", needLease);
+          const uniq = (k: string) => Array.from(new Set((lrows || []).map((l: any) => l[k]).filter(Boolean).map(String)));
+          const [uRes, pRes, cRes] = await Promise.all([
+            db.from("units").select("id, unit_ref, unit_code").in("id", uniq("unit_id")),
+            db.from("properties").select("id, title, property_code").in("id", uniq("property_id")),
+            db.from("customers").select("*").in("id", uniq("customer_id")),
+          ]);
+          const byId = (r: any) => new Map<string, any>((r?.data || []).map((x: any) => [String(x.id), x]));
+          const uMap = byId(uRes), pMap = byId(pRes), cMap = byId(cRes);
+          const lMap = new Map<string, any>((lrows || []).map((l: any) => [String(l.id), l]));
+          for (const p of pdcsTableData as any[]) {
+            const l = lMap.get(String(p.lease_id));
+            if (!l) continue;
+            const u = uMap.get(String(l.unit_id)), pr = pMap.get(String(l.property_id)), c = cMap.get(String(l.customer_id));
+            p.unit_name = u?.unit_ref || u?.unit_code || p.unit_name;
+            p.property_name = pr?.title || pr?.property_code || p.property_name;
+            p.tenant_name = c?.display_name || c?.full_name || c?.name || p.tenant_name;
+          }
+        }
+      } catch { /* labels are best-effort */ }
+
       // 2. Fetch all 341 Security Deposits from fin_vouchers
       const sdVouchersData = await fetchAllRows((from, to) =>
         db
@@ -14839,7 +14867,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
               label="Total Vouchers"
               value={vouchersLoading ? "…" : allVouchers.length}
               icon={<Receipt className="h-4 w-4 text-blue-600" />}
-              description="1,809 PDCs + 341 Deposits"
+              description="PDC receipts, deposits and other leasing vouchers"
             />
             <Metric
               label="PDC Receipts"
