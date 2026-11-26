@@ -4515,7 +4515,12 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     ];
 
     // ── Authoritative Finance posting ──────────────────────────────────────
+    // Collection is saved to the lease only after the finance posting succeeds.
+    let dbPostingStarted = false;
+    let persistLeaseId: string | null = null;
+    let postingError: string | null = null;
     try {
+      dbPostingStarted = true;
       const leaseIdValue = String(lease.id);
       const isLeaseUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(leaseIdValue);
       const leaseLookup = isLeaseUuid
@@ -4524,6 +4529,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       const { data: financeLease } = await leaseLookup;
 
       if (financeLease?.id && financeLease.customer_id && financeLease.property_id && financeLease.unit_id) {
+        persistLeaseId = String(financeLease.id);
         if (nextPdcs.length > 0) {
           for (const pdc of nextPdcs) {
             await receivePdc({
@@ -4536,6 +4542,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
               lease_id: String(financeLease.id),
               unitCode: lease.unit,
               pdcType: "RENT_PDC",
+              strict: true,
             });
           }
         }
@@ -4574,8 +4581,27 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           });
         }
       }
-    } catch (err) {
+    } catch (err: any) {
       console.warn("Authoritative finance posting skipped for in-memory/demo record:", err);
+      if (dbPostingStarted) postingError = err?.message || "Finance posting failed";
+    }
+
+    if (postingError) {
+      toast.error(`Collection was not completed: ${postingError}. Some entries may already be posted, so check the Finance ledger before trying again.`);
+      return;
+    }
+
+    // Save the collection state so Collect stays locked after a reload.
+    if (persistLeaseId) {
+      const depositAfter = includeDeposit || Boolean((lease as any).depositCollected);
+      const rentAfter = includeRent || Boolean((lease as any).rentCollected);
+      const collectionStatusAfter = depositAfter && rentAfter ? "collection_completed" : depositAfter ? "deposit_collected" : rentAfter ? "rent_collected" : null;
+      if (collectionStatusAfter) {
+        const { error: statusErr } = await db.from("leases").update({ collection_status: collectionStatusAfter }).eq("id", persistLeaseId);
+        if (statusErr) {
+          toast.error("Collection was posted, but its status did not save. Do not collect again until this is checked.");
+        }
+      }
     }
 
     // Publish the PDCs to shared state, kvStore, and DB pdcs / fin_pdc_register so PDC Register & Customer SOA always reflect them

@@ -576,7 +576,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             specialConditions: l.special_conditions || "",
             noticePeriodDays: Number(l.notice_period_days || 30),
             status: (l.lease_status?.toLowerCase() as LeaseStatus) || "active",
-            collectionCompleted: true,
+            // Collection progress is saved in leases.collection_status when Collect posts successfully.
+            collectionStatus: l.collection_status || null,
+            depositCollected: l.collection_status === "deposit_collected" || l.collection_status === "collection_completed",
+            rentCollected: l.collection_status === "rent_collected" || l.collection_status === "collection_completed",
+            collectionCompleted: l.collection_status === "collection_completed",
             hasRentFree: dbHasRf,
             rentFreeDays: dbRfDays,
             rentFreePosition: l.rent_free_position || "FIRST_MONTH",
