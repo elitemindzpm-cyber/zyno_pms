@@ -1083,15 +1083,12 @@ function ConfigPage() {
               <select
                 value={localization.defaultCurrency || "QAR"}
                 onChange={(e) => {
-                  const sym = e.target.value === "QAR" ? "QR" : e.target.value === "SAR" ? "SR" : e.target.value === "AED" ? "AED" : "$";
+                  const sym = "QR";
                   setLocalization({ ...localization, defaultCurrency: e.target.value, currencySymbol: sym });
                 }}
                 className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
               >
-                <option value="QAR">QAR — Qatari Riyal (Recommended)</option>
-                <option value="SAR">SAR — Saudi Riyal</option>
-                <option value="AED">AED — UAE Dirham</option>
-                <option value="USD">USD — US Dollar</option>
+                <option value="QAR">QAR — Qatari Riyal</option>
               </select>
             </div>
 

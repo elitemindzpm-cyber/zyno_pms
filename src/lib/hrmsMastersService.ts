@@ -376,10 +376,7 @@ export const MASTER_CATEGORIES_CONFIG: {
     group: "Payroll & Finance",
     codePrefix: "CUR",
     defaultItems: [
-      { name: "Qatari Riyal (QAR)", code: "QAR", description: "Base Operational Currency (1 USD = 3.64 QAR)" },
-      { name: "Indian Rupee (INR)", code: "INR", description: "Regional Tech Entity Currency" },
-      { name: "US Dollar (USD)", code: "USD", description: "International Contracts" },
-      { name: "UAE Dirham (AED)", code: "AED", description: "GCC Regional Settlements" },
+      { name: "Qatari Riyal (QAR)", code: "QAR", description: "Base Operational Currency" },
     ],
   },
   {

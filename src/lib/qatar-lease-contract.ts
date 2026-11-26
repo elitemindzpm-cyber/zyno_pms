@@ -518,7 +518,7 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
     propertyCode: pCode,
     unitCode: uCode,
 
-    currency: raw.currency || "Qrs.",
+    currency: raw.currency || "QAR",
     currencyAr: raw.currencyAr || "ريال قطري",
     monthlyRent: rent,
     monthlyRentWordsEn: raw.monthlyRentWordsEn || numberToEnglishWords(rent),

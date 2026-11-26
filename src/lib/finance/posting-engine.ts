@@ -897,6 +897,7 @@ export async function postLeaseDepositReceipt(
   unitName?: string,
   depositType: DepositType = 'SECURITY',
   leaseId?: string | number,
+  bankGlCode?: string,
 ): Promise<PostingResult> {
 
   const paymentMethod: PaymentMethod = mode === 'Cash' ? 'CASH' : 'BANK';
@@ -911,6 +912,26 @@ export async function postLeaseDepositReceipt(
     unitName,
   });
 
+  // A bank receipt debits the company bank account the cashier chose (its own GL code).
+  let debitAcct = drAcct;
+  if (paymentMethod === 'BANK' && bankGlCode) {
+    const { data: bankSl, error: bankErr } = await db
+      .from('fin_coa_accounts')
+      .select('account_code, account_name, group_name, class_name')
+      .eq('account_code', bankGlCode)
+      .maybeSingle();
+    if (bankErr || !bankSl) throw new Error(`Bank account GL ${bankGlCode} is not in the Chart of Accounts.`);
+    debitAcct = {
+      ...drAcct,
+      glCode: '12000',
+      glName: 'Bank',
+      slCode: bankGlCode,
+      slName: bankSl.account_name,
+      groupName: bankSl.group_name ?? drAcct.groupName,
+      className: bankSl.class_name ?? drAcct.className,
+    };
+  }
+
   return postVoucher({
     voucher_date: new Date().toISOString().split('T')[0],
     voucher_type: 'Receipt',
@@ -922,11 +943,11 @@ export async function postLeaseDepositReceipt(
     lease_id: leaseId,
     lines: [
       {
-        account_code: drAcct.slCode,
-        account_name: `${drAcct.groupName} / ${drAcct.className} / ${drAcct.glName} / ${drAcct.slName}`,
+        account_code: debitAcct.slCode,
+        account_name: `${debitAcct.groupName} / ${debitAcct.className} / ${debitAcct.glName} / ${debitAcct.slName}`,
         debit: amount,
         credit: 0,
-        description: `Security Deposit Received – ${drAcct.slName}`,
+        description: `Security Deposit Received – ${debitAcct.slName}`,
       },
       {
         account_code: crAcct.slCode,
@@ -1310,8 +1331,10 @@ export async function postRentReceipt(params: {
   receiptNumber: string;
   receiptDate?: string;
   unitCode?: string;
+  /** For a bank receipt: the GL code of the company bank account that received it. */
+  bankGlCode?: string;
 }): Promise<PostingResult> {
-  const { debit: drAcct, credit: crAcct } = await resolveAccountingAccounts({
+  const { debit: resolvedDr, credit: crAcct } = await resolveAccountingAccounts({
     transactionType: 'RENT_RECEIPT',
     paymentMethod: params.paymentMethod,
     propertyId: String(params.propertyId),
@@ -1320,6 +1343,24 @@ export async function postRentReceipt(params: {
     leaseId: normalizeUuid(params.leaseId),
     unitName: params.unitCode,
   });
+  let drAcct = resolvedDr;
+  if (params.paymentMethod === 'BANK' && params.bankGlCode) {
+    const { data: bankSl, error: bankErr } = await db
+      .from('fin_coa_accounts')
+      .select('account_code, account_name, group_name, class_name')
+      .eq('account_code', params.bankGlCode)
+      .maybeSingle();
+    if (bankErr || !bankSl) throw new Error(`Bank account GL ${params.bankGlCode} is not in the Chart of Accounts.`);
+    drAcct = {
+      ...resolvedDr,
+      glCode: '12000',
+      glName: 'Bank',
+      slCode: params.bankGlCode,
+      slName: bankSl.account_name,
+      groupName: bankSl.group_name ?? resolvedDr.groupName,
+      className: bankSl.class_name ?? resolvedDr.className,
+    };
+  }
 
   return postVoucher({
     voucher_type: 'Receipt',
