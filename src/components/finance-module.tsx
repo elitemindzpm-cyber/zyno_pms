@@ -38,6 +38,7 @@ import {
   type FinPostingPeriod, type FinBank, type FinBankAccount, type FinBankReconciliation, type FinContract
 } from "@/lib/db-finance";
 import { toast } from "sonner";
+import { request as apiRequest } from "@/lib/api-client";
 import { ExcelImportEmbedded } from "@/components/excel-import-embedded";
 import { useAppData } from "@/lib/app-data-context";
 import { PdcManagement } from "./finance/pdc-management";
@@ -9544,6 +9545,28 @@ function GeneralLedgerReportSubModule() {
       setIsSavingCorrection(false);
     }
   }
+  // The ledger comes from the backend (posted voucher lines in the database), not from browser state.
+  const [dbLedger, setDbLedger] = useState<any[]>([]);
+  const [ledgerLoading, setLedgerLoading] = useState(false);
+  const [ledgerError, setLedgerError] = useState<string | null>(null);
+  const loadLedger = useCallback(async () => {
+    setLedgerLoading(true);
+    try {
+      const res: any = await apiRequest("/api/accounting/general-ledger");
+      setDbLedger(Array.isArray(res?.data) ? res.data : []);
+      setLedgerError(null);
+    } catch (e: any) {
+      setLedgerError(e?.message || "Could not load the general ledger");
+    } finally {
+      setLedgerLoading(false);
+    }
+  }, []);
+  useEffect(() => {
+    void loadLedger();
+    const onChange = () => { void loadLedger(); };
+    window.addEventListener("finance_vouchers_updated", onChange);
+    return () => window.removeEventListener("finance_vouchers_updated", onChange);
+  }, [loadLedger]);
   const [search, setSearch] = useState("");
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
@@ -9561,7 +9584,7 @@ function GeneralLedgerReportSubModule() {
   const [initResult, setInitResult] = useState<{ created: number; cleared: number } | null>(null);
 
   // ── Compute ascending filter options ──────────────────────────────────────
-  const txList: any[] = allLedgerTransactions || [];
+  const txList: any[] = dbLedger;
 
   const propertyOptions = useMemo(() => {
     const set = new Set<string>();
@@ -9765,6 +9788,7 @@ function GeneralLedgerReportSubModule() {
         <div>
           <h3 className="text-sm font-semibold">General Ledger Transaction Audit — Live</h3>
           <p className="text-xs text-muted-foreground">Complete double-entry log with multi-dimensional filters: Property, Unit, Date, Month &amp; Customer.</p>
+          {ledgerError && <p className="text-xs text-red-600 mt-1">{ledgerError}</p>}
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {/* One-time Init button */}
@@ -9817,8 +9841,8 @@ function GeneralLedgerReportSubModule() {
           <Button
             size="sm"
             variant="outline"
-            onClick={refreshFinanceData}
-            disabled={isSyncing}
+            onClick={() => { void refreshFinanceData?.(); void loadLedger(); }}
+            disabled={isSyncing || ledgerLoading}
             className="h-7 text-xs gap-1.5"
             title="Refresh General Ledger from DB"
           >

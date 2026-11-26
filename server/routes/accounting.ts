@@ -590,6 +590,69 @@ router.post('/bank-accounts', async (req: Request, res: Response) => {
   }
 });
 
+// General Ledger: one row per posted voucher line, with property / unit / customer resolved in the database.
+// The browser only displays and filters this; it does not build the ledger.
+const VOUCHER_SOURCE_LABEL: Record<string, string> = {
+  rv: 'Receipt Voucher', receipt: 'Receipt Voucher', 'receipt voucher': 'Receipt Voucher',
+  pv: 'Payment Voucher', payment: 'Payment Voucher', 'payment voucher': 'Payment Voucher',
+  jv: 'Journal Voucher', journal: 'Journal Voucher', 'journal voucher': 'Journal Voucher',
+};
+router.get('/general-ledger', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view the general ledger' });
+
+    const from = typeof req.query.from === 'string' && /^d{4}-d{2}-d{2}$/.test(req.query.from) ? req.query.from : null;
+    const to = typeof req.query.to === 'string' && /^d{4}-d{2}-d{2}$/.test(req.query.to) ? req.query.to : null;
+
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT l.id AS id,
+             DATE_FORMAT(v.voucher_date, '%Y-%m-%d') AS date,
+             l.account_code AS account_code,
+             COALESCE(c.account_name, l.account_name) AS account_name,
+             c.account_type AS account_type,
+             v.voucher_number AS reference,
+             v.voucher_type AS voucher_type,
+             COALESCE(l.description, v.description) AS description,
+             l.debit_amount AS debit,
+             l.credit_amount AS credit,
+             p.title AS property_name,
+             u.unit_ref AS unit_ref,
+             COALESCE(cu.display_name, cu.full_name) AS tenant_name
+        FROM fin_voucher_lines l
+        JOIN fin_vouchers v ON v.id = l.voucher_id
+        LEFT JOIN fin_accounting_events e ON e.id = v.accounting_event_id
+        LEFT JOIN fin_coa_accounts c ON c.account_code = l.account_code
+        LEFT JOIN properties p ON p.id = COALESCE(l.property_id, e.property_id)
+        LEFT JOIN units u ON u.id = COALESCE(l.unit_id, e.unit_id)
+        LEFT JOIN customers cu ON cu.id = COALESCE(l.customer_id, l.tenant_id, e.customer_id, e.tenant_id)
+       WHERE LOWER(v.status) = 'posted'
+         AND (${from} IS NULL OR v.voucher_date >= ${from})
+         AND (${to} IS NULL OR v.voucher_date <= ${to})
+       ORDER BY v.voucher_date DESC, v.created_at DESC, l.created_at ASC
+       LIMIT 20000`;
+
+    const data = rows.map((r) => ({
+      id: String(r.id),
+      date: r.date,
+      account_code: r.account_code,
+      account_name: r.account_name || r.account_code,
+      account_type: r.account_type || '',
+      reference: r.reference,
+      source: VOUCHER_SOURCE_LABEL[String(r.voucher_type || '').toLowerCase()] || r.voucher_type || 'Journal Voucher',
+      description: r.description || '',
+      debit: Number(r.debit) || 0,
+      credit: Number(r.credit) || 0,
+      property_name: r.property_name || '',
+      unit_ref: r.unit_ref || '',
+      tenant_name: r.tenant_name || '',
+    }));
+    const totalDebit = data.reduce((a, r) => a + r.debit, 0);
+    const totalCredit = data.reduce((a, r) => a + r.credit, 0);
+    res.json({ data, totals: { debit: totalDebit, credit: totalCredit, balanced: Math.abs(totalDebit - totalCredit) < 0.01 } });
+  } catch (e: any) { res.status(500).json({ error: 'Failed to load the general ledger' }); console.error('[general-ledger]', e?.message); }
+});
+
 // Posting Engine Compliance View
 router.get('/compliance', async (_req: Request, res: Response) => {
   try {
