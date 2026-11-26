@@ -2257,6 +2257,47 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
   // Direct lease (no reservation): the property / unit / customer the agreement is created for.
   const [directLeaseParty, setDirectLeaseParty] = useState({ property: "", unit: "", customerId: "" });
 
+  // How each Type 2 deposit (GL 21100) is paid: cash, bank transfer into a chosen account, or cheque / PDC.
+  type Type2Key = "utility" | "qatarCool" | "reservation" | "serviceFee";
+  type Type2Pay = { mode: "Cash" | "Bank Transfer" | "Cheque"; bankGl: string; chequeNo: string; chequeDate: string };
+  const emptyType2Pay = (): Type2Pay => ({ mode: "Cash", bankGl: "", chequeNo: "", chequeDate: today.toISOString().split("T")[0] });
+  const [type2Pay, setType2Pay] = useState<Record<Type2Key, Type2Pay>>({
+    utility: emptyType2Pay(), qatarCool: emptyType2Pay(), reservation: emptyType2Pay(), serviceFee: emptyType2Pay(),
+  });
+  const setType2 = (k: Type2Key, patch: Partial<Type2Pay>) => setType2Pay((p) => ({ ...p, [k]: { ...p[k], ...patch } }));
+
+  const renderType2Mode = (k: Type2Key) => {
+    const pay = type2Pay[k];
+    return (
+      <div className="rounded-md border border-emerald-500/20 bg-background/60 p-2 space-y-1.5">
+        <Select value={pay.mode} onValueChange={(v) => setType2(k, { mode: v as Type2Pay["mode"] })}>
+          <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
+          <SelectContent>
+            <SelectItem value="Cash">Cash</SelectItem>
+            <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+            <SelectItem value="Cheque">Cheque / PDC</SelectItem>
+          </SelectContent>
+        </Select>
+        {pay.mode === "Bank Transfer" && (
+          <Select value={pay.bankGl} onValueChange={(v) => setType2(k, { bankGl: v })}>
+            <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Receiving bank account" /></SelectTrigger>
+            <SelectContent>
+              {companyBanks.filter((b) => b.glCode).map((bank) => (
+                <SelectItem key={bank.glCode} value={bank.glCode}>{bank.bankName} – {bank.accountTitle} ({bank.glCode})</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        )}
+        {pay.mode === "Cheque" && (
+          <div className="grid grid-cols-2 gap-1.5">
+            <Input className="h-8 text-xs" placeholder="Cheque no." value={pay.chequeNo} onChange={(e) => setType2(k, { chequeNo: e.target.value })} />
+            <Input className="h-8 text-xs" type="date" value={pay.chequeDate} onChange={(e) => setType2(k, { chequeDate: e.target.value })} />
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const [releaseOpen, setReleaseOpen] = useState(false);
   const [selectedReservationForRelease, setSelectedReservationForRelease] = useState<Reservation | null>(null);
   const [releaseReason, setReleaseReason] = useState("");
@@ -4377,6 +4418,13 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     const reservationAmt = includeDeposit ? (Number(collectForm.reservationDeposit) || 0) : 0;
     const serviceFeeAmt = includeDeposit ? (Number(collectForm.serviceFeeDeposit) || 0) : 0;
     const guaranteeChequeAmt = includeDeposit ? (Number(collectForm.guaranteeChequeDeposit) || 0) : 0;
+    const type2Amounts: Record<Type2Key, number> = { utility: utilityAmt, qatarCool: qatarCoolAmt, reservation: reservationAmt, serviceFee: serviceFeeAmt };
+    for (const k of Object.keys(type2Amounts) as Type2Key[]) {
+      if (type2Amounts[k] > 0 && type2Pay[k].mode === "Bank Transfer" && !type2Pay[k].bankGl) {
+        toast.error("Select the Receiving Bank Account for each Type 2 deposit paid by bank transfer.");
+        return;
+      }
+    }
     const today_str = today.toISOString().split("T")[0];
 
     // ── Calculate Security Deposit Items (Split vs Single) ──
@@ -4604,10 +4652,22 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                 { amount: Math.max(0, depAmt - splitCash - splitBank), type: "SECURITY" as const, mode: "Bank" as const, paymentMode: "Cheque", bankGlCode: undefined, refSuffix: "-REM" },
               ]
             : [{ amount: depAmt, type: "SECURITY" as const, mode: (collectForm.depositMode === "Cash" ? "Cash" as const : "Bank" as const), paymentMode: String(collectForm.depositMode || ""), bankGlCode: collectForm.receivingBankGl || undefined, refSuffix: "" }]),
-          { amount: utilityAmt, type: "KAHRAMAA", mode: "Cash" },
-          { amount: qatarCoolAmt, type: "QATAR_COOL", mode: "Cash" },
-          { amount: reservationAmt, type: "RESERVATION", mode: "Cash" },
-          { amount: serviceFeeAmt, type: "SERVICE_FEE", mode: "Cash" },
+          ...([
+            ["utility", utilityAmt, "KAHRAMAA"],
+            ["qatarCool", qatarCoolAmt, "QATAR_COOL"],
+            ["reservation", reservationAmt, "RESERVATION"],
+            ["serviceFee", serviceFeeAmt, "SERVICE_FEE"],
+          ] as Array<[Type2Key, number, "KAHRAMAA" | "QATAR_COOL" | "RESERVATION" | "SERVICE_FEE"]>).map(([k, amount, type]) => {
+            const pay = type2Pay[k];
+            return {
+              amount,
+              type,
+              mode: (pay.mode === "Cash" ? "Cash" : "Bank") as "Cash" | "Bank",
+              paymentMode: pay.mode === "Cheque" ? "Cheque" : pay.mode === "Bank Transfer" ? "Bank" : "Cash",
+              bankGlCode: pay.mode === "Bank Transfer" ? pay.bankGl || undefined : undefined,
+              refSuffix: pay.mode === "Cheque" && pay.chequeNo ? `-CHQ${pay.chequeNo.replace(/W/g, "")}` : "",
+            };
+          }),
         ];
         for (const deposit of depositCollections) {
           if (deposit.amount <= 0) continue;
@@ -10351,18 +10411,30 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                     <span className="text-[11px] text-emerald-700 dark:text-emerald-400">By-default refundable liabilities</span>
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                    <Field label="Kahramaa Deposit (21100003)">
-                      <Input type="number" value={collectForm.utilityDeposit} onChange={(e) => setCollectForm((f) => ({ ...f, utilityDeposit: e.target.value }))} placeholder="0" />
-                    </Field>
-                    <Field label="Qatar Cool Deposit (21100004)">
-                      <Input type="number" value={collectForm.qatarCoolDeposit} onChange={(e) => setCollectForm((f) => ({ ...f, qatarCoolDeposit: e.target.value }))} placeholder="0" />
-                    </Field>
-                    <Field label="Reservation Advance (21100001)">
-                      <Input type="number" value={collectForm.reservationDeposit} onChange={(e) => setCollectForm((f) => ({ ...f, reservationDeposit: e.target.value }))} placeholder="0" />
-                    </Field>
-                    <Field label="Service Fee Deposit (21100005)">
-                      <Input type="number" value={collectForm.serviceFeeDeposit} onChange={(e) => setCollectForm((f) => ({ ...f, serviceFeeDeposit: e.target.value }))} placeholder="0" />
-                    </Field>
+                    <div className="space-y-1.5">
+                      <Field label="Kahramaa Deposit (21100003)">
+                        <Input type="number" value={collectForm.utilityDeposit} onChange={(e) => setCollectForm((f) => ({ ...f, utilityDeposit: e.target.value }))} placeholder="0" />
+                      </Field>
+                      {Number(collectForm.utilityDeposit) > 0 && renderType2Mode("utility")}
+                    </div>
+                    <div className="space-y-1.5">
+                      <Field label="Qatar Cool Deposit (21100004)">
+                        <Input type="number" value={collectForm.qatarCoolDeposit} onChange={(e) => setCollectForm((f) => ({ ...f, qatarCoolDeposit: e.target.value }))} placeholder="0" />
+                      </Field>
+                      {Number(collectForm.qatarCoolDeposit) > 0 && renderType2Mode("qatarCool")}
+                    </div>
+                    <div className="space-y-1.5">
+                      <Field label="Reservation Advance (21100001)">
+                        <Input type="number" value={collectForm.reservationDeposit} onChange={(e) => setCollectForm((f) => ({ ...f, reservationDeposit: e.target.value }))} placeholder="0" />
+                      </Field>
+                      {Number(collectForm.reservationDeposit) > 0 && renderType2Mode("reservation")}
+                    </div>
+                    <div className="space-y-1.5">
+                      <Field label="Service Fee Deposit (21100005)">
+                        <Input type="number" value={collectForm.serviceFeeDeposit} onChange={(e) => setCollectForm((f) => ({ ...f, serviceFeeDeposit: e.target.value }))} placeholder="0" />
+                      </Field>
+                      {Number(collectForm.serviceFeeDeposit) > 0 && renderType2Mode("serviceFee")}
+                    </div>
                     <Field label="Guarantee Cheque Amount (21100006)">
                       <Input type="number" value={collectForm.guaranteeChequeDeposit} onChange={(e) => setCollectForm((f) => ({ ...f, guaranteeChequeDeposit: e.target.value }))} placeholder="0" />
                     </Field>
