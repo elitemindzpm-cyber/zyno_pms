@@ -4423,7 +4423,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           depositVouchers.push({
             id: `v${vouchers.length + 2}-chq`,
             leaseId: lease.id,
-            name: `Receipts Voucher - Security Deposit (Cheque: ${collectForm.depositSplitChequeNo || "PDC"})`,
+            name: `Receipts Voucher - Security Deposit (Cheque: ${collectForm.depositSplitChequeNo || "PDC"}${collectForm.depositSplitChequeDate ? ` · dated ${collectForm.depositSplitChequeDate}` : ""})`,
             receiptNo: `RV-${lease.id}-SD-CHQ`,
             method: "PDC",
             period: "Security Deposit Split (Cheque)",
@@ -10282,6 +10282,9 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                           <Field label="Deposit Cheque Bank">
                             <Input value={collectForm.depositChequeBank} onChange={(e) => setCollectForm((f) => ({ ...f, depositChequeBank: e.target.value }))} placeholder="e.g. QNB, CBQ, Doha Bank" />
                           </Field>
+                          <Field label="Cheque / PDC Date">
+                            <Input type="date" value={collectForm.depositChequeDate} onChange={(e) => setCollectForm((f) => ({ ...f, depositChequeDate: e.target.value }))} />
+                          </Field>
                         </div>
                       )}
                     </>
@@ -10320,6 +10323,9 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                         </Field>
                         <Field label="Cheque Bank">
                           <Input value={collectForm.depositSplitChequeBank} onChange={(e) => setCollectForm((f) => ({ ...f, depositSplitChequeBank: e.target.value }))} placeholder="e.g. QNB, CBQ" />
+                        </Field>
+                        <Field label="Cheque / PDC Date">
+                          <Input type="date" value={collectForm.depositSplitChequeDate} onChange={(e) => setCollectForm((f) => ({ ...f, depositSplitChequeDate: e.target.value }))} />
                         </Field>
                       </div>
                       {(() => {
@@ -10430,7 +10436,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
               if (collectForm.depositIsSplit) {
                 if (splitCash > 0) impacts.push({ label: "Security Deposit — Cash Split", category: "Deposit (21500)", dr: "Cash In Hand", drCode: "12100", cr: `Security Deposit Liability - ${signatureWorkflowLease.unit}`, crCode: "21500", amount: splitCash });
                 if (splitBank > 0) impacts.push({ label: `Security Deposit — Bank Split (Ref: ${collectForm.depositSplitBankRef || "—"})`, category: "Deposit (21500)", dr: "Bank Operating Account", drCode: "12000", cr: `Security Deposit Liability - ${signatureWorkflowLease.unit}`, crCode: "21500", amount: splitBank });
-                if (splitCheque > 0) impacts.push({ label: `Security Deposit — Cheque Split (${collectForm.depositSplitChequeNo || "—"})`, category: "Deposit (21500)", dr: "PDC In Hand", drCode: "12900", cr: `Security Deposit Liability - ${signatureWorkflowLease.unit}`, crCode: "21500", amount: splitCheque });
+                if (splitCheque > 0) impacts.push({ label: `Security Deposit — Cheque Split (${collectForm.depositSplitChequeNo || "—"}${collectForm.depositSplitChequeDate ? `, ${collectForm.depositSplitChequeDate}` : ""})`, category: "Deposit (21500)", dr: "PDC In Hand", drCode: "12900", cr: `Security Deposit Liability - ${signatureWorkflowLease.unit}`, crCode: "21500", amount: splitCheque });
               } else if (depAmt > 0) {
                 impacts.push({ label: `Type 1: Unit Security Deposit (${collectForm.depositMode})`, category: "Deposit (21500)", dr: depDrLabel, drCode: depDrCode, cr: "Security Deposit Liability", crCode: "21500", amount: depAmt });
               }
