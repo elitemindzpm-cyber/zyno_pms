@@ -773,10 +773,11 @@ model fin_deposits {
   deposit_type     String   @db.Text
   coa_account_code String   @db.Text
   amount           Decimal? @db.Decimal(18, 4)
-  tenant_id        BigInt
-  property_id      BigInt?
-  unit_id          BigInt?
-  lease_id         BigInt?
+  tenant_id        String?  @db.VarChar(36)
+  property_id      String?  @db.VarChar(36)
+  unit_id          String?  @db.VarChar(36)
+  lease_id         String?  @db.VarChar(36)
+  payment_mode     String?  @db.VarChar(64)
   status           String   @default("Held") @db.VarChar(255)
   receipt_ref      String?  @db.Text
   created_at       DateTime @default(now()) @db.DateTime(6)

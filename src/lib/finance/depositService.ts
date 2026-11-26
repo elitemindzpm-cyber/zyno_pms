@@ -30,6 +30,8 @@ export type DepositCollectionPayload = {
   depositType?: DepositType;
   /** Human-readable unit name for SL name generation (e.g. "Flat 15") */
   unit_name?: string;
+  /** How the deposit was paid: Cash, Bank, Cheque or Split. Stored on the deposit record. */
+  paymentMode?: string;
   ref: string;
 };
 
@@ -103,6 +105,7 @@ export async function collectSecurityDeposit(payload: DepositCollectionPayload) 
     unit_id:          String(payload.unit_id),
     lease_id:         payload.lease_id != null ? String(payload.lease_id) : undefined,
     status:           'Active',
+    payment_mode:     payload.paymentMode,
     receipt_ref:      voucher.voucher_number,
   });
 

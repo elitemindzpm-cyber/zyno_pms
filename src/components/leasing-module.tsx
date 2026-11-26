@@ -4547,8 +4547,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           }
         }
 
-        const depositCollections: Array<{ amount: number; type: "SECURITY" | "QATAR_COOL" | "KAHRAMAA" | "SERVICE_FEE" | "RESERVATION"; mode: "Cash" | "Bank" }> = [
-          { amount: depAmt, type: "SECURITY", mode: (collectForm.depositIsSplit ? (splitCash > 0 ? "Cash" : "Bank") : (collectForm.depositMode === "Cash" ? "Cash" : "Bank")) },
+        const depositCollections: Array<{ amount: number; type: "SECURITY" | "QATAR_COOL" | "KAHRAMAA" | "SERVICE_FEE" | "RESERVATION"; mode: "Cash" | "Bank"; paymentMode?: string }> = [
+          { amount: depAmt, type: "SECURITY", mode: (collectForm.depositIsSplit ? (splitCash > 0 ? "Cash" : "Bank") : (collectForm.depositMode === "Cash" ? "Cash" : "Bank")), paymentMode: collectForm.depositIsSplit ? "Split" : String(collectForm.depositMode || "") },
           { amount: utilityAmt, type: "KAHRAMAA", mode: "Cash" },
           { amount: qatarCoolAmt, type: "QATAR_COOL", mode: "Cash" },
           { amount: reservationAmt, type: "RESERVATION", mode: "Cash" },
@@ -4564,6 +4564,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
             lease_id: String(financeLease.id),
             mode: deposit.mode,
             depositType: deposit.type,
+            paymentMode: deposit.paymentMode,
             unit_name: lease.unit,
             ref: `RV-${lease.id}-${deposit.type}`,
           });

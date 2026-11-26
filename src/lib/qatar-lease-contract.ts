@@ -257,39 +257,28 @@ function parseDateParts(dateStr: string): { year: number; month: number; day: nu
   return null;
 }
 
+// Contract dates are printed as DD/MM/YYYY in both languages.
 export function formatArabicDate(dateStr: string): string {
-  if (!dateStr) return "01 سبتمبر 2026";
+  if (!dateStr) return "01/09/2026";
   try {
     const parsed = parseDateParts(dateStr);
     if (!parsed) return dateStr;
-    const arabicMonths = [
-      "يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو",
-      "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"
-    ];
     const day = String(parsed.day).padStart(2, "0");
-    const month = arabicMonths[parsed.month] || "سبتمبر";
-    const year = parsed.year;
-    return `${day} ${month} ${year}`;
+    const month = String(parsed.month + 1).padStart(2, "0");
+    return `${day}/${month}/${parsed.year}`;
   } catch {
     return dateStr;
   }
 }
 
 export function formatEnglishDate(dateStr: string): string {
-  if (!dateStr) return "01st September 2026";
+  if (!dateStr) return "01/09/2026";
   try {
     const parsed = parseDateParts(dateStr);
     if (!parsed) return dateStr;
-    const months = [
-      "January", "February", "March", "April", "May", "June",
-      "July", "August", "September", "October", "November", "December"
-    ];
-    const day = parsed.day;
-    const suffix = (day === 1 || day === 21 || day === 31) ? "st" : (day === 2 || day === 22) ? "nd" : (day === 3 || day === 23) ? "rd" : "th";
-    const dayFormatted = `${String(day).padStart(2, "0")}${suffix}`;
-    const month = months[parsed.month] || "September";
-    const year = parsed.year;
-    return `${dayFormatted} ${month} ${year}`;
+    const day = String(parsed.day).padStart(2, "0");
+    const month = String(parsed.month + 1).padStart(2, "0");
+    return `${day}/${month}/${parsed.year}`;
   } catch {
     return dateStr;
   }
@@ -448,10 +437,10 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
 
   const rawUnit = raw.unit || raw.unit_ref || raw.propertyUnitNumber || raw.unit_code || raw.unit_name || "04";
   const unitNum = String(rawUnit).replace(/^(Flat|Unit|Shop|Office|Villa)\s*/i, "").trim() || "04";
-  const propName = raw.property || raw.propertyAddressEn || raw.property_name || raw.properties?.title || "Al Wakara-90";
-  const tenantName = localOverride?.tenant_name || raw.tenantName || raw.tenantNameEn || raw.tenant_name || raw.full_name || "Mr. SAJJAD ALI MOHAMMED";
+  const propName = raw.property || raw.propertyAddressEn || raw.property_name || raw.properties?.title || "—";
+  const tenantName = localOverride?.tenant_name || raw.tenantName || raw.tenantNameEn || raw.tenant_name || raw.full_name || "—";
   const qid = raw.tenantQid || raw.qid || raw.qatar_id || raw.customer_qid || generateDeterministicQid(tenantName);
-  const mobile = raw.tenantMobile || raw.phone || raw.mobile || raw.mobile_number || "66965239";
+  const mobile = raw.tenantMobile || raw.phone || raw.mobile || raw.mobile_number || "—";
 
   // Enforce Requirement 4: Property Code - Unit Code - Unique 4 digit Number
   const pCode = raw.propertyCode || raw.properties?.property_code || cleanPropertyCode(propName);
@@ -469,8 +458,8 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
     ? bedroomsToEnglish(bedroomsNum)
     : "Three"; // safe default (explicitly overridable via bedroomCount)
 
-  const furnishing = raw.furnishingStatusEn || raw.furnishing || raw.furnishing_type || "Semi Furnished";
-  const furnishingAr = furnishing.toLowerCase().includes("fully") ? "مفروش بالكامل" : furnishing.toLowerCase().includes("unfurnished") ? "غير مفروش" : "نصف مفروش";
+  const furnishing = raw.furnishingStatusEn || raw.furnishing || raw.furnishing_type || "—";
+  const furnishingAr = furnishing === "—" ? "—" : furnishing.toLowerCase().includes("fully") ? "مفروش بالكامل" : furnishing.toLowerCase().includes("unfurnished") ? "غير مفروش" : "نصف مفروش";
 
   // Meters — use explicit passed values first, then unit-level fields
   const elecMeter = raw.electricityNumber || raw.electricity_meter_no || raw.kahramaa_electricity_no || raw.elecMeter || "1424225";
