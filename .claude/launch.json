@@ -4,44 +4,74 @@
     {
       "name": "api",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "api:dev"],
+      "runtimeArgs": [
+        "run",
+        "api:dev"
+      ],
       "port": 3002
     },
     {
       "name": "api-test",
       "runtimeExecutable": "cmd",
-      "runtimeArgs": ["/c", "set API_PORT=3100&& set CORS_ORIGINS=http://localhost:8080,http://localhost:8090,http://localhost:8081,http://localhost:3000,http://localhost:5173,http://localhost:4173&& npx tsx server/index.ts"],
+      "runtimeArgs": [
+        "/c",
+        "set API_PORT=3100&& set CORS_ORIGINS=http://localhost:8080,http://localhost:8090,http://localhost:8081,http://localhost:3000,http://localhost:5173,http://localhost:4173&& npx tsx server/index.ts"
+      ],
       "port": 3100
     },
     {
       "name": "api-e2e",
       "runtimeExecutable": "cmd",
-      "runtimeArgs": ["/c", "set API_PORT=3002&& set CORS_ORIGINS=http://localhost:8080,http://localhost:8081,http://localhost:3000,http://localhost:5173,http://localhost:4173&& npx tsx server/index.ts"],
+      "runtimeArgs": [
+        "/c",
+        "set API_PORT=3002&& set CORS_ORIGINS=http://localhost:8080,http://localhost:8081,http://localhost:3000,http://localhost:5173,http://localhost:4173&& npx tsx server/index.ts"
+      ],
       "port": 3002
     },
     {
       "name": "web",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 8080
     },
     {
       "name": "web-test",
       "runtimeExecutable": "cmd",
-      "runtimeArgs": ["/c", "set VITE_API_URL=http://localhost:3100&& npm run dev -- --port 8090 --strictPort"],
+      "runtimeArgs": [
+        "/c",
+        "set VITE_API_URL=http://localhost:3100&& npm run dev -- --port 8090 --strictPort"
+      ],
       "port": 8090
     },
     {
       "name": "web-ui-test",
       "runtimeExecutable": "cmd",
-      "runtimeArgs": ["/c", "set VITE_API_URL=http://localhost:3100&& npm run dev -- --port 8090 --strictPort"],
+      "runtimeArgs": [
+        "/c",
+        "set VITE_API_URL=http://localhost:3100&& npm run dev -- --port 8090 --strictPort"
+      ],
       "port": 8090
     },
     {
       "name": "web-idle-check",
       "runtimeExecutable": "cmd",
-      "runtimeArgs": ["/c", "set VITE_API_URL=http://localhost:3002&& set VITE_IDLE_TIMEOUT_MINUTES=0.5&& npm run dev"],
+      "runtimeArgs": [
+        "/c",
+        "set VITE_API_URL=http://localhost:3002&& set VITE_IDLE_TIMEOUT_MINUTES=0.5&& npm run dev"
+      ],
       "port": 8080
+    },
+    {
+      "name": "web-local",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set VITE_API_URL=http://localhost:3002&& npm run dev -- --port 8081 --strictPort"
+      ],
+      "port": 8081
     }
   ]
 }
