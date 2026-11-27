@@ -164,7 +164,7 @@ export const MAINTENANCE_GL_ACCOUNTS = [
   { code: "52100008", name: "Tenant Recoverable Damage & Chargeback Clearing", category: "RECOVERABLE" },
   { code: "11200001", name: "Tenant Accounts Receivable (Trade Debtors)", category: "ASSET" },
   { code: "21200001", name: "Tenant Security Deposits Held (Escrow Liability)", category: "LIABILITY" },
-  { code: "41300002", name: "Tenant Damage Recharge & Admin Surcharge Income", category: "REVENUE" },
+  { code: "41201003", name: "Tenant Damage Recharge & Admin Surcharge Income", category: "REVENUE" },
   { code: "12400001", name: "Internal Maintenance Warehouse Stock Asset", category: "ASSET" },
 ];
 
@@ -1758,7 +1758,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
           date: today,
           due_date: new Date(Date.now() + 14 * 86400000).toISOString().slice(0, 10),
           stream: "Tenant Damage Recharge",
-          account_code: "41300002",
+          account_code: "41201003",
           amount: chargebackAmount,
         });
       } catch (e) {

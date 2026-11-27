@@ -16,7 +16,7 @@ import {
 import { useAppData } from "@/lib/app-data-context";
 import { db } from "@/lib/db";
 import { useFinanceStore, type ReceivableInvoice } from "@/lib/finance/finance-store";
-import { KAHRAMAA_DEPOSIT_BY_UNIT, resolvePropertyFromUnitCode } from "@/lib/finance/kahramaa-deposits-data";
+import { resolvePropertyFromUnitCode } from "@/lib/finance/kahramaa-deposits-data";
 import { InvoiceViewDialog } from "./invoice-view-dialog";
 import { BulkInvoiceDialog } from "./bulk-invoice-dialog";
 import { toast } from "sonner";
@@ -901,56 +901,8 @@ export function CustomerStatementSubModule({
       }
     });
 
-    if (customerLeases.length > 0) {
-      customerLeases.forEach((l, idx) => {
-        const uCode = String(l.unit || "").trim().toUpperCase();
-        const hasSecDepRow = rows.some(
-          (r) => r.unit.toUpperCase() === uCode && r.description.toLowerCase().includes("security deposit")
-        );
-        const secDep = Number(l.securityDeposit) || 0;
-        if (secDep > 0 && !hasSecDepRow) {
-          totalReceived += secDep;
-          balance += secDep;
-          rows.push({
-            id: `dep-lease-${l.id || idx}`,
-            date: l.startDate || "2026-01-01",
-            voucherNo: `VCH-SD-${l.id || idx + 101}`,
-            description: `Security Deposit pursuant to Tenancy Contract #${l.contractNumber || l.id}`,
-            property: l.property || (uCode ? resolvePropertyFromUnitCode(uCode) : "Property"),
-            unit: l.unit || "Unit",
-            depositReceived: secDep,
-            deductions: 0,
-            refundPaid: 0,
-            runningBalance: balance,
-            paymentMode: depositModeByLease.get(String(l.id)) || "Not recorded",
-            status: "Held in Custody",
-          });
-        }
-
-        // Ensure Kahramaa Deposit from Kahramaa Deposit.xlsx is present for each leased unit
-        const kahEntry = uCode ? KAHRAMAA_DEPOSIT_BY_UNIT[uCode] : undefined;
-        const kahVchNo = `VCH-KAH-DEP-${uCode}`;
-        if (kahEntry && kahEntry.amount > 0 && !seenVouchers.has(kahVchNo)) {
-          seenVouchers.add(kahVchNo);
-          totalReceived += kahEntry.amount;
-          balance += kahEntry.amount;
-          rows.push({
-            id: `dep-kah-${uCode}`,
-            date: kahEntry.date,
-            voucherNo: kahVchNo,
-            description: `Kahramaa Utility Deposit (${kahEntry.mode}) — ${currentCustomer.name} (${uCode})`,
-            property: resolvePropertyFromUnitCode(uCode) || l.property || "Property",
-            unit: uCode,
-            depositReceived: kahEntry.amount,
-            deductions: 0,
-            refundPaid: 0,
-            runningBalance: balance,
-            paymentMode: kahEntry.mode,
-            status: "Held in Escrow",
-          });
-        }
-      });
-    }
+    // Only deposits that were actually received and recorded are listed. The statement no longer invents a
+    // "Security Deposit pursuant to Tenancy Contract" row from the lease amount, or adds static Kahramaa deposit data.
 
     rows.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     let recomputedBal = 0;

@@ -661,14 +661,15 @@ export async function resolveAccountingAccounts(
       rules = [{
         transaction_type: 'PENALTY_CHARGE',
         debit_gl_code: '12413',
-        credit_gl_code: '41200',
+        credit_gl_code: '41201',
+        credit_sl_code: '41201002', // Other Income-Penalty
         is_active: true,
       }];
     } else if (ctx.transactionType === 'UTILITY_CHARGE') {
       rules = [{
         transaction_type: 'UTILITY_CHARGE',
         debit_gl_code: '12413',
-        credit_gl_code: '41202',
+        credit_gl_code: '41201',
         is_active: true,
       }];
     } else if (ctx.transactionType === 'DEPOSIT_DEDUCTION_SETTLE') {
@@ -707,13 +708,15 @@ export async function resolveAccountingAccounts(
       rules = [{
         transaction_type: 'DEPOSIT_TO_UNCLAIMED',
         debit_gl_code: '21100',
-        credit_gl_code: '21300',
+        credit_gl_code: '21100',
+        credit_sl_code: '21100002', // Unclaimed Liability-Deposit
         is_active: true,
       }];
     } else if (ctx.transactionType === 'UNCLAIMED_REFUND') {
       rules = [{
         transaction_type: 'UNCLAIMED_REFUND',
-        debit_gl_code: '21300',
+        debit_gl_code: '21100',
+        debit_sl_code: '21100002', // Unclaimed Liability-Deposit
         credit_gl_code: '12000',
         credit_sl_code: '12000001',
         is_active: true,
@@ -729,7 +732,7 @@ export async function resolveAccountingAccounts(
       rules = [{
         transaction_type: 'RESERVATION_FORFEIT',
         debit_gl_code: '21100',
-        credit_gl_code: '41400',
+        credit_gl_code: '41201',
         is_active: true,
       }];
     } else if (ctx.transactionType === 'GUARANTEE_CHEQUE') {
@@ -759,13 +762,14 @@ export async function resolveAccountingAccounts(
       rules = [{
         transaction_type: 'LATE_FEE_CHARGE',
         debit_gl_code: '12413',
-        credit_gl_code: '41200',
+        credit_gl_code: '41201',
+        credit_sl_code: '41201002', // Other Income-Penalty
         is_active: true,
       }];
     } else if (ctx.transactionType === 'RENT_DISCOUNT_WAIVER') {
       rules = [{
         transaction_type: 'RENT_DISCOUNT_WAIVER',
-        debit_gl_code: '41300',
+        debit_gl_code: '41100', // contra to Rental Revenue
         credit_gl_code: '12413',
         is_active: true,
       }];
@@ -783,6 +787,27 @@ export async function resolveAccountingAccounts(
         credit_gl_code: '12411',
         is_active: true,
       }];
+    } else if (ctx.transactionType === 'RENT_INVOICE') {
+      rules = [{ transaction_type: 'RENT_INVOICE', debit_gl_code: '12413', credit_gl_code: '41100', is_active: true }];
+    } else if (ctx.transactionType === 'RENT_INVOICE_REVERSAL') {
+      rules = [{ transaction_type: 'RENT_INVOICE_REVERSAL', debit_gl_code: '41100', credit_gl_code: '12413', is_active: true }];
+    } else if (ctx.transactionType === 'LEGAL_ESCALATION') {
+      rules = [{ transaction_type: 'LEGAL_ESCALATION', debit_gl_code: '12411', debit_sl_code: '12411001', credit_gl_code: '12413', is_active: true }];
+    } else if (ctx.transactionType === 'DISHONOUR_CHARGE_COMPANY') {
+      // Bank charge borne by the company: Dr Bank Charges / Cr Bank
+      rules = [{ transaction_type: 'DISHONOUR_CHARGE_COMPANY', debit_gl_code: '51102', debit_sl_code: '51102016', credit_gl_code: '12000', credit_sl_code: '12000001', is_active: true }];
+    } else if (ctx.transactionType === 'DISHONOUR_CHARGE_TENANT') {
+      // Bank charge recovered from the tenant: Dr Tenant Receivable / Cr Other Income-Penalty
+      rules = [{ transaction_type: 'DISHONOUR_CHARGE_TENANT', debit_gl_code: '12413', credit_gl_code: '41201', credit_sl_code: '41201002', is_active: true }];
+    } else if (ctx.transactionType === 'VENDOR_INVOICE') {
+      // Dr Repair & Maintenance Cost / Cr Sundry Creditors (the account procurement invoices are credited to)
+      rules = [{ transaction_type: 'VENDOR_INVOICE', debit_gl_code: '51004', debit_sl_code: '51004001', credit_gl_code: '21000', is_active: true }];
+    } else if (ctx.transactionType === 'VENDOR_PAYMENT') {
+      rules = [{ transaction_type: 'VENDOR_PAYMENT', debit_gl_code: '21000', credit_gl_code: ctx.paymentMethod === 'CASH' ? '12100' : '12000', credit_sl_code: ctx.paymentMethod === 'CASH' ? '12100001' : '12000001', is_active: true }];
+    } else if (ctx.transactionType === 'VENDOR_ADVANCE') {
+      rules = [{ transaction_type: 'VENDOR_ADVANCE', debit_gl_code: '12300', debit_sl_code: '12300001', credit_gl_code: ctx.paymentMethod === 'CASH' ? '12100' : '12000', credit_sl_code: ctx.paymentMethod === 'CASH' ? '12100001' : '12000001', is_active: true }];
+    } else if (ctx.transactionType === 'VENDOR_ADVANCE_APPLY') {
+      rules = [{ transaction_type: 'VENDOR_ADVANCE_APPLY', debit_gl_code: '21000', credit_gl_code: '12300', credit_sl_code: '12300001', is_active: true }];
     }
   }
 

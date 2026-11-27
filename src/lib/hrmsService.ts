@@ -1406,14 +1406,14 @@ export const HrmsApi = {
     // 1. Gratuity Expense: Dr 54100 Gratuity Expense / Cr 21900 Payroll Payable
     if (fnf.gratuity_amount > 0) {
       lines.push({
-        account_code: '54100',
+        account_code: '51101008',
         account_name: 'Gratuity Expense',
         debit: Number(fnf.gratuity_amount),
         credit: 0,
         description: `FNF Gratuity for Employee ${fnf.employee_id}`
       });
       lines.push({
-        account_code: '21900',
+        account_code: '22005001',
         account_name: 'Payroll Payable',
         debit: 0,
         credit: Number(fnf.gratuity_amount),
@@ -1424,14 +1424,14 @@ export const HrmsApi = {
     // 2. Leave Encashment: Dr 54200 Leave Encashment / Cr 21900 Payroll Payable
     if (fnf.leave_encashment > 0) {
       lines.push({
-        account_code: '54200',
+        account_code: '51101006',
         account_name: 'Leave Encashment Expense',
         debit: Number(fnf.leave_encashment),
         credit: 0,
         description: `FNF Leave Encashment for Employee ${fnf.employee_id}`
       });
       lines.push({
-        account_code: '21900',
+        account_code: '22005001',
         account_name: 'Payroll Payable',
         debit: 0,
         credit: Number(fnf.leave_encashment),
@@ -1442,14 +1442,14 @@ export const HrmsApi = {
     // 3. Unpaid Salary: Dr 50100 Salary Expense / Cr 21900 Payroll Payable
     if (fnf.unpaid_salary > 0) {
       lines.push({
-        account_code: '50100',
+        account_code: '51101001',
         account_name: 'Salary Expense',
         debit: Number(fnf.unpaid_salary),
         credit: 0,
         description: `FNF Unpaid Salary for Employee ${fnf.employee_id}`
       });
       lines.push({
-        account_code: '21900',
+        account_code: '22005001',
         account_name: 'Payroll Payable',
         debit: 0,
         credit: Number(fnf.unpaid_salary),
@@ -1460,14 +1460,14 @@ export const HrmsApi = {
     // 4. Loan Recovery deduction: Dr 21900 Payroll Payable / Cr 13100 Employee Loans Receivable
     if (fnf.loan_deduction > 0) {
       lines.push({
-        account_code: '21900',
+        account_code: '22005001',
         account_name: 'Payroll Payable',
         debit: Number(fnf.loan_deduction),
         credit: 0,
         description: `FNF Loan Recovery for Employee ${fnf.employee_id}`
       });
       lines.push({
-        account_code: '13100',
+        account_code: '12412001',
         account_name: 'Employee Loans Receivable',
         debit: 0,
         credit: Number(fnf.loan_deduction),
@@ -1478,7 +1478,7 @@ export const HrmsApi = {
     // 5. Net Disbursement: Dr 21900 Payroll Payable / Cr 12000 Bank
     if (fnf.net_payable > 0) {
       lines.push({
-        account_code: '21900',
+        account_code: '22005001',
         account_name: 'Payroll Payable',
         debit: Number(fnf.net_payable),
         credit: 0,
@@ -1495,7 +1495,7 @@ export const HrmsApi = {
 
     if (lines.length > 0) {
       return await createAccountingEvent({
-        event_type: 'HRMS_FNF_SETTLEMENT',
+        event_type: 'ADJUSTMENT',
         source_type: 'HRMS_FNF',
         source_id: fnf.id,
         event_date: eventDate,
@@ -1513,7 +1513,7 @@ export const HrmsApi = {
     if (amount <= 0) return;
 
     return await createAccountingEvent({
-      event_type: 'HRMS_EXPENSE_REIMBURSEMENT',
+      event_type: 'ADJUSTMENT',
       source_type: 'HRMS_EXPENSE',
       source_id: claim.id,
       event_date: eventDate,
@@ -1522,7 +1522,7 @@ export const HrmsApi = {
       idempotency_key: `hrms-exp-${claim.id}`,
       lines: [
         {
-          account_code: '55000',
+          account_code: '51102004',
           account_name: 'Staff Expense Claims',
           debit: amount,
           credit: 0,
