@@ -74,7 +74,7 @@ export function ReceivablesLegal() {
       addLegalEscalation({
         legal_case_id: escalateForm.legal_case_id,
         tenant_name: escalateForm.tenant_name,
-        property_name: escalateForm.property_name || "Old Salata - Residence No:23",
+        property_name: escalateForm.property_name || "—",
         unit_ref: escalateForm.unit_ref || "Unit",
         original_amount: amt,
         outstanding_balance: amt,
@@ -116,9 +116,9 @@ export function ReceivablesLegal() {
 
     const todayStr = recoveryDate || new Date().toISOString().split("T")[0];
     const caseId = recoverTarget.legal_case_id || recoverTarget.id;
-    const propName = recoverTarget.property_name || "Old Salata - Residence No:23";
+    const propName = recoverTarget.property_name || "—";
     const unitName = recoverTarget.unit_ref || "Unit";
-    const tenantName = recoverTarget.tenant_name || "Valued Tenant";
+    const tenantName = recoverTarget.tenant_name || "—";
     const effectiveRef = paymentMethod === "Bank Transfer" ? (transactionNo || bankRef) : paymentMethod === "Cheque" ? (chequeNo || bankRef) : bankRef;
 
     setIsSubmitting(true);
@@ -196,9 +196,9 @@ export function ReceivablesLegal() {
   function handleViewReceipt(rec: any) {
     const todayStr = new Date().toISOString().split("T")[0];
     const caseId = rec.legal_case_id || rec.id;
-    const propName = rec.property_name || "Old Salata - Residence No:23";
+    const propName = rec.property_name || "—";
     const unitName = rec.unit_ref || "Unit";
-    const tenantName = rec.tenant_name || "Valued Tenant";
+    const tenantName = rec.tenant_name || "—";
     const recoveredAmt = (Number(rec.original_amount) || 0) - (Number(rec.outstanding_balance) || 0);
 
     const legalReceipt: TenantReceiptDetails = {

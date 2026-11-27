@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState, useRef, useCallback } from "react";
 import { ExcelImportEmbedded } from "@/components/excel-import-embedded";
 import { BulkPdcDepositModal } from "@/components/leasing/bulk-pdc-deposit-modal";
 import { VoucherApprovalModal } from "@/components/leasing/voucher-approval-modal";
+import { findUnitByName } from "@/lib/unit-lookup";
 import { RevenueRecognitionModal } from "@/components/leasing/revenue-recognition-modal";
 import { LeaseRenewalStepperModal, type RenewalSubmitData } from "@/components/lease-renewal-stepper-modal";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -3453,7 +3454,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     setReservations((items) => [reservation, ...items]);
     void (async () => {
       try {
-        const { data: uRow } = await db.from("units").select("id").eq("unit_ref", unit.unit).maybeSingle();
+        const uRow = await findUnitByName(unit.unit, { propertyName: unit.property });
         const custRow = customers.find((c) => c.name.toLowerCase().trim() === reservation.tenantName.toLowerCase().trim());
         const { error: resError } = await db.from("reservations").insert({
           id: reservation.id,
@@ -4199,11 +4200,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     // Persist to DB using valid schema columns
     void (async () => {
       try {
-        const { data: uRow } = await db
-          .from("units")
-          .select("id, property_id")
-          .or(`unit_ref.eq.${lease.unit},unit_code.eq.${lease.unit},unit_name.eq.${lease.unit}`)
-          .maybeSingle();
+        const uRow = await findUnitByName(lease.unit, { propertyName: lease.property });
 
         const startMs = new Date(lease.startDate).getTime();
         const endMs = new Date(lease.endDate).getTime();
@@ -5469,11 +5466,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           .update({ lease_status: "renewed" })
           .or(oldFilter);
 
-        const { data: uRow } = await db
-          .from("units")
-          .select("id, property_id")
-          .or(`unit_ref.eq.${oldLease.unit},unit_code.eq.${oldLease.unit},unit_name.eq.${oldLease.unit}`)
-          .maybeSingle();
+        const uRow = await findUnitByName(oldLease.unit, { propertyName: oldLease.property });
 
         const leasePayload: any = {
           lease_number: contractNo,
@@ -5815,11 +5808,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
 
           await db.from("leases").update({ lease_status: "renewed" }).or(oldFilter);
 
-          const { data: uRow } = await db
-            .from("units")
-            .select("id, property_id")
-            .or(`unit_ref.eq.${oldLease.unit},unit_code.eq.${oldLease.unit},unit_name.eq.${oldLease.unit}`)
-            .maybeSingle();
+          const uRow = await findUnitByName(oldLease.unit, { propertyName: oldLease.property });
 
           const leasePayload: any = {
             lease_number: contractNo,
@@ -6208,7 +6197,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       } : item
     ));
 
-    const propName = lease?.property || "Old Salata - Residence No:23";
+    const propName = lease?.property || "—";
     const unitRef = lease?.unit || "Unit";
     const tenantName = lease?.tenantName || "Tenant";
 
@@ -13340,7 +13329,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                   </div>
                   <div className="flex justify-between items-center">
                     <span className="text-muted-foreground font-medium">Property &amp; Unit:</span>
-                    <span>{lease?.property || "Old Salata - Residence No:23"} • {lease?.unit || "Unit"}</span>
+                    <span>{lease?.property || "—"} • {lease?.unit || "Unit"}</span>
                   </div>
                 </div>
 

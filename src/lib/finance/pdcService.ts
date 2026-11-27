@@ -1,3 +1,4 @@
+import { findUnitByName } from "@/lib/unit-lookup";
 import { db } from '../db';
 import {
   postPdcCollection,
@@ -125,6 +126,8 @@ export function parsePdcIdentifier(pdcId: string | number): ParsedPdcIdentifier 
 async function resolveUuidScope(args: {
   leaseId?: string | number | null;
   unitCode?: string | null;
+  propertyId?: string | null;
+  propertyName?: string | null;
 }): Promise<{ tenant_id?: string; property_id?: string; unit_id?: string }> {
   const leaseId = normalizeUuid(args.leaseId as any);
   try {
@@ -144,12 +147,7 @@ async function resolveUuidScope(args: {
     }
     const code = (args.unitCode || '').trim();
     if (code) {
-      const { data: unitRows } = await db
-        .from('units')
-        .select('id, property_id')
-        .or(`unit_ref.eq.${code},unit_code.eq.${code},unit_name.eq.${code}`)
-        .limit(1);
-      const u = unitRows?.[0];
+      const u = await findUnitByName(code, { propertyId: args.propertyId, propertyName: args.propertyName });
       if (u?.id) {
         return { property_id: normalizeUuid(u.property_id), unit_id: normalizeUuid(u.id) };
       }
@@ -359,6 +357,8 @@ async function resolveGlContext(
   const scope = await resolveUuidScope({
     leaseId: hints?.leaseId ?? pdcRow?.lease_id,
     unitCode: derivedUnit,
+    propertyId: hints?.propertyId ?? pdcRow?.property_id ?? finRow?.property_id ?? null,
+    propertyName: pdcRow?.property_name ?? finRow?.property_name ?? null,
   });
 
   const resolvedAmount = Number(finRow?.amount || pdcRow?.amount || hints?.amount || 0);
