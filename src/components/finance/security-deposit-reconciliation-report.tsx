@@ -1,5 +1,6 @@
 import { kvStore } from "@/lib/kv-store";
 import { useState, useMemo, useEffect } from "react";
+import { formatDateDDMMYYYY } from "@/lib/date-utils";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -554,7 +555,7 @@ export function SecurityDepositReconciliationSubModule() {
                       {item.unit}
                     </TableCell>
                     <TableCell className="text-xs font-medium">{item.tenantName}</TableCell>
-                    <TableCell className="text-xs font-mono">{item.leaseEndDate}</TableCell>
+                    <TableCell className="text-xs font-mono">{formatDateDDMMYYYY(item.leaseEndDate)}</TableCell>
                     <TableCell className="text-right font-mono text-xs font-bold">
                       QR {item.grossDeposit.toLocaleString()}
                     </TableCell>

@@ -23,6 +23,7 @@ import { useAppData } from "@/lib/app-data-context";
 import { useFinanceStore } from "@/lib/finance/finance-store";
 import { ReceiptModal, type TenantReceiptDetails } from "@/components/receipt-modal";
 import { HrmsApi } from "@/lib/hrmsService";
+import { formatDateDDMMYYYY } from "@/lib/date-utils";
 
 const PAGE_SIZE = 20;
 
@@ -517,9 +518,20 @@ export function DepositsGuarantees() {
         });
       }
 
-      // Also propagate settlement status from any closed leases
+      // Also propagate settlement status from any closed leases; also enrich missing property/unit/tenant from lease
       for (const d of allMap.values()) {
-        const lease = leases?.find((l) => l.id === d.leaseId || l.tenantName === d.tenant_name || l.unit === d.unit_ref);
+        const lease = leases?.find((l) =>
+          l.id === d.leaseId ||
+          String((l as any).reservationId || "") === String(d.leaseId || "") ||
+          l.tenantName === d.tenant_name ||
+          l.unit === d.unit_ref
+        );
+        if (lease) {
+          if (!d.property_name || d.property_name === "—") d.property_name = lease.property;
+          if (!d.unit_ref || d.unit_ref === "—") d.unit_ref = lease.unit;
+          if (!d.tenant_name || d.tenant_name === "—" || d.tenant_name === "Valued Tenant") d.tenant_name = lease.tenantName;
+          if (!d.leaseId) d.leaseId = lease.id;
+        }
         if (lease && lease.status === "closed") {
           d.status = "Settled";
           if (!d.settled_at) {
@@ -1373,7 +1385,7 @@ export function DepositsGuarantees() {
                     )}
                     {paginated.map(d => (
                       <TableRow key={String(d.id)} className="hover:bg-muted/30">
-                        <TableCell className="font-mono text-xs text-muted-foreground">{d.settled_at ? d.settled_at.split("T")[0] : (d.lease_start_date || d.created_at || "2026-08-01")}</TableCell>
+                        <TableCell className="font-mono text-xs text-muted-foreground">{formatDateDDMMYYYY(d.settled_at || d.lease_start_date || d.created_at || "2026-08-01")}</TableCell>
                         <TableCell className="text-xs font-medium">
                           <div className="flex items-center gap-1.5">
                             <span>{d.deposit_type}</span>

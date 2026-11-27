@@ -8,6 +8,7 @@ import { Badge } from '@/components/ui/badge';
 import { Loader2, Plus, CreditCard, Banknote } from 'lucide-react';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '@/components/ui/dialog';
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '@/components/ui/pagination';
+import { formatDateDDMMYYYY } from '@/lib/date-utils';
 
 interface PDC {
   id: string;
@@ -106,8 +107,8 @@ export function PdcManager({ leaseId }: { leaseId: string }) {
                     <td className="px-4 py-3 font-mono">{pdc.cheque_number}</td>
                     <td className="px-4 py-3">{pdc.bank} {pdc.bank_branch ? `(${pdc.bank_branch})` : ''}</td>
                     <td className="px-4 py-3 font-medium text-foreground">QR {pdc.amount.toLocaleString()}</td>
-                    <td className="px-4 py-3">{pdc.deposit_date}</td>
-                    <td className="px-4 py-3">{pdc.maturity_date || '—'}</td>
+                    <td className="px-4 py-3">{formatDateDDMMYYYY(pdc.deposit_date)}</td>
+                    <td className="px-4 py-3">{pdc.maturity_date ? formatDateDDMMYYYY(pdc.maturity_date) : '—'}</td>
                     <td className="px-4 py-3">
                       <Badge variant={pdc.status === 'CLEARED' ? 'default' : pdc.status === 'BOUNCED' ? 'destructive' : 'outline'}>
                         {pdc.status}

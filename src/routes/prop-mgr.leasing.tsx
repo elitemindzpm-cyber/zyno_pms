@@ -5229,7 +5229,7 @@ function LeasingPage() {
                 rows={reservations.map((reservation) => [
                   reservation.unit,
                   reservation.tenantName,
-                  <span className={isExpired(reservation.validUntil) && reservation.status === "reserved" ? "text-red-600" : ""}>{reservation.validUntil}</span>,
+                  <span className={isExpired(reservation.validUntil) && reservation.status === "reserved" ? "text-red-600" : ""}>{formatDateDDMMYYYY(reservation.validUntil)}</span>,
                   formatMoney(reservation.rent),
                   <StatusBadge key="status" value={reservation.status} />,
                   <div key="actions" className="flex justify-end gap-2">

@@ -1,6 +1,7 @@
 import React from 'react';
 import { Document, Page, Text, View, StyleSheet, Image, pdf } from '@react-pdf/renderer';
 import { getDocumentBranding, type DocumentBranding } from '@/lib/document-branding';
+import { formatDateDDMMYYYY } from '@/lib/date-utils';
 
 const styles = StyleSheet.create({
   page: { padding: 30, fontSize: 8.5, fontFamily: 'Helvetica', color: '#111' },
@@ -200,7 +201,7 @@ const ReceiptDocument = ({ data }: { data: ReceiptData }) => {
           </View>
           <View style={styles.metaItem}>
             <Text style={styles.metaLabel}>COLLECTION DATE:</Text>
-            <Text style={styles.metaValue}>{data.collection_date}</Text>
+            <Text style={styles.metaValue}>{formatDateDDMMYYYY(data.collection_date)}</Text>
           </View>
         </View>
 
@@ -213,8 +214,8 @@ const ReceiptDocument = ({ data }: { data: ReceiptData }) => {
           </View>
           <View style={styles.infoRight}>
             <View style={styles.infoRow}><Text style={styles.infoRightLabel}>Lease Ref #:</Text><Text style={styles.infoRightValue}>{data.lease_no}</Text></View>
-            <View style={styles.infoRow}><Text style={styles.infoRightLabel}>Lease Start Date:</Text><Text style={styles.infoRightValue}>{data.lease_start_date}</Text></View>
-            <View style={styles.infoRow}><Text style={styles.infoRightLabel}>Lease End Date:</Text><Text style={styles.infoRightValue}>{data.lease_end_date}</Text></View>
+            <View style={styles.infoRow}><Text style={styles.infoRightLabel}>Lease Start Date:</Text><Text style={styles.infoRightValue}>{formatDateDDMMYYYY(data.lease_start_date)}</Text></View>
+            <View style={styles.infoRow}><Text style={styles.infoRightLabel}>Lease End Date:</Text><Text style={styles.infoRightValue}>{formatDateDDMMYYYY(data.lease_end_date)}</Text></View>
           </View>
         </View>
 
@@ -238,14 +239,14 @@ const ReceiptDocument = ({ data }: { data: ReceiptData }) => {
         ) : (
           displayItems.map((item, idx) => {
             const periodStr = item.checkStartDate && item.checkEndDate
-              ? `${item.checkStartDate} to ${item.checkEndDate}`
-              : item.checkStartDate || item.checkEndDate || '—';
+              ? `${formatDateDDMMYYYY(item.checkStartDate)} to ${formatDateDDMMYYYY(item.checkEndDate)}`
+              : item.checkStartDate ? formatDateDDMMYYYY(item.checkStartDate) : item.checkEndDate ? formatDateDDMMYYYY(item.checkEndDate) : '—';
             return (
               <View key={idx} style={[styles.tableRow, idx % 2 === 1 ? styles.tableRowAlt : {}]}>
                 <Text style={[styles.cellSNo, styles.cellText]}>{item.sNo || idx + 1}</Text>
                 <Text style={[styles.cellDesc, styles.cellText]}>{item.description}</Text>
                 <Text style={[styles.cellCheque, styles.cellText]}>{item.chequeRef}</Text>
-                <Text style={[styles.cellMat, styles.cellText]}>{item.maturityDate}</Text>
+                <Text style={[styles.cellMat, styles.cellText]}>{formatDateDDMMYYYY(item.maturityDate)}</Text>
                 <Text style={[styles.cellType, styles.cellText]}>{item.type}</Text>
                 <Text style={[styles.cellPeriod, styles.cellText]}>{periodStr}</Text>
                 <Text style={[styles.cellBank, styles.cellText]}>{item.bankName || '—'}</Text>

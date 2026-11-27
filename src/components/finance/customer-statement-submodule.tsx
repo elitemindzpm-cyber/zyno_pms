@@ -157,8 +157,8 @@ export function CustomerStatementSubModule({
     const depositedPdc = liveDbPdcs.find(
       (p) =>
         p.bank_id != null &&
-        (custLeaseIds.has(String(p.lease_id || "")) ||
-          (p.unit_ref && customerUnitsList.some((u) => u.toLowerCase() === String(p.unit_ref).toLowerCase())))
+        (custLeaseIds.has(String(p.leaseId || p.lease_id || "")) ||
+          ((p.unit || p.unit_ref) && customerUnitsList.some((u) => u.toLowerCase() === String(p.unit || p.unit_ref).toLowerCase())))
     );
     if (depositedPdc?.bank_id != null) {
       const matched = companyBankAccounts.find((b) => b.id === Number(depositedPdc.bank_id));
@@ -359,6 +359,7 @@ export function CustomerStatementSubModule({
           merged.push({
             id: p.id,
             leaseId: p.lease_id || matchedFin?._leaseId,
+            bank_id: matchedFin?.bank_id ?? p.bank_id ?? null,
             chequeNo: chq,
             chequeNumber: chq,
             bank: p.bank || matchedFin?._bank || "Qatar National Bank (QNB)",
@@ -395,6 +396,7 @@ export function CustomerStatementSubModule({
               if (f.deposit_date) existing.depositDate = toYmd(f.deposit_date);
               if (f.cleared_date) existing.clearedDate = toYmd(f.cleared_date);
             }
+            if (f.bank_id != null && existing.bank_id == null) existing.bank_id = f.bank_id;
             if (!existing.bank && f._bank) existing.bank = f._bank;
             if (!existing.unit && f._unit) existing.unit = f._unit;
             if (!existing.property && f._property) existing.property = f._property;
@@ -406,6 +408,7 @@ export function CustomerStatementSubModule({
           merged.push({
             id: `fin-${f.id}`,
             leaseId: f._leaseId,
+            bank_id: f.bank_id ?? null,
             chequeNo: chq,
             chequeNumber: chq,
             bank: f._bank || "Qatar National Bank (QNB)",

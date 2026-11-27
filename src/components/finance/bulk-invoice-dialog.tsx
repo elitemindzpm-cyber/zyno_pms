@@ -20,6 +20,7 @@ import { useFinanceStore, isPostingPeriodClosed, type ReceivableInvoice } from "
 import { getDayBasedRentFreeDays, calculateContractPeriodMonthlyRevenue, parseDateFlexible } from "@/lib/finance/revenue-engine";
 import { getDocumentBranding } from "@/lib/document-branding";
 import { AL_AMEEN_PAGE1_HEADER_BASE64 } from "@/lib/header-banner-base64";
+import { formatDateDDMMYYYY } from "@/lib/date-utils";
 
 interface BulkInvoiceDialogProps {
   open: boolean;
@@ -1204,7 +1205,7 @@ export function BulkInvoiceDialog({
                         <td className="p-2 text-muted-foreground">{inv.property} - {inv.unit}</td>
                         <td className="p-2 text-muted-foreground">{inv.stream}</td>
                         <td className="p-2 text-right font-mono font-bold">{formatQarAmount(inv.amount || 0)}</td>
-                        <td className="p-2 font-mono text-muted-foreground">{inv.due_date}</td>
+                        <td className="p-2 font-mono text-muted-foreground">{formatDateDDMMYYYY(inv.due_date)}</td>
                       </tr>
                     ))}
                     <tr className="bg-muted/40 font-bold border-t">

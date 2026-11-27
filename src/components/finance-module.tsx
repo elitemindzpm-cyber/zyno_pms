@@ -6112,7 +6112,7 @@ function ReceivableInvoiceSubModule({ role }: { role: FinanceModuleProps["role"]
             ) : (
               filteredInvoices.map((row) => (
                 <TableRow key={row.invoice_no} className="hover:bg-muted/30 text-xs">
-                  <TableCell className="font-mono text-muted-foreground">{row.date}</TableCell>
+                  <TableCell className="font-mono text-muted-foreground">{formatDateDDMMYYYY(row.date)}</TableCell>
                   <TableCell className="font-mono font-bold text-primary">
                     <button
                       onClick={() => setSelectedInvoiceForView(row)}
@@ -6125,7 +6125,7 @@ function ReceivableInvoiceSubModule({ role }: { role: FinanceModuleProps["role"]
                   <TableCell className="font-semibold">{row.tenant}</TableCell>
                   <TableCell className="text-muted-foreground">{row.property} — <strong className="font-mono text-foreground">{row.unit}</strong></TableCell>
                   <TableCell className="font-mono text-xs text-blue-600 dark:text-blue-400">{row.stream}</TableCell>
-                  <TableCell className="font-mono">{row.due_date}</TableCell>
+                  <TableCell className="font-mono">{formatDateDDMMYYYY(row.due_date)}</TableCell>
                   <TableCell className="text-right font-mono font-bold">{row.amount.toLocaleString()}</TableCell>
                   <TableCell className="text-center">
                     <Badge variant={row.status === "Paid" ? "default" : row.status === "Overdue" ? "destructive" : "outline"} className="text-[10px]">

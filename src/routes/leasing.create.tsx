@@ -17,6 +17,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, Di
 import { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuCheckboxItem } from "@/components/ui/dropdown-menu";
 import { Separator } from "@/components/ui/separator";
 import { db } from "@/lib/db";
+import { formatDateDDMMYYYY } from "@/lib/date-utils";
 import {
   AlertCircle,
   BadgeCheck,
@@ -3865,7 +3866,7 @@ function LeasingPage() {
                 rows={reservations.map((reservation) => [
                   reservation.unit,
                   reservation.tenantName,
-                  <span className={isExpired(reservation.validUntil) && reservation.status === "reserved" ? "text-red-600" : ""}>{reservation.validUntil}</span>,
+                  <span className={isExpired(reservation.validUntil) && reservation.status === "reserved" ? "text-red-600" : ""}>{formatDateDDMMYYYY(reservation.validUntil)}</span>,
                   formatMoney(reservation.rent),
                   <StatusBadge key="status" value={reservation.status} />,
                   <div key="actions" className="flex justify-end gap-2 truncate">

@@ -22,6 +22,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent } from "@/components/ui/card";
 import { Separator } from "@/components/ui/separator";
 import { Checkbox } from "@/components/ui/checkbox";
+import { formatDateDDMMYYYY } from "@/lib/date-utils";
 import {
   RefreshCw,
   ShieldCheck,
@@ -543,7 +544,7 @@ export function LeaseRenewalModal({
             </div>
             <div className="flex items-center gap-1.5 text-indigo-100/90">
               <Calendar className="w-3.5 h-3.5 text-indigo-300" />
-              <span className="text-indigo-200">Expires: <strong className="text-white">{lease.endDate}</strong></span>
+              <span className="text-indigo-200">Expires: <strong className="text-white">{formatDateDDMMYYYY(lease.endDate)}</strong></span>
             </div>
             <div className="flex items-center gap-1.5 text-indigo-100/90">
               <Banknote className="w-3.5 h-3.5 text-indigo-300" />
@@ -760,7 +761,7 @@ export function LeaseRenewalModal({
                         Renewal Term / Duration
                       </Label>
                       <span className="text-xs text-muted-foreground">
-                        Commences day following current expiry ({addDaysHelper(lease.endDate, 1)})
+                        Commences day following current expiry ({formatDateDDMMYYYY(addDaysHelper(lease.endDate, 1))})
                       </span>
                     </div>
                     <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">

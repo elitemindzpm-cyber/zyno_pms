@@ -1,4 +1,5 @@
 import { kvStore } from "@/lib/kv-store";
+import { formatDateDDMMYYYY } from "@/lib/date-utils";
 import { createApInvoiceOnBackend, createArInvoiceOnBackend, postJournalToBackend } from "@/lib/finance/backend-posting";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouterState } from "@tanstack/react-router";
@@ -2909,7 +2910,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
               <div className="rounded-lg bg-muted/40 p-3.5 text-xs space-y-2 border border-border/60">
                 <div className="grid grid-cols-2 gap-2 text-muted-foreground">
                   <p><span className="font-semibold text-foreground">Reported By:</span> {selectedTicket.reported_by || "Tenant"}</p>
-                  <p><span className="font-semibold text-foreground">Date Logged:</span> {selectedTicket.created_at}</p>
+                  <p><span className="font-semibold text-foreground">Date Logged:</span> {formatDateDDMMYYYY(selectedTicket.created_at)}</p>
                 </div>
                 <div className="pt-1 border-t border-border/40">
                   <span className="font-semibold text-foreground">Description & Symptoms:</span>

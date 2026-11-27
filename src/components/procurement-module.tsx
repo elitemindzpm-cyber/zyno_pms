@@ -23,6 +23,7 @@ import {
 import { fetchProperties, fetchUnits, type Property, type Unit } from "@/lib/db";
 import { db } from "@/lib/db";
 import { FinVendorsApi, type FinVendor } from "@/lib/db-finance";
+import { formatDateDDMMYYYY } from "@/lib/date-utils";
 import { nextProcurementDocumentNumber } from "@/lib/procurement/numbering";
 import { ApInvoicesApi, type ProcApInvoice, type PaymentReceipt } from "@/lib/proc-invoices-api";
 import { PaymentReceiptDialog } from "@/components/payment-receipt-dialog";
@@ -2824,7 +2825,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                             <span className="text-[10px] text-muted-foreground">{modeDisplay}</span>
                           </div>
                         </TableCell>
-                        <TableCell>{inv.invoice_date}</TableCell>
+                        <TableCell>{formatDateDDMMYYYY(inv.invoice_date)}</TableCell>
                         <TableCell className="text-right">
                           <div className="font-mono font-bold">{totalDue.toLocaleString()}</div>
                           {isPartial && alreadyPaid > 0 && (

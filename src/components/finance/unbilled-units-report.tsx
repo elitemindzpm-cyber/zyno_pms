@@ -1187,7 +1187,7 @@ export function UnbilledUnitsReportSubModule() {
                         <div>{row.contractNumber}</div>
                         {(row.leaseStartDate !== "—" || row.leaseEndDate !== "—") && (
                           <div className="text-[10px] text-muted-foreground/80">
-                            {row.leaseStartDate} &rarr; {row.leaseEndDate}
+                            {formatDateDDMMYYYY(row.leaseStartDate)} &rarr; {formatDateDDMMYYYY(row.leaseEndDate)}
                           </div>
                         )}
                       </TableCell>

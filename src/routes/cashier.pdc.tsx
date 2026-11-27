@@ -12,6 +12,7 @@ import { collectSecurityDeposit } from "@/lib/finance/depositService";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { PdcManagement } from "@/components/finance/pdc-management";
+import { formatDateDDMMYYYY } from "@/lib/date-utils";
 
 export const Route = createFileRoute("/cashier/pdc")({
   head: () => ({ meta: [{ title: "PDC Management - ZYNO Property Management" }] }),
@@ -56,9 +57,8 @@ function normalizeStatus(status?: string) {
   return "In Hand";
 }
 
-function formatDate(value?: string, options?: Intl.DateTimeFormatOptions) {
-  if (!value) return "-";
-  return new Date(value).toLocaleDateString("en-GB", options ?? { day: "2-digit", month: "short", year: "numeric" });
+function formatDate(value?: string, _options?: Intl.DateTimeFormatOptions) {
+  return formatDateDDMMYYYY(value);
 }
 
 function formatQAR(amount?: number) {

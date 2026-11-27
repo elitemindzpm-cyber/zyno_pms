@@ -11289,7 +11289,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                   <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">Handover Summary</p>
                   <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1 text-sm">
                     <span className="text-muted-foreground">Unit</span><span className="font-medium">{keysWorkflowLease?.unit}</span>
-                    <span className="text-muted-foreground">Date / Time</span><span className="font-medium">{handoverForm.handoverAt} {handoverForm.handoverTime}</span>
+                    <span className="text-muted-foreground">Date / Time</span><span className="font-medium">{formatDateDDMMYYYY(handoverForm.handoverAt)} {handoverForm.handoverTime}</span>
                     <span className="text-muted-foreground">Keys</span><span className="font-medium">{handoverForm.keys}× {handoverForm.keyType}</span>
                     <span className="text-muted-foreground">Access Cards</span><span className="font-medium">{handoverForm.accessCards}</span>
                     <span className="text-muted-foreground">Parking Remotes</span><span className="font-medium">{handoverForm.parkingRemotes}</span>
@@ -12261,7 +12261,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                           {tokenBranding.documentTitle || "KEY HANDOVER & UNIT CHECK-IN CERTIFICATE"}
                         </h4>
                         <p className="text-[11px] text-muted-foreground">
-                          Document Ref: <span className="font-mono font-semibold">KHC-{lease?.id?.slice(0, 8) || "2026-001"}</span> • Execution Date: {selectedHandover.handoverAt}
+                          Document Ref: <span className="font-mono font-semibold">KHC-{lease?.id?.slice(0, 8) || "2026-001"}</span> • Execution Date: {formatDateDDMMYYYY(selectedHandover.handoverAt)}
                         </p>
                       </div>
                       <div className="text-right shrink-0">
@@ -12586,7 +12586,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                           </div>
                           <div className="text-[10px] text-muted-foreground space-y-0.5">
                             <div>Officer / المسؤول: <strong className="text-foreground">{signatoryName}</strong> ({signatoryTitle})</div>
-                            <div>Execution Date / تاريخ التنفيذ: <span className="font-mono">{selectedHandover.handoverAt}</span></div>
+                            <div>Execution Date / تاريخ التنفيذ: <span className="font-mono">{formatDateDDMMYYYY(selectedHandover.handoverAt)}</span></div>
                           </div>
                         </div>
 
@@ -12602,7 +12602,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                           </div>
                           <div className="text-[10px] text-muted-foreground space-y-0.5">
                             <div>Customer / المستلم: <strong className="text-foreground">{selectedHandover.collectorName || lease?.tenantName || "Tenant"}</strong></div>
-                            <div>Date &amp; Time / التاريخ: <span className="font-mono">{selectedHandover.handoverAt}</span></div>
+                            <div>Date &amp; Time / التاريخ: <span className="font-mono">{formatDateDDMMYYYY(selectedHandover.handoverAt)}</span></div>
                           </div>
                         </div>
                       </div>
@@ -14473,7 +14473,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                       </div>
                       <div>
                         <span className="text-muted-foreground block text-[10px] uppercase font-bold mb-0.5">Lease Tenure</span>
-                        <span className="font-mono text-foreground font-medium">{checkoutWorkflowLease.startDate} to {checkoutWorkflowLease.endDate}</span>
+                        <span className="font-mono text-foreground font-medium">{formatDateDDMMYYYY(checkoutWorkflowLease.startDate)} to {formatDateDDMMYYYY(checkoutWorkflowLease.endDate)}</span>
                       </div>
                       <div>
                         <span className="text-muted-foreground block text-[10px] uppercase font-bold mb-0.5">Monthly Rent</span>
@@ -15582,7 +15582,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                         `${reservation?.property ? `${reservation.property} — ` : ""}${reservation?.unit || "-"}`,
                         reservation?.tenantName || "-",
                         holdBadge,
-                        <span className={reservation?.validUntil && isExpired(reservation.validUntil) && reservation.status === "reserved" ? "text-red-600" : ""}>{reservation?.validUntil || "-"}</span>,
+                        <span className={reservation?.validUntil && isExpired(reservation.validUntil) && reservation.status === "reserved" ? "text-red-600" : ""}>{reservation?.validUntil ? formatDateDDMMYYYY(reservation.validUntil) : "-"}</span>,
                         formatMoney(reservation?.rent),
                         <StatusBadge key="status" value={reservation?.status} />,
                         <div key="actions" className="flex justify-end gap-2">
@@ -17330,7 +17330,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                           <div key="notice" className="flex flex-col gap-0.5">
                             <StatusBadge value={notice.status} />
                             <span className="text-[10px] text-muted-foreground">
-                              {notice.handoverAt || lease?.startDate || ""} {notice.handoverTime || ""}
+                              {formatDateDDMMYYYY(notice.handoverAt || lease?.startDate || "")} {notice.handoverTime || ""}
                             </span>
                           </div>
                         ) : (
@@ -17338,7 +17338,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                             <span className="inline-flex items-center gap-1 text-[10px] font-semibold text-blue-700 bg-blue-100 dark:bg-blue-950/40 rounded-full px-2 py-0.5 w-fit">
                               ✉️ Notified
                             </span>
-                            <span className="text-[10px] text-muted-foreground">{lease?.startDate || "-"}</span>
+                            <span className="text-[10px] text-muted-foreground">{lease?.startDate ? formatDateDDMMYYYY(lease.startDate) : "-"}</span>
                           </div>
                         ),
                         handover ? (

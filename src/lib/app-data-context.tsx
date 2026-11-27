@@ -545,12 +545,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         mappedCustomers.map((c) => [String(c.id), c])
       );
 
+      const toIsoDateOnly = (val: any): string => {
+        if (!val) return "";
+        const s = String(val).trim();
+        return s.includes("T") ? s.split("T")[0] : s;
+      };
+
       // Map existing relational leases strictly from database
       const existingLeases: PmsLease[] = (leasesRes.data || [])
         .map((l: any) => {
           const uIdentifier = unitMap.get(l.unit_id) || l.unit_ref || l.unit || "";
-          const startDate = l.commencement_date || "";
-          const endDate = l.expiry_date || "";
+          const startDate = toIsoDateOnly(l.commencement_date);
+          const endDate = toIsoDateOnly(l.expiry_date);
           const rfSaved = l.has_rent_free != null;
           const dbHasRf = rfSaved ? Boolean(l.has_rent_free) : false;
           const dbRfDays = rfSaved ? Number(l.rent_free_period_days ?? 0) : 0;
@@ -671,6 +677,14 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         }
       });
 
+      const leaseLookupById = new Map<string, PmsLease>();
+      const leaseLookupByUnit = new Map<string, PmsLease>();
+      for (const l of existingLeases) {
+        if (l.id) leaseLookupById.set(String(l.id), l);
+        if ((l as any).reservationId) leaseLookupById.set(String((l as any).reservationId), l);
+        if (l.unit) leaseLookupByUnit.set(String(l.unit).trim().toLowerCase(), l);
+      }
+
       const mappedPdcs: PmsPdc[] = allRawPdcs.map((p: any) => {
         const isGChq =
           p.isGuaranteeCheque ||
@@ -679,25 +693,34 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           String(p.bank || p.bank_name || "").toLowerCase().includes("guarantee") ||
           String(p.notes || "").toLowerCase().includes("guarantee cheque");
         const dt = isGChq ? GUARANTEE_CHEQUE_DATE : (p.maturity_date || p.cheque_date || "");
+        const uName = p.unit_name || p.unit_ref || "";
+        const linkedLease =
+          (p.lease_id ? leaseLookupById.get(String(p.lease_id)) : undefined) ||
+          (uName ? leaseLookupByUnit.get(String(uName).trim().toLowerCase()) : undefined);
+        const rawTenant = String(p.tenant_name || p.drawer_name || "").trim();
+        const resolvedTenant =
+          rawTenant && rawTenant.toLowerCase() !== "tenant"
+            ? rawTenant
+            : (linkedLease?.tenantName && linkedLease.tenantName.toLowerCase() !== "tenant" ? linkedLease.tenantName : rawTenant);
         return {
           id: String(p.id),
-          leaseId: p.lease_id || "",
+          leaseId: p.lease_id || linkedLease?.id || "",
           chequeNo: p.cheque_number || "",
           bank: isGChq ? (p.bank || p.bank_name || "Guarantee Cheque (Undated / In Hand)") : (p.bank || p.bank_name || ""),
-          propertyName: p.property_name || p.property_code || "",
-          unitName: p.unit_name || p.unit_ref || "",
-          tenantName: p.tenant_name || p.drawer_name || "",
-          date: dt,
+          propertyName: p.property_name || p.property_code || linkedLease?.property || "",
+          unitName: uName || linkedLease?.unit || "",
+          tenantName: resolvedTenant,
+          date: toIsoDateOnly(dt),
           chequeNumber: p.cheque_number || p.chequeNo || "",
-          dueDate: dt,
-          depositDate: p.deposit_date || "",
-          unit: p.unit_name || p.unit_ref || "",
-          property: p.property_name || p.property_code || "",
-          tenureStart: p.rent_from_date || p.tenureStart || "",
-          tenureEnd: p.rent_to_date || p.tenureEnd || "",
+          dueDate: toIsoDateOnly(dt),
+          depositDate: toIsoDateOnly(p.deposit_date),
+          unit: uName || linkedLease?.unit || "",
+          property: p.property_name || p.property_code || linkedLease?.property || "",
+          tenureStart: toIsoDateOnly(p.rent_from_date || p.tenureStart),
+          tenureEnd: toIsoDateOnly(p.rent_to_date || p.tenureEnd),
           amount: Number(p.amount || 0),
           status: (p.status?.toLowerCase().replace(/ /g, "_") as PdcStatus) || "received",
-          payerName: p.tenant_name || p.drawer_name || "Tenant",
+          payerName: resolvedTenant || "Tenant",
           isGuaranteeCheque: isGChq,
           notes: p.notes || (isGChq ? "Guarantee Cheque" : undefined),
         };
@@ -753,8 +776,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           property: (propMap.get(unitRow?.property_id) as string) || "Property",
           unit: unitRow?.unit_ref || unitRow?.unit_name || "",
           tenantName: r.prospect_name || "Prospect",
-          startDate: r.expected_start_date || "",
-          validUntil: r.reservation_validity || "",
+          startDate: toIsoDateOnly(r.expected_start_date),
+          validUntil: toIsoDateOnly(r.reservation_validity),
           rent: Number(r.proposed_rental_amount || 0),
           status: (r.status?.toLowerCase() as any) || "reserved",
           remarks: details.remarks || "",
@@ -825,7 +848,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const mappedHandovers: PmsHandover[] = (handoversRes.data || []).map((h: any) => ({
         id: h.id,
         leaseId: h.lease_id,
-        handoverAt: h.handover_date,
+        handoverAt: toIsoDateOnly(h.handover_date),
         keys: (h.keys_issued || []).length || 2,
         accessCards: (h.access_cards_issued || []).length || 1,
         parkingRemotes: (h.parking_remotes || []).length || 1,
@@ -835,7 +858,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const mappedCheckIns: PmsCheckIn[] = (inspectionsRes.data || []).map((i: any) => ({
         id: i.id,
         leaseId: i.lease_id,
-        date: i.inspection_date,
+        date: toIsoDateOnly(i.inspection_date),
         condition: typeof i.unit_condition === "string" ? i.unit_condition : "Good",
         photos: (i.photos || []).length,
       }));

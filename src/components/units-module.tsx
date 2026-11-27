@@ -66,6 +66,7 @@ import {
 } from "@/lib/db";
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from "@/components/ui/pagination";
 import { useAppData } from "@/lib/app-data-context";
+import { formatDateDDMMYYYY } from "@/lib/date-utils";
 
 export interface UnitsModuleProps {
   role: "admin" | "prop-mgr" | "owner";
@@ -1010,7 +1011,7 @@ export function UnitsModule({ role }: UnitsModuleProps) {
                         </td>
                         <td className="px-4 py-3 text-xs whitespace-nowrap">
                           {unit.lease_status === "Vacant" || unit.status === "Available" ? "-" : (unit.contract_start_date
-                            ? `${unit.contract_start_date.slice(0, 10)} → ${unit.contract_end_date?.slice(0, 10) || "-"}`
+                            ? `${formatDateDDMMYYYY(unit.contract_start_date)} → ${unit.contract_end_date ? formatDateDDMMYYYY(unit.contract_end_date) : "-"}`
                             : "-")}
                         </td>
                         <td className="px-4 py-3 font-mono text-xs">
@@ -1242,8 +1243,8 @@ export function UnitsModule({ role }: UnitsModuleProps) {
                             {isVacant ? "Past Contract Period" : "Contract Period"}
                           </div>
                           <div className="mt-0.5 text-sm font-medium">
-                            {selectedUnit.contract_start_date.slice(0, 10)} →{" "}
-                            {selectedUnit.contract_end_date?.slice(0, 10) || "-"}
+                            {formatDateDDMMYYYY(selectedUnit.contract_start_date)} →{" "}
+                            {selectedUnit.contract_end_date ? formatDateDDMMYYYY(selectedUnit.contract_end_date) : "-"}
                           </div>
                         </div>
                       )}

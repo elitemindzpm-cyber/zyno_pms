@@ -23,6 +23,7 @@ import {
 } from "lucide-react";
 import { QRCodeSVG } from "qrcode.react";
 import { type ProcApInvoice, type PaymentReceipt, ApInvoicesApi } from "@/lib/proc-invoices-api";
+import { formatDateDDMMYYYY } from "@/lib/date-utils";
 
 export interface ProformaInvoiceData {
   id?: string | number;
@@ -142,8 +143,8 @@ export function ProformaInvoiceDialog({
               {invoice.invoice_number || invoice.invoice_no || "PROFORMA-INV"}
             </h2>
             <p className="text-xs text-slate-300 mt-1">
-              Issue Date: <strong className="text-white">{invoice.invoice_date || invoice.date || new Date().toISOString().slice(0, 10)}</strong>
-              {invoice.due_date && <> &bull; Due Date: <strong className="text-indigo-200">{invoice.due_date}</strong></>}
+              Issue Date: <strong className="text-white">{formatDateDDMMYYYY(invoice.invoice_date || invoice.date || new Date().toISOString().slice(0, 10))}</strong>
+              {invoice.due_date && <> &bull; Due Date: <strong className="text-indigo-200">{formatDateDDMMYYYY(invoice.due_date)}</strong></>}
             </p>
           </div>
           <div className="text-right flex flex-col items-end gap-1.5">

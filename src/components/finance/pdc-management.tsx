@@ -899,11 +899,16 @@ export function PdcManagement() {
         }
 
         let tenantName = (p.tenant_name || p.drawer_name || "").trim();
-
+        const leaseByPdcId = p.lease_id ? leasesById.get(String(p.lease_id)) : undefined;
+        if ((!tenantName || tenantName === "—" || tenantName.toLowerCase() === "tenant") && leaseByPdcId?.tenantName && leaseByPdcId.tenantName.toLowerCase() !== "tenant") {
+          tenantName = leaseByPdcId.tenantName;
+        }
         if ((!tenantName || tenantName === "—" || tenantName.toLowerCase() === "tenant") && unitName) {
+          const leaseMatch = leasesByUnit.get(unitName.toLowerCase());
           const unitMatch = unitsMap.get(unitName.toLowerCase());
-          if (unitMatch?.currentTenant) {
-            tenantName = unitMatch.currentTenant;
+          const candidate = leaseMatch?.tenantName || unitMatch?.currentTenant || "";
+          if (candidate && candidate.toLowerCase() !== "tenant") {
+            tenantName = candidate;
           }
         }
 
@@ -926,7 +931,7 @@ export function PdcManagement() {
           bank_name: p.bank || matchedFin?._enriched_bank || "Qatar National Bank (QNB)",
           property_name: propName || matchedFin?._enriched_property || "—",
           unit_ref: unitName || matchedFin?._enriched_unit || "—",
-          tenant_name: tenantName && tenantName !== "Tenant" ? tenantName : (matchedFin?._enriched_tenant || "—"),
+          tenant_name: tenantName && tenantName.toLowerCase() !== "tenant" ? tenantName : (matchedFin?._enriched_tenant && matchedFin._enriched_tenant.toLowerCase() !== "tenant" ? matchedFin._enriched_tenant : "—"),
           lease_id: p.lease_id || matchedFin?._enriched_lease_id,
           lease_start: p.rent_from_date || p.lease_start,
           lease_end: p.rent_to_date || p.lease_end,

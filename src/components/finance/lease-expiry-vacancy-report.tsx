@@ -19,6 +19,7 @@ import {
 } from "lucide-react";
 import { useAppData } from "@/lib/app-data-context";
 import { toast } from "sonner";
+import { formatDateDDMMYYYY } from "@/lib/date-utils";
 
 function normProp(p?: string): string {
   return (p || "").trim().toLowerCase();
@@ -471,8 +472,8 @@ export function LeaseExpiryVacancyReportSubModule() {
                     </TableCell>
                     <TableCell className="text-xs font-mono font-bold text-primary">{l.unit}</TableCell>
                     <TableCell className="text-xs font-semibold">{l.tenantName}</TableCell>
-                    <TableCell className="text-xs font-mono">{l.startDate}</TableCell>
-                    <TableCell className="text-xs font-mono font-semibold">{l.endDate}</TableCell>
+                    <TableCell className="text-xs font-mono">{formatDateDDMMYYYY(l.startDate)}</TableCell>
+                    <TableCell className="text-xs font-mono font-semibold">{formatDateDDMMYYYY(l.endDate)}</TableCell>
                     <TableCell>
                       <Badge
                         variant={l.daysRemaining <= 30 ? "destructive" : "outline"}

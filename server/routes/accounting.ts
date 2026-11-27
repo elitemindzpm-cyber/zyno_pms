@@ -737,11 +737,44 @@ router.get('/trial-balance', async (req: Request, res: Response) => {
          AND (${to} IS NULL OR v.voucher_date <= ${to})
        GROUP BY l.account_code
        ORDER BY l.account_code`;
-    const data = rows.map((r) => {
+
+    // Roll up sub-ledger codes (>5 digits) into their 5-digit GL parent account.
+    // e.g. 12000001, 12000002 → 12000; 215001182 → 21500; 214001184 → 21400
+    const parentMap = new Map<string, { code: string; name: string; type: string; debit: number; credit: number }>();
+    for (const r of rows) {
+      const rawCode = String(r.code || '').trim();
+      // GL parent = first 5 chars if the code is longer than 5 digits (sub-ledger)
+      const parentCode = rawCode.length > 5 ? rawCode.slice(0, 5) : rawCode;
       const debit = Number(r.debit) || 0;
       const credit = Number(r.credit) || 0;
-      return { code: r.code, name: r.name || r.code, type: TB_TYPE[String(r.type || '').toLowerCase()] || 'Assets', debit, credit, balance: debit - credit };
-    });
+      const existing = parentMap.get(parentCode);
+      if (existing) {
+        existing.debit += debit;
+        existing.credit += credit;
+        // Prefer the name from the actual GL account (5-digit) over sub-ledger names
+        if (rawCode === parentCode) {
+          existing.name = r.name || existing.name;
+          existing.type = r.type || existing.type;
+        }
+      } else {
+        parentMap.set(parentCode, {
+          code: parentCode,
+          name: r.name || parentCode,
+          type: r.type || '',
+          debit,
+          credit,
+        });
+      }
+    }
+
+    const data = Array.from(parentMap.values())
+      .sort((a, b) => a.code.localeCompare(b.code))
+      .map((r) => {
+        const debit = r.debit;
+        const credit = r.credit;
+        return { code: r.code, name: r.name || r.code, type: TB_TYPE[String(r.type || '').toLowerCase()] || 'Assets', debit, credit, balance: debit - credit };
+      });
+
     const totalDebit = data.reduce((a, r) => a + r.debit, 0);
     const totalCredit = data.reduce((a, r) => a + r.credit, 0);
     res.json({ data, totals: { debit: totalDebit, credit: totalCredit, balanced: Math.abs(totalDebit - totalCredit) < 0.01 } });

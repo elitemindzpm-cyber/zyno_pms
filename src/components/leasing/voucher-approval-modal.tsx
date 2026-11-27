@@ -8,6 +8,7 @@ import { FileCheck, CheckCircle2, XCircle, Clock, AlertTriangle } from "lucide-r
 import { db } from "@/lib/db";
 import { approveAndPostVoucher, rejectVoucher, PendingVoucher } from "@/lib/finance/voucher-approval-service";
 import { toast } from "sonner";
+import { formatDateDDMMYYYY } from "@/lib/date-utils";
 
 interface VoucherApprovalModalProps {
   isOpen: boolean;
@@ -120,7 +121,7 @@ export const VoucherApprovalModal: React.FC<VoucherApprovalModalProps> = ({
                           Origin: {v.origin_module || "leasing"}
                         </Badge>
                       </div>
-                      <p className="text-xs text-muted-foreground mt-1">Date: {v.voucher_date}</p>
+                      <p className="text-xs text-muted-foreground mt-1">Date: {formatDateDDMMYYYY(v.voucher_date)}</p>
                       <p className="text-sm mt-1">{v.narration}</p>
                     </div>
                     <div className="text-right">

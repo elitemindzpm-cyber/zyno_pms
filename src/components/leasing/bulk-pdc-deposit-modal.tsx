@@ -8,6 +8,7 @@ import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Checkbox } from "@/components/ui/checkbox";
+import { formatDateDDMMYYYY } from "@/lib/date-utils";
 import {
   FileSpreadsheet,
   Download,
@@ -1351,7 +1352,7 @@ export function BulkPdcDepositModal({
                                 {raw.amount ? `QR ${Number(raw.amount).toLocaleString("en-QA", { minimumFractionDigits: 2 })}` : "—"}
                               </TableCell>
                               <TableCell className="whitespace-nowrap">
-                                {raw.maturityDate || raw.maturity_date || raw.cheque_date || "—"}
+                                {formatDateDDMMYYYY(raw.maturityDate || raw.maturity_date || raw.cheque_date) || "—"}
                               </TableCell>
                               <TableCell>
                                 <Badge className={`text-[10px] font-bold ${statusColor}`} variant="outline">
