@@ -148,8 +148,24 @@ export function CustomerStatementSubModule({
   // Live PDC register & pdcs rows fetched directly from DB so unlinked fin_pdc_register rows & status changes sync cleanly
   const [liveDbPdcs, setLiveDbPdcs] = useState<any[]>([]);
   // Company bank accounts, read from fin_bank_accounts and fin_banks. Nothing is typed in.
-  const [companyBankAccounts, setCompanyBankAccounts] = useState<{ bankName: string; accountTitle: string; accountNumber: string; swift: string }[]>([]);
-  const primaryBank = companyBankAccounts[0];
+  const [companyBankAccounts, setCompanyBankAccounts] = useState<{ id?: number; bankName: string; accountTitle: string; accountNumber: string; swift: string }[]>([]);
+  // Prefer the company bank account where this customer's PDCs were actually deposited/cleared, falling back to the first configured account.
+  const primaryBank = useMemo(() => {
+    const custLeaseIds = new Set(
+      customerLeases.flatMap((l) => [String(l.id), String((l as any).reservationId || "")].filter(Boolean))
+    );
+    const depositedPdc = liveDbPdcs.find(
+      (p) =>
+        p.bank_id != null &&
+        (custLeaseIds.has(String(p.lease_id || "")) ||
+          (p.unit_ref && customerUnitsList.some((u) => u.toLowerCase() === String(p.unit_ref).toLowerCase())))
+    );
+    if (depositedPdc?.bank_id != null) {
+      const matched = companyBankAccounts.find((b) => b.id === Number(depositedPdc.bank_id));
+      if (matched) return matched;
+    }
+    return companyBankAccounts[0];
+  }, [companyBankAccounts, liveDbPdcs, customerLeases, customerUnitsList]);
   // How each lease's security deposit was paid, keyed by lease ID (from fin_deposits.payment_mode).
   const [depositModeByLease, setDepositModeByLease] = useState<Map<string, string>>(new Map());
   const [pdcSyncTick, setPdcSyncTick] = useState(0);
@@ -204,6 +220,7 @@ export function CustomerStatementSubModule({
           (bankAcctsRes.data || []).map((ba: any) => {
             const bank = banksById.get(Number(ba.bank_id));
             return {
+              id: ba.id != null ? Number(ba.id) : undefined,
               bankName: bank?.name || "",
               accountTitle: ba.account_title || "",
               accountNumber: ba.account_number || "",

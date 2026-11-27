@@ -10180,7 +10180,7 @@ function GeneralLedgerReportSubModule() {
               <TableHead className="py-2 px-2.5 font-bold cursor-pointer whitespace-nowrap" onClick={() => toggleSort("date")}>
                 Date{sortIcon("date")}
               </TableHead>
-              <TableHead className="py-2 px-2 font-bold cursor-pointer whitespace-nowrap" onClick={() => toggleSort("account_code")}>
+              <TableHead className="py-2 px-2 font-bold cursor-pointer whitespace-nowrap min-w-[100px]" onClick={() => toggleSort("account_code")}>
                 A/C Code{sortIcon("account_code")}
               </TableHead>
               <TableHead className="py-2 px-2.5 font-bold min-w-[180px]">Account Name</TableHead>

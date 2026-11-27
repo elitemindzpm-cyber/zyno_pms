@@ -698,6 +698,7 @@ export function PdcManagement() {
       (leases || []).forEach(l => {
         if (l.unit) leasesByUnit.set(String(l.unit).toLowerCase().trim(), l);
         if (l.id) leasesById.set(String(l.id), l);
+        if ((l as any).reservationId) leasesById.set(String((l as any).reservationId), l);
       });
 
       const localHintsByChq = new Map<string, any[]>();
@@ -1443,131 +1444,9 @@ export function PdcManagement() {
         }
       }
 
-      // 3. Immediately reflect in local FinanceStore vouchers so General Ledger updates without waiting for network/socket
-      const tenant = pdc.tenant_name || "Tenant";
-      const unit = pdc.unit_ref || "Unit";
-      const prop = pdc.property_name || "Property";
-
-      if (action === "deposit") {
-        // Leg 1: Bank deposit (Dr Bank / Cr Rent PDC In Hand)
-        addVoucher({
-          voucher_no: depositSlipNo ? `VCH-DEP-${depositSlipNo}` : `VCH-DEP-${id}`,
-          voucher_type: "Receipt Voucher",
-          date: depositDate || todayStr,
-          name: `PDC Deposited to ${chosenBank?.accountTitle || 'Commercial Bank of Qatar (CBQ)'} – ${chqNo} (${tenant} - ${unit})`,
-          debit: chosenBank?.accountTitle || "Commercial Bank of Qatar (CBQ)",
-          debit_code: chosenBank?.glCode || "12000001",
-          credit: "Rent PDC In Hand",
-          credit_code: "12900001",
-          amount: amt,
-          method: "Cheque Deposit",
-          property_name: prop,
-          unit_ref: unit,
-          tenant_name: tenant,
-        });
-
-        // Leg 2: Offsetting Customer PDC Liability against Tenant Receivables upon Bank Deposit
-        addVoucher({
-          voucher_no: depositSlipNo ? `VCH-DEP-CLR-${depositSlipNo}` : `VCH-DEP-CLR-${id}`,
-          voucher_type: "Journal Voucher",
-          date: depositDate || todayStr,
-          name: `Customer PDC Liability & Tenant Receivables Settled on Bank Deposit – ${chqNo} (${tenant} - ${unit})`,
-          debit: "Customer PDC Liability",
-          debit_code: "21400001",
-          credit: "Tenant Receivables",
-          credit_code: "12413001",
-          amount: amt,
-          method: "Cheque Deposit Settlement",
-          property_name: prop,
-          unit_ref: unit,
-          tenant_name: tenant,
-        });
-      } else if (action === "clear") {
-        // If the cheque was still "In Hand", clearPdc auto-runs deposit first.
-        // Mirror both GL legs in FinanceStore so reports update immediately.
-        const wasInHand = (pdc.status || "").toLowerCase() === "in hand" || (pdc.status || "") === "In Hand";
-        const bankInfo = resolvePdcBankGl(existingBankLabel || chosenBank?.glCode);
-        if (wasInHand) {
-          addVoucher({
-            voucher_no: `VCH-DEP-${chqNo}`,
-            voucher_type: "Receipt Voucher",
-            date: todayStr,
-            name: `PDC Deposited to ${bankInfo.glName} (auto) – ${chqNo} (${tenant} - ${unit})`,
-            debit: bankInfo.glName,
-            debit_code: bankInfo.glCode,
-            credit: "Rent PDC In Hand",
-            credit_code: "12900001",
-            amount: amt,
-            method: "Cheque Deposit",
-            property_name: prop,
-            unit_ref: unit,
-            tenant_name: tenant,
-          });
-        }
-        addVoucher({
-          voucher_no: `VCH-CLR-${chqNo}`,
-          voucher_type: "Journal Voucher",
-          date: todayStr,
-          name: `PDC Cleared – ${chqNo} (${tenant} - ${unit})`,
-          debit: "Customer PDC Liability",
-          debit_code: "21400001",
-          credit: "Tenant Receivables",
-          credit_code: "12413001",
-          amount: amt,
-          method: "Cheque Clearance",
-          property_name: prop,
-          unit_ref: unit,
-          tenant_name: tenant,
-        });
-      } else if (action === "return") {
-        const bankInfo = resolvePdcBankGl(existingBankLabel || chosenBank?.glCode);
-        addVoucher({
-          voucher_no: `VCH-RET-${chqNo}`,
-          voucher_type: "Journal Voucher",
-          date: todayStr,
-          name: `PDC Cheque Returned / Dishonoured – ${chqNo} (${tenant} - ${unit})`,
-          debit: "Rent PDC In Hand",
-          debit_code: "12900001",
-          credit: bankInfo.glName,
-          credit_code: bankInfo.glCode,
-          amount: amt,
-          method: "Cheque Return",
-          property_name: prop,
-          unit_ref: unit,
-          tenant_name: tenant,
-        });
-        addVoucher({
-          voucher_no: `VCH-RET-AR-${chqNo}`,
-          voucher_type: "Journal Voucher",
-          date: todayStr,
-          name: `Tenant Dues Restored on Dishonour – ${chqNo} (${tenant} - ${unit})`,
-          debit: "Tenant Receivables",
-          debit_code: "12413001",
-          credit: "Customer PDC Liability",
-          credit_code: "21400001",
-          amount: amt,
-          method: "Cheque Return",
-          property_name: prop,
-          unit_ref: unit,
-          tenant_name: tenant,
-        });
-      } else if (action === "cancel") {
-        addVoucher({
-          voucher_no: `VCH-CNL-${chqNo}`,
-          voucher_type: "Journal Voucher",
-          date: todayStr,
-          name: `PDC Cancelled – ${chqNo} (${tenant} - ${unit}) [${cancelReason}]`,
-          debit: "Customer PDC Liability",
-          debit_code: "21400001",
-          credit: "Rent PDC In Hand",
-          credit_code: "12900001",
-          amount: amt,
-          method: "Cancellation",
-          property_name: prop,
-          unit_ref: unit,
-          tenant_name: tenant,
-        });
-      }
+      // 3. Reload authoritative DB vouchers into FinanceStore (depositPdc / clearPdc / returnPdc / cancelPdc
+      // already posted the exact unit sub-ledger vouchers to fin_vouchers; avoid duplicating with generic 21400001/12413001).
+      window.dispatchEvent(new CustomEvent("finance_vouchers_updated"));
 
       syncLocalRenewalPdcStatus(
         pdc,

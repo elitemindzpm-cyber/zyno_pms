@@ -351,12 +351,17 @@ function cleanUnitCode(rawUnit: string): string {
  */
 function calculateMonthSpan(startDateStr: string, endDateStr: string): number {
   if (!startDateStr || !endDateStr) return 12;
-  const [sy, sm] = startDateStr.split('-').map(Number);
-  const [ey, em, ed] = endDateStr.split('-').map(Number);
-  if (!sy || !sm || !ey || !em) return 12;
-  let months = (ey - sy) * 12 + (em - sm);
-  // If the end day covers (nearly) the whole final month, count it
-  if (ed >= 27) months += 1;
+  const s = parseDateParts(startDateStr);
+  const e = parseDateParts(endDateStr);
+  if (!s || !e) return 12;
+  let months = (e.year - s.year) * 12 + (e.month - s.month);
+  // Count the final month when the lease covers it (e.g., 01 Dec 2026 to 30 Nov 2027 = 12 months,
+  // or 15 Dec 2026 to 14 Dec 2027 = 12 months).
+  if (s.day === 1 && e.day >= 27) {
+    months += 1;
+  } else if (e.day > s.day && e.day - s.day >= 25) {
+    months += 1;
+  }
   return Math.max(1, months);
 }
 

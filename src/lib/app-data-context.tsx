@@ -541,7 +541,9 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
       const mappedCustomers: PmsCustomer[] = mergedCustomers.sort((a, b) =>
         a.name.localeCompare(b.name, undefined, { sensitivity: "base" })
       );
-
+      const customerById = new Map<string, PmsCustomer>(
+        mappedCustomers.map((c) => [String(c.id), c])
+      );
 
       // Map existing relational leases strictly from database
       const existingLeases: PmsLease[] = (leasesRes.data || [])
@@ -552,6 +554,11 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           const rfSaved = l.has_rent_free != null;
           const dbHasRf = rfSaved ? Boolean(l.has_rent_free) : false;
           const dbRfDays = rfSaved ? Number(l.rent_free_period_days ?? 0) : 0;
+          const resolvedCustomerName =
+            l.customers?.full_name ||
+            (l.customer_id ? customerById.get(String(l.customer_id))?.name : undefined) ||
+            l.tenant_name ||
+            "Tenant";
 
           return {
             id: l.lease_number || l.id,
@@ -559,7 +566,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
             reservationId: l.id || "",
             property: l.properties?.title || propMap.get(l.property_id) || "Property",
             unit: uIdentifier || "Unit",
-            tenantName: canonicalName(l.customers?.full_name || l.tenant_name || "Tenant"),
+            tenantName: canonicalName(resolvedCustomerName),
             startDate: startDate,
             endDate: endDate,
             monthlyRent: Number(l.rental_amount || 0) > 0

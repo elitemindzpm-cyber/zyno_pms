@@ -357,7 +357,7 @@ async function resolveGlContext(
     (effectiveChq.includes('Flat') ? effectiveChq.split('-')[1] : undefined);
 
   const scope = await resolveUuidScope({
-    leaseId: hints?.leaseId ?? pdcRow?.lease_id,
+    leaseId: hints?.leaseId ?? pdcRow?.lease_id ?? finRow?.lease_id,
     unitCode: derivedUnit,
   });
 
@@ -692,7 +692,8 @@ export async function depositPdc(
 
   // Accounting GL posting (non-blocking if trigger/RLS notice occurs)
   try {
-    // Entry A: Dr Bank / Cr Rent PDC In Hand
+    // Entry A ONLY at deposit time: Dr Bank / Cr Rent PDC In Hand.
+    // Entry B (Dr PDC Received [unit SL] / Cr Tenant Receivable [unit SL]) is posted at clearPdc time.
     await postPdcDepositToBank(
       ctx.amount, ctx.tenant_id, ctx.property_id, ctx.unit_id,
       ctx.cheque_number, ctx.unitCode, ctx.pdcType,
@@ -701,13 +702,6 @@ export async function depositPdc(
         name: options.bankAccountName || 'Bank Operating Account',
         id: options.bankAccountId,
       } : undefined,
-    );
-
-    // Entry B: Dr Customer PDC Liability / Cr Tenant Receivable
-    // Balances out Customer PDC Liability and clears tenant dues simultaneously upon bank deposit
-    await postPdcClear(
-      ctx.amount, ctx.tenant_id, ctx.property_id, ctx.unit_id,
-      ctx.cheque_number, ctx.unitCode, ctx.pdcType,
     );
   } catch (glErr: any) {
     console.warn('[depositPdc] GL deposit notice:', glErr?.message || glErr);

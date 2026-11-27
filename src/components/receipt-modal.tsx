@@ -6,6 +6,16 @@ import { Printer, Download, Building, User, CreditCard, FileText, ShieldCheck } 
 import type { ReceiptData, ReceiptLineItem } from './receipt-template';
 import { getDocumentBranding } from '@/lib/document-branding';
 
+export interface SecurityDepositDetailItem {
+  category: 'Type 1' | 'Type 2';
+  label: string;
+  mode: string;
+  amount: number;
+  bankAccount?: string;
+  referenceNo?: string;
+  date?: string;
+}
+
 export interface TenantReceiptDetails {
   receiptNo: string;
   acknowledgementNo?: string;
@@ -23,6 +33,7 @@ export interface TenantReceiptDetails {
   totalContractRent: number;
   depositAmount: number;
   depositMode: string;
+  securityDepositDetails?: SecurityDepositDetailItem[];
   pdcCount: number;
   pdcs: Array<{
     chequeNo: string;
@@ -105,14 +116,36 @@ export function ReceiptModal({ open, onOpenChange, data, secondaryData }: Receip
     const lineItems: ReceiptLineItem[] = [];
     let sNo = 1;
 
-    // Add deposit
-    if (currentData.depositAmount > 0 && currentData.depositMode !== 'N/A') {
+    // Add Security Deposit (Type 1 & Type 2) itemized payment breakdown
+    const hasDetailedDeposits = (currentData.securityDepositDetails || []).length > 0;
+    const mapPdfType = (mode: string): ReceiptLineItem['type'] => {
+      const m = (mode || '').toLowerCase();
+      if (m.includes('bank')) return 'Bank Transfer';
+      if (m.includes('pdc')) return 'PDC';
+      if (m.includes('cheque') || m.includes('guarantee')) return 'Cheque';
+      return 'Cash';
+    };
+
+    if (hasDetailedDeposits) {
+      (currentData.securityDepositDetails || []).forEach((item) => {
+        if (item.amount <= 0) return;
+        lineItems.push({
+          sNo: sNo++,
+          description: `${item.category}: ${item.label}`,
+          chequeRef: item.referenceNo || currentData.receiptNo,
+          maturityDate: item.date || currentData.date,
+          type: mapPdfType(item.mode),
+          amount: item.amount,
+          bankName: item.bankAccount || (item.mode === 'Cash' ? 'Cash' : '—'),
+        });
+      });
+    } else if (currentData.depositAmount > 0 && currentData.depositMode !== 'N/A') {
       lineItems.push({
         sNo: sNo++,
         description: currentData.depositMode || 'Security Deposit',
         chequeRef: currentData.receiptNo,
         maturityDate: currentData.leaseStartDate,
-        type: 'Cash',
+        type: mapPdfType(currentData.depositMode),
         amount: currentData.depositAmount,
         bankName: 'Operating Bank',
       });
@@ -154,55 +187,57 @@ export function ReceiptModal({ open, onOpenChange, data, secondaryData }: Receip
         amount: currentData.adminCharges,
       });
     }
-    if (currentData.utilityDeposit && currentData.utilityDeposit > 0) {
-      lineItems.push({
-        sNo: sNo++,
-        description: 'Kahramaa Utility Deposit',
-        chequeRef: 'RV-KAHRAMAA',
-        maturityDate: currentData.date,
-        type: 'Cash',
-        amount: currentData.utilityDeposit,
-      });
-    }
-    if (currentData.qatarCoolDeposit && currentData.qatarCoolDeposit > 0) {
-      lineItems.push({
-        sNo: sNo++,
-        description: 'Qatar Cool Deposit',
-        chequeRef: 'RV-QCOOL',
-        maturityDate: currentData.date,
-        type: 'Cash',
-        amount: currentData.qatarCoolDeposit,
-      });
-    }
-    if (currentData.reservationDeposit && currentData.reservationDeposit > 0) {
-      lineItems.push({
-        sNo: sNo++,
-        description: 'Reservation Advance Deposit',
-        chequeRef: 'RV-RESERVE',
-        maturityDate: currentData.date,
-        type: 'Cash',
-        amount: currentData.reservationDeposit,
-      });
-    }
-    if (currentData.serviceFeeDeposit && currentData.serviceFeeDeposit > 0) {
-      lineItems.push({
-        sNo: sNo++,
-        description: 'Service Fee / Key Deposit',
-        chequeRef: 'RV-SVCFEE',
-        maturityDate: currentData.date,
-        type: 'Cash',
-        amount: currentData.serviceFeeDeposit,
-      });
-    }
-    if (currentData.guaranteeChequeDeposit && currentData.guaranteeChequeDeposit > 0) {
-      lineItems.push({
-        sNo: sNo++,
-        description: 'Guarantee Cheque Security',
-        chequeRef: 'RV-GNTCHQ',
-        maturityDate: currentData.date,
-        type: 'Cheque',
-        amount: currentData.guaranteeChequeDeposit,
-      });
+    if (!hasDetailedDeposits) {
+      if (currentData.utilityDeposit && currentData.utilityDeposit > 0) {
+        lineItems.push({
+          sNo: sNo++,
+          description: 'Type 2: Kahramaa Utility Deposit',
+          chequeRef: 'RV-KAHRAMAA',
+          maturityDate: currentData.date,
+          type: 'Cash',
+          amount: currentData.utilityDeposit,
+        });
+      }
+      if (currentData.qatarCoolDeposit && currentData.qatarCoolDeposit > 0) {
+        lineItems.push({
+          sNo: sNo++,
+          description: 'Type 2: Qatar Cool Deposit',
+          chequeRef: 'RV-QCOOL',
+          maturityDate: currentData.date,
+          type: 'Cash',
+          amount: currentData.qatarCoolDeposit,
+        });
+      }
+      if (currentData.reservationDeposit && currentData.reservationDeposit > 0) {
+        lineItems.push({
+          sNo: sNo++,
+          description: 'Type 2: Reservation Advance Deposit',
+          chequeRef: 'RV-RESERVE',
+          maturityDate: currentData.date,
+          type: 'Cash',
+          amount: currentData.reservationDeposit,
+        });
+      }
+      if (currentData.serviceFeeDeposit && currentData.serviceFeeDeposit > 0) {
+        lineItems.push({
+          sNo: sNo++,
+          description: 'Type 2: Service Fee / Key Deposit',
+          chequeRef: 'RV-SVCFEE',
+          maturityDate: currentData.date,
+          type: 'Cash',
+          amount: currentData.serviceFeeDeposit,
+        });
+      }
+      if (currentData.guaranteeChequeDeposit && currentData.guaranteeChequeDeposit > 0) {
+        lineItems.push({
+          sNo: sNo++,
+          description: 'Type 2: Guarantee Cheque Security',
+          chequeRef: 'RV-GNTCHQ',
+          maturityDate: currentData.date,
+          type: 'Cheque',
+          amount: currentData.guaranteeChequeDeposit,
+        });
+      }
     }
 
     const receiptPayload: ReceiptData = {
@@ -344,23 +379,158 @@ export function ReceiptModal({ open, onOpenChange, data, secondaryData }: Receip
             </div>
           </div>
 
-          {/* Security Deposit / Main Transaction Summary */}
-          {currentData.depositAmount > 0 && (
-            <div className="border rounded-lg p-3 bg-card flex items-center justify-between">
-              <div className="flex items-center gap-2.5">
-                <ShieldCheck className="h-5 w-5 text-emerald-600" />
-                <div>
-                  <p className="text-xs font-semibold">
-                    {activeTab === 'secondary' ? 'Security Deposit Refund Amount' : 'Security Deposit / Principal Transaction'}
-                  </p>
-                  <p className="text-xs text-muted-foreground">Channel: <strong>{currentData.depositMode}</strong></p>
-                </div>
+          {/* Security Deposit (Type 1 & Type 2) Payment Breakdown */}
+          {(() => {
+            const explicitDetails = (currentData.securityDepositDetails || []).filter((d) => d.amount > 0);
+            const type1Items = explicitDetails.filter((d) => d.category === 'Type 1');
+            const type2Items: SecurityDepositDetailItem[] = explicitDetails.filter((d) => d.category === 'Type 2');
+
+            // Backwards-compatible fallback for Type 2 if caller only set numeric fields
+            if (explicitDetails.length === 0) {
+              if (currentData.utilityDeposit && currentData.utilityDeposit > 0) {
+                type2Items.push({ category: 'Type 2', label: 'Kahramaa Utility Deposit', mode: 'Cash', amount: currentData.utilityDeposit });
+              }
+              if (currentData.qatarCoolDeposit && currentData.qatarCoolDeposit > 0) {
+                type2Items.push({ category: 'Type 2', label: 'Qatar Cool Deposit', mode: 'Cash', amount: currentData.qatarCoolDeposit });
+              }
+              if (currentData.reservationDeposit && currentData.reservationDeposit > 0) {
+                type2Items.push({ category: 'Type 2', label: 'Reservation Advance Deposit', mode: 'Cash', amount: currentData.reservationDeposit });
+              }
+              if (currentData.serviceFeeDeposit && currentData.serviceFeeDeposit > 0) {
+                type2Items.push({ category: 'Type 2', label: 'Service Fee / Key Deposit', mode: 'Cash', amount: currentData.serviceFeeDeposit });
+              }
+              if (currentData.guaranteeChequeDeposit && currentData.guaranteeChequeDeposit > 0) {
+                type2Items.push({ category: 'Type 2', label: 'Guarantee Cheque Security', mode: 'Guarantee Cheque', amount: currentData.guaranteeChequeDeposit });
+              }
+            }
+
+            const formatPaymentDetail = (item: SecurityDepositDetailItem) => {
+              const parts: string[] = [];
+              if (item.bankAccount) parts.push(`Bank: ${item.bankAccount}`);
+              if (item.referenceNo) parts.push(`Ref / Cheque: ${item.referenceNo}`);
+              if (item.date) parts.push(`Date: ${item.date}`);
+              return parts.length > 0 ? parts.join(' • ') : '—';
+            };
+
+            const type1Total = type1Items.length > 0
+              ? type1Items.reduce((s, d) => s + d.amount, 0)
+              : currentData.depositAmount || 0;
+            const type2Total = type2Items.reduce((s, d) => s + d.amount, 0);
+
+            if (type1Total <= 0 && type2Total <= 0) return null;
+
+            return (
+              <div className="space-y-3">
+                {/* Type 1: Unit Security Deposit */}
+                {type1Total > 0 && (
+                  <div className="border rounded-lg overflow-hidden bg-card">
+                    <div className="p-3 bg-muted/20 border-b flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <ShieldCheck className="h-5 w-5 text-emerald-600 shrink-0" />
+                        <div>
+                          <p className="text-xs font-semibold">
+                            {activeTab === 'secondary'
+                              ? 'Security Deposit Refund Amount'
+                              : 'Security Deposit — Type 1 (Unit Security Deposit)'}
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Channel: <strong>{currentData.depositMode}</strong>
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-sm font-bold text-emerald-600 font-mono">
+                          QR {type1Total.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+
+                    {type1Items.length > 0 && (
+                      <table className="w-full text-xs">
+                        <thead className="bg-muted/50 text-muted-foreground font-semibold border-b">
+                          <tr>
+                            <th className="py-1.5 px-3 text-left">Payment Method</th>
+                            <th className="py-1.5 px-3 text-left">Payment Details (Bank / Ref / Cheque / Date)</th>
+                            <th className="py-1.5 px-3 text-right">Amount (QAR)</th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-border">
+                          {type1Items.map((item, idx) => (
+                            <tr key={idx} className="hover:bg-muted/20">
+                              <td className="py-1.5 px-3 font-medium">
+                                <Badge variant="outline" className="text-[11px] font-medium">
+                                  {item.mode}
+                                </Badge>
+                              </td>
+                              <td className="py-1.5 px-3 text-muted-foreground">
+                                {formatPaymentDetail(item)}
+                              </td>
+                              <td className="py-1.5 px-3 text-right font-mono font-semibold text-foreground">
+                                QR {item.amount.toLocaleString()}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                  </div>
+                )}
+
+                {/* Type 2: Ancillary Refundable Deposits & Guarantees */}
+                {type2Items.length > 0 && (
+                  <div className="border border-emerald-500/30 rounded-lg overflow-hidden bg-card">
+                    <div className="p-3 bg-emerald-50/40 dark:bg-emerald-950/20 border-b border-emerald-500/20 flex items-center justify-between">
+                      <div className="flex items-center gap-2.5">
+                        <ShieldCheck className="h-5 w-5 text-emerald-600 shrink-0" />
+                        <div>
+                          <p className="text-xs font-semibold">
+                            Security Deposit — Type 2 (Ancillary Refundable Deposits &amp; Guarantees)
+                          </p>
+                          <p className="text-[11px] text-muted-foreground">
+                            {type2Items.length} item{type2Items.length > 1 ? 's' : ''} collected
+                          </p>
+                        </div>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-sm font-bold text-emerald-600 font-mono">
+                          QR {type2Total.toLocaleString()}
+                        </span>
+                      </div>
+                    </div>
+
+                    <table className="w-full text-xs">
+                      <thead className="bg-muted/50 text-muted-foreground font-semibold border-b">
+                        <tr>
+                          <th className="py-1.5 px-3 text-left">Deposit Type</th>
+                          <th className="py-1.5 px-3 text-left">Payment Method</th>
+                          <th className="py-1.5 px-3 text-left">Payment Details (Bank / Ref / Cheque / Date)</th>
+                          <th className="py-1.5 px-3 text-right">Amount (QAR)</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-border">
+                        {type2Items.map((item, idx) => (
+                          <tr key={idx} className="hover:bg-muted/20">
+                            <td className="py-1.5 px-3 font-medium text-foreground">{item.label}</td>
+                            <td className="py-1.5 px-3">
+                              <Badge variant="outline" className="text-[11px] font-medium">
+                                {item.mode}
+                              </Badge>
+                            </td>
+                            <td className="py-1.5 px-3 text-muted-foreground">
+                              {formatPaymentDetail(item)}
+                            </td>
+                            <td className="py-1.5 px-3 text-right font-mono font-semibold text-foreground">
+                              QR {item.amount.toLocaleString()}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
               </div>
-              <div className="text-right">
-                <span className="text-sm font-bold text-emerald-600 font-mono">QR {currentData.depositAmount?.toLocaleString()}</span>
-              </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* PDC Breakdown Schedule Table (Tenant facing details only) */}
           {currentData.pdcs && currentData.pdcs.length > 0 && (

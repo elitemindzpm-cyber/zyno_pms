@@ -174,8 +174,9 @@ export async function createLease(input: Record<string, any>) {
   });
 
   // Security deposit received: Dr Bank / Cr Deposits liability.
+  // Skip when pdc_schedule === 'none' (UI lease creation collects & posts deposits in the Collection step using unit sub-ledgers).
   const deposit = money(num(lease.security_deposit));
-  if (deposit > 0) {
+  if (deposit > 0 && pdc_schedule !== 'none') {
     await postGlEvent({
       eventType: 'SECURITY_DEPOSIT_RECEIVED', sourceType: 'LEASE_DEPOSIT', sourceId: lease.id,
       idempotencyKey: `deposit:${lease.id}`, description: `Security deposit received - ${lease.lease_number}`,

@@ -108,23 +108,24 @@ export function ArApAgingReportSubModule() {
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedPartyRow, setSelectedPartyRow] = useState<PartyAgingRow | null>(null);
 
-  // Authoritative GL balance for Account 12413001 (Tenant Receivables — Unit SL)
-  // Strictly reconciled with General Ledger and Trial Balance Detailed
+  // Authoritative GL balance across all Tenant Receivable accounts (12413* including Unit Sub-Ledgers).
+  // Positive = net receivable due from tenants (DR); Negative = net advance/credit balance held for tenants (CR).
   const glTargetBalance = useMemo(() => {
     if (asOfDate && allLedgerTransactions && allLedgerTransactions.length > 0) {
       const txs = allLedgerTransactions.filter(
         (tx) =>
-          (tx.account_code === "12413001" || tx.account_code === "12413") &&
+          (tx.account_code || "").startsWith("12413") &&
           (!tx.date || tx.date.split("T")[0] <= asOfDate)
       );
       if (txs.length > 0) {
         const net = txs.reduce((sum, tx) => sum + (tx.debit || 0) - (tx.credit || 0), 0);
-        return Math.max(0, Math.round(net * 100) / 100);
+        return Math.round(net * 100) / 100;
       }
     }
-    const tbAcc = trialBalanceDetailed?.find((a) => a.code === "12413001" || a.code === "12413");
-    if (tbAcc) {
-      return Math.max(0, Math.round((tbAcc.debit - tbAcc.credit) * 100) / 100);
+    const tbArAccounts = (trialBalanceDetailed || []).filter((a) => (a.code || "").startsWith("12413"));
+    if (tbArAccounts.length > 0) {
+      const net = tbArAccounts.reduce((sum, a) => sum + (a.debit - a.credit), 0);
+      return Math.round(net * 100) / 100;
     }
     return 0;
   }, [allLedgerTransactions, trialBalanceDetailed, asOfDate]);
@@ -219,8 +220,7 @@ export function ArApAgingReportSubModule() {
       if (vDate > asOfDate) return;
 
       const isDrAr =
-        v.debit_code === "12413001" ||
-        v.debit_code === "12413" ||
+        (v.debit_code || "").startsWith("12413") ||
         (v.debit || "").toLowerCase().includes("tenant receivable");
       if (!isDrAr) return;
 
@@ -278,8 +278,7 @@ export function ArApAgingReportSubModule() {
       if (isDepositOrCustody) return;
 
       const isCreditToAr =
-        v.credit_code === "12413001" ||
-        v.credit_code === "12413" ||
+        (v.credit_code || "").startsWith("12413") ||
         (v.credit || "").toLowerCase().includes("tenant receivable") ||
         noLower.startsWith("vch-clr-") ||
         noLower.startsWith("vch-trf-") ||
@@ -307,7 +306,7 @@ export function ArApAgingReportSubModule() {
           if (line.type === "CR") {
             const code = line.account_code || "";
             const acct = (line.account || "").toLowerCase();
-            if (code === "12413001" || code === "12413" || acct.includes("tenant receivable")) {
+            if (code.startsWith("12413") || acct.includes("tenant receivable")) {
               const lineAmt = Number(line.amount || 0);
               if (lineAmt > 0 && !isCreditToAr) {
                 credits.push({
@@ -419,10 +418,10 @@ export function ArApAgingReportSubModule() {
       });
     });
 
-    // Pass 5: Strict Reconciliation with General Ledger Target Balance
-    // Any remaining GL credits or variance are applied FIFO so the schedule matches GL 12413001 to the cent
+    // Pass 5: Strict Reconciliation with General Ledger Target Balance (for positive net receivable)
+    const positiveGlTarget = Math.max(0, glTargetBalance);
     const currentTotal = candidateInvoices.reduce((s, it) => s + it.outstandingAmount, 0);
-    const variance = Math.round((currentTotal - glTargetBalance) * 100) / 100;
+    const variance = Math.round((currentTotal - positiveGlTarget) * 100) / 100;
 
     if (variance > 0.005) {
       let excess = variance;
@@ -433,7 +432,7 @@ export function ArApAgingReportSubModule() {
         it.outstandingAmount = Math.max(0, Math.round((it.outstandingAmount - deduct) * 100) / 100);
         excess = Math.round((excess - deduct) * 100) / 100;
       }
-    } else if (variance < -0.005) {
+    } else if (variance < -0.005 && glTargetBalance > 0) {
       let shortfall = Math.abs(variance);
       const sortedNewest = [...candidateInvoices].sort((a, b) => b.invoiceDate.localeCompare(a.invoiceDate));
       for (const it of sortedNewest) {
@@ -466,6 +465,29 @@ export function ArApAgingReportSubModule() {
         status: daysOverdue > 0 ? "Overdue" : inv.status,
         description: `${inv.stream}${inv.unit ? ` (${inv.unit})` : ""}`,
         canQuickSettle: true,
+      });
+    });
+
+    // 6. Surface unallocated customer credit / advance balances (e.g., cleared PDC 6,000 minus invoiced rent 3,600 = 2,400 CR)
+    credits.forEach((c) => {
+      if (c.remainingAmount <= 0.005) return;
+      const applied = Math.round((c.amount - c.remainingAmount) * 100) / 100;
+      items.push({
+        id: `adv-${c.id}`,
+        invoiceNo: c.voucherNo || "ADV-CREDIT",
+        partyName: (c.tenantName || "Unassigned Tenant").trim(),
+        property: (c.propertyName || "Unassigned Property").trim(),
+        unit: (c.unitRef || "").trim(),
+        invoiceDate: c.date,
+        dueDate: c.date,
+        daysOverdue: 0,
+        bucket: "current",
+        originalAmount: c.amount,
+        paidAmount: applied,
+        outstandingAmount: -Math.round(c.remainingAmount * 100) / 100,
+        status: "Advance / Credit",
+        description: `Unallocated Credit / Advance Balance${c.unitRef ? ` (${c.unitRef})` : ""}`,
+        canQuickSettle: false,
       });
     });
 

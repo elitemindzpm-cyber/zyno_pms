@@ -103,7 +103,7 @@ export function PropertyWiseProfitAndLossSubModule() {
   const now = useMemo(() => new Date(), []);
   const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
-  const [selectedPeriod, setSelectedPeriod] = useState<string>("2026-10");
+  const [selectedPeriod, setSelectedPeriod] = useState<string>(currentMonthKey);
   const [selectedPropertyFilter, setSelectedPropertyFilter] = useState<string>("all");
   const [activeDrillDownProperty, setActiveDrillDownProperty] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
@@ -188,8 +188,18 @@ export function PropertyWiseProfitAndLossSubModule() {
           if (!matchesPropertyName(invProp, propName)) return false;
 
           if (selectedPeriod !== "all") {
-            const invMonth = inv.billingPeriod || (inv.date ? inv.date.slice(0, 7) : "");
-            if (invMonth !== selectedPeriod) return false;
+            const invDateYm = inv.date ? inv.date.slice(0, 7) : "";
+            const bpRaw = (inv.billingPeriod || "").trim();
+            const bpMatches =
+              bpRaw === selectedPeriod ||
+              invDateYm === selectedPeriod ||
+              (bpRaw &&
+                (() => {
+                  const [y, m] = selectedPeriod.split("-");
+                  const mName = MONTH_NAMES[parseInt(m, 10) - 1] || "";
+                  return mName ? bpRaw.toLowerCase().includes(`${mName.toLowerCase()} ${y}`) : false;
+                })());
+            if (!bpMatches) return false;
           }
 
           if (lease.id && inv.leaseId && inv.leaseId === lease.id) return true;

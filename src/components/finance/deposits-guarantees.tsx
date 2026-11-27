@@ -385,20 +385,47 @@ export function DepositsGuarantees() {
     try {
       let dbData: any[] = [];
       try {
-        const [depRes, vchRes] = await Promise.all([
+        const [depRes, vchRes, propsRes, unitsRes, custsRes] = await Promise.all([
           db.from("fin_deposits").select("*").order("created_at", { ascending: false }),
-          db.from("fin_vouchers").select("reference_no, description, voucher_date").like("voucher_number", "VCH-SD-%")
+          db.from("fin_vouchers").select("reference_no, description, voucher_date").like("voucher_number", "VCH-SD-%"),
+          db.from("properties").select("id, title, property_name"),
+          db.from("units").select("id, unit_ref, unit_code, unit_name"),
+          db.from("customers").select("id, full_name, display_name"),
         ]);
         if (!depRes.error && depRes.data) {
+          const propById = new Map<string, string>(
+            (propsRes.data || []).map((p: any) => [String(p.id), String(p.title || p.property_name || "").trim()])
+          );
+          const unitById = new Map<string, string>(
+            (unitsRes.data || []).map((u: any) => [String(u.id), String(u.unit_ref || u.unit_code || u.unit_name || "").trim()])
+          );
+          const custById = new Map<string, string>(
+            (custsRes.data || []).map((c: any) => [String(c.id), String(c.full_name || c.display_name || "").trim()])
+          );
           const vchByRef = new Map<string, any>();
           (vchRes.data || []).forEach((v: any) => {
             if (v.reference_no) vchByRef.set(v.reference_no, v);
           });
           dbData = depRes.data.map((d: any) => {
             const vch = vchByRef.get(d.receipt_ref);
-            let tenant = d.tenant_name || "";
-            let unit = d.unit_ref || "";
-            let prop = d.property_name || "";
+            const matchedLease = leases?.find(
+              (l) => String(l.id) === String(d.lease_id) || String((l as any).reservationId) === String(d.lease_id)
+            );
+            let tenant =
+              d.tenant_name ||
+              (d.tenant_id ? custById.get(String(d.tenant_id)) : "") ||
+              matchedLease?.tenantName ||
+              "";
+            let unit =
+              d.unit_ref ||
+              (d.unit_id ? unitById.get(String(d.unit_id)) : "") ||
+              matchedLease?.unit ||
+              "";
+            let prop =
+              d.property_name ||
+              (d.property_id ? propById.get(String(d.property_id)) : "") ||
+              matchedLease?.property ||
+              "";
             if (vch?.description) {
               const m = vch.description.match(/Security Deposit Receipt\s*[-–]\s*(.*?)\s*\((.*?)\)/i);
               if (m) {

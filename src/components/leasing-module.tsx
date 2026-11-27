@@ -94,7 +94,7 @@ import {
   securitySettlementMasters,
   voucherDocumentMasters,
 } from "@/lib/reference-data";
-import { ReceiptModal, type TenantReceiptDetails } from "@/components/receipt-modal";
+import { ReceiptModal, type SecurityDepositDetailItem, type TenantReceiptDetails } from "@/components/receipt-modal";
 import { useFinanceStore } from "@/lib/finance/finance-store";
 import { executeFinalSettlement, settleEarlyLeaseVacate } from "@/lib/finance/settlement-engine";
 import { collectSecurityDeposit } from "@/lib/finance/depositService";
@@ -2563,6 +2563,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
   const [receiptModalOpen, setReceiptModalOpen] = useState(false);
   const [receiptModalData, setReceiptModalData] = useState<TenantReceiptDetails | null>(null);
   const [receiptModalSecondaryData, setReceiptModalSecondaryData] = useState<TenantReceiptDetails | null>(null);
+  const [isSubmittingCollect, setIsSubmittingCollect] = useState(false);
 
   // Submit to Landlord
   const [submitLandlordOpen, setSubmitLandlordOpen] = useState(false);
@@ -4229,18 +4230,20 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         } as any);
         if (leaseInsertError) throw new Error(leaseInsertError.message || "Lease insert failed");
 
-        await db
-          .from("units")
-          .update({
-            status: "Occupied",
-            lease_status: "Leased",
-            current_tenant: lease.tenantName,
-            contract_no: `LS-${lease.id.toUpperCase()}`,
-            contract_start_date: lease.startDate,
-            contract_end_date: lease.endDate,
-            current_rent: lease.monthlyRent,
-          } as any)
-          .or(`unit_ref.eq.${lease.unit},unit_code.eq.${lease.unit},unit_name.eq.${lease.unit}`);
+        if (uRow?.id) {
+          await db
+            .from("units")
+            .update({
+              status: "Occupied",
+              lease_status: "Leased",
+              current_tenant: lease.tenantName,
+              contract_no: `LS-${lease.id.toUpperCase()}`,
+              contract_start_date: lease.startDate,
+              contract_end_date: lease.endDate,
+              current_rent: lease.monthlyRent,
+            } as any)
+            .eq("id", uRow.id);
+        }
 
         await db.from("reservations").update({ status: "converted" }).eq("id", reservation.id);
         window.dispatchEvent(new Event("pms_data_updated"));
@@ -4325,6 +4328,16 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
   }
 
   async function submitCollect() {
+    if (!signatureWorkflowLease || isSubmittingCollect) return;
+    setIsSubmittingCollect(true);
+    try {
+      await executeSubmitCollect();
+    } finally {
+      setIsSubmittingCollect(false);
+    }
+  }
+
+  async function executeSubmitCollect() {
     if (!signatureWorkflowLease) return;
     const lease = signatureWorkflowLease;
     const scope = collectForm.collectionScope || "both";
@@ -4657,12 +4670,13 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           ...(collectForm.depositIsSplit
             ? [
                 // Each payment method is posted on its own: cash to cash, bank to the chosen account.
+                // Cheque split is posted below via receivePdc (pdcType: DEPOSIT_PDC) so it hits 12900002 / 21500[unit SL].
                 { amount: splitCash, type: "SECURITY" as const, mode: "Cash" as const, paymentMode: "Cash", bankGlCode: undefined, refSuffix: "-CSH" },
                 { amount: splitBank, type: "SECURITY" as const, mode: "Bank" as const, paymentMode: "Bank", bankGlCode: collectForm.receivingBankGl || undefined, refSuffix: "-BNK" },
-                // Cheque and token remainder keeps the previous posting until PDC handling is added for it.
-                { amount: Math.max(0, depAmt - splitCash - splitBank), type: "SECURITY" as const, mode: "Bank" as const, paymentMode: "Cheque", bankGlCode: undefined, refSuffix: "-REM" },
               ]
-            : [{ amount: depAmt, type: "SECURITY" as const, mode: (collectForm.depositMode === "Cash" ? "Cash" as const : "Bank" as const), paymentMode: String(collectForm.depositMode || ""), bankGlCode: collectForm.receivingBankGl || undefined, refSuffix: "" }]),
+            : (collectForm.depositMode === "PDC" || collectForm.depositMode === "Guarantee Cheque")
+              ? []
+              : [{ amount: depAmt, type: "SECURITY" as const, mode: (collectForm.depositMode === "Cash" ? "Cash" as const : "Bank" as const), paymentMode: String(collectForm.depositMode || ""), bankGlCode: collectForm.receivingBankGl || undefined, refSuffix: "" }]),
           ...([
             ["utility", utilityAmt, "KAHRAMAA"],
             ["qatarCool", qatarCoolAmt, "QATAR_COOL"],
@@ -4694,6 +4708,43 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
             bankGlCode: deposit.bankGlCode,
             unit_name: lease.unit,
             ref: `RV-${lease.id}-${deposit.type}${deposit.refSuffix ?? ""}`,
+          });
+        }
+
+        // Security deposit paid by Cheque / PDC (split or single): register as DEPOSIT_PDC (Dr 12900002 / Cr 21500[unit SL])
+        const depositChequeAmt = collectForm.depositIsSplit
+          ? splitCheque
+          : ((collectForm.depositMode === "PDC" || collectForm.depositMode === "Guarantee Cheque") ? Math.max(0, depAmt - appliedToken) : 0);
+        if (includeDeposit && depositChequeAmt > 0) {
+          const depChqNo = collectForm.depositIsSplit
+            ? (collectForm.depositSplitChequeNo || `CHQ-SD-${lease.unit}`)
+            : (collectForm.depositChequeNo || `CHQ-SD-${lease.unit}`);
+          const depChqDate = collectForm.depositIsSplit
+            ? (collectForm.depositSplitChequeDate || today_str)
+            : (collectForm.depositChequeDate || today_str);
+          await receivePdc({
+            cheque_number: depChqNo,
+            cheque_date: depChqDate,
+            amount: depositChequeAmt,
+            tenant_id: String(financeLease.customer_id),
+            property_id: String(financeLease.property_id),
+            unit_id: String(financeLease.unit_id),
+            lease_id: String(financeLease.id),
+            unitCode: lease.unit,
+            pdcType: "DEPOSIT_PDC",
+            strict: true,
+          });
+          await db.from("fin_deposits").insert({
+            deposit_type: "SECURITY",
+            coa_account_code: "21500",
+            amount: depositChequeAmt,
+            tenant_id: String(financeLease.customer_id),
+            property_id: String(financeLease.property_id),
+            unit_id: String(financeLease.unit_id),
+            lease_id: String(financeLease.id),
+            status: "Active",
+            payment_mode: "Cheque",
+            receipt_ref: `RV-${lease.id}-SECURITY-CHQ`,
           });
         }
 
@@ -4766,38 +4817,45 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
 
     setVouchers((items) => [...newVouchers, ...items]);
 
-    // Feed directly to authoritative FinanceStore vouchers for General Ledger and Reports
-    newVouchers.forEach(v => {
-      const drCode = v.debit.includes("12900002") ? "12900" :
-        v.debit.includes("12900") ? "12900" :
-          v.debit.includes("21100001") ? "21100" :
-            v.debit.toLowerCase().includes("cash") ? "12100" : "12000";
-      const crCode = v.credit.includes("21400") ? "21400" :
-        v.credit.includes("21500") ? "21500" :
-          v.credit.includes("21100001") ? "21100" :
-            v.credit.includes("21100003") ? "21100" :
-              v.credit.includes("21100004") ? "21100" :
-                v.credit.includes("21100005") ? "21100" :
-                  v.credit.includes("21200001") ? "21200" :
-                    v.credit.includes("41201") ? "41201" :
-                      v.credit.includes("21100") ? "21100" : "41100";
+    // Only mirror to client-side FinanceStore when the lease was NOT persisted to the authoritative DB
+    // (for DB leases, receivePdc / collectSecurityDeposit / postRentReceipt / postGuaranteeCheque already
+    // posted unit sub-ledger entries to fin_vouchers; adding control-code vouchers here caused double-posting).
+    if (!persistLeaseId) {
+      newVouchers.forEach(v => {
+        const drCode = v.debit.includes("12900002") ? "12900" :
+          v.debit.includes("12900") ? "12900" :
+            v.debit.includes("21100001") ? "21100" :
+              v.debit.toLowerCase().includes("cash") ? "12100" : "12000";
+        const crCode = v.credit.includes("21400") ? "21400" :
+          v.credit.includes("21500") ? "21500" :
+            v.credit.includes("21100001") ? "21100" :
+              v.credit.includes("21100003") ? "21100" :
+                v.credit.includes("21100004") ? "21100" :
+                  v.credit.includes("21100005") ? "21100" :
+                    v.credit.includes("21200001") ? "21200" :
+                      v.credit.includes("41201") ? "41201" :
+                        v.credit.includes("21100") ? "21100" : "41100";
 
-      addFinanceStoreVoucher({
-        voucher_no: v.receiptNo || `RV-${lease.id}-${Date.now().toString().slice(-4)}`,
-        voucher_type: "Receipt Voucher",
-        date: today_str,
-        name: `${v.name} — ${lease.tenantName} (${lease.unit})`,
-        debit: v.debit,
-        debit_code: drCode,
-        credit: v.credit,
-        credit_code: crCode,
-        amount: v.amount,
-        method: v.method,
-        property_name: lease.property,
-        unit_ref: lease.unit,
-        tenant_name: lease.tenantName,
+        addFinanceStoreVoucher({
+          voucher_no: v.receiptNo || `RV-${lease.id}-${Date.now().toString().slice(-4)}`,
+          voucher_type: "Receipt Voucher",
+          date: today_str,
+          name: `${v.name} — ${lease.tenantName} (${lease.unit})`,
+          debit: v.debit,
+          debit_code: drCode,
+          credit: v.credit,
+          credit_code: crCode,
+          amount: v.amount,
+          method: v.method,
+          property_name: lease.property,
+          unit_ref: lease.unit,
+          tenant_name: lease.tenantName,
+        });
       });
-    });
+    } else {
+      // Refresh FinanceStore from authoritative DB vouchers so GL & Trial Balance reflect only SL postings
+      window.dispatchEvent(new CustomEvent("finance_vouchers_updated"));
+    }
 
     // Cash Book Inflow Entries
     if (collectForm.paymentMode === "Cash" && rentTotal > 0) {
@@ -4820,10 +4878,120 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     const isRentNowCollected = includeRent ? true : Boolean((lease as any).rentCollected);
     const isFullCollectionDone = (isDepositNowCollected && isRentNowCollected) || scope === "both";
 
+    // Build structured Security Deposit Type 1 & Type 2 payment breakdown for the receipt
+    const resolveBankLabel = (glCode?: string) => {
+      if (!glCode) return undefined;
+      const b = companyBanks.find((x) => x.glCode === glCode);
+      return b ? `${b.bankName} – ${b.accountTitle}` : glCode;
+    };
+    const securityDepositDetails: SecurityDepositDetailItem[] = [];
+    if (includeDeposit) {
+      if (collectForm.depositIsSplit) {
+        if (splitCash > 0) {
+          securityDepositDetails.push({
+            category: "Type 1",
+            label: "Unit Security Deposit",
+            mode: "Cash",
+            amount: splitCash,
+          });
+        }
+        if (splitBank > 0) {
+          securityDepositDetails.push({
+            category: "Type 1",
+            label: "Unit Security Deposit",
+            mode: "Bank Transfer",
+            amount: splitBank,
+            bankAccount: resolveBankLabel(collectForm.receivingBankGl),
+            referenceNo: collectForm.depositSplitBankRef || undefined,
+          });
+        }
+        if (splitCheque > 0) {
+          securityDepositDetails.push({
+            category: "Type 1",
+            label: "Unit Security Deposit",
+            mode: "Cheque / PDC",
+            amount: splitCheque,
+            bankAccount: collectForm.depositSplitChequeBank || undefined,
+            referenceNo: collectForm.depositSplitChequeNo || undefined,
+            date: collectForm.depositSplitChequeDate || undefined,
+          });
+        }
+        if (appliedToken > 0) {
+          securityDepositDetails.push({
+            category: "Type 1",
+            label: "Unit Security Deposit",
+            mode: "Token Advance Applied",
+            amount: appliedToken,
+          });
+        }
+      } else {
+        const directDepAmt = Math.max(0, depAmt - appliedToken);
+        if (directDepAmt > 0) {
+          const isChequeMode = collectForm.depositMode === "PDC" || collectForm.depositMode === "Guarantee Cheque";
+          securityDepositDetails.push({
+            category: "Type 1",
+            label: "Unit Security Deposit",
+            mode: collectForm.depositMode || "Cash",
+            amount: directDepAmt,
+            bankAccount:
+              collectForm.depositMode === "Bank Transfer"
+                ? resolveBankLabel(collectForm.receivingBankGl)
+                : isChequeMode
+                  ? (collectForm.depositChequeBank || undefined)
+                  : undefined,
+            referenceNo: isChequeMode ? (collectForm.depositChequeNo || undefined) : undefined,
+            date: isChequeMode ? (collectForm.depositChequeDate || undefined) : undefined,
+          });
+        }
+        if (appliedToken > 0) {
+          securityDepositDetails.push({
+            category: "Type 1",
+            label: "Unit Security Deposit",
+            mode: "Token Advance Applied",
+            amount: appliedToken,
+          });
+        }
+      }
+
+      const type2ReceiptEntries: Array<[Type2Key, number, string]> = [
+        ["utility", utilityAmt, "Kahramaa Utility Deposit"],
+        ["qatarCool", qatarCoolAmt, "Qatar Cool Deposit"],
+        ["reservation", reservationAmt, "Reservation Advance Deposit"],
+        ["serviceFee", serviceFeeAmt, "Service Fee Deposit"],
+      ];
+      for (const [k, amt, label] of type2ReceiptEntries) {
+        if (amt <= 0) continue;
+        const pay = type2Pay[k];
+        securityDepositDetails.push({
+          category: "Type 2",
+          label,
+          mode: pay.mode === "Cheque" ? "Cheque / PDC" : pay.mode,
+          amount: amt,
+          bankAccount: pay.mode === "Bank Transfer" ? resolveBankLabel(pay.bankGl) : undefined,
+          referenceNo: pay.mode === "Cheque" ? (pay.chequeNo || undefined) : undefined,
+          date: pay.mode === "Cheque" ? (pay.chequeDate || undefined) : undefined,
+        });
+      }
+      if (guaranteeChequeAmt > 0) {
+        securityDepositDetails.push({
+          category: "Type 2",
+          label: "Guarantee Cheque Security",
+          mode: "Guarantee Cheque",
+          amount: guaranteeChequeAmt,
+          bankAccount: collectForm.guaranteeChequeBank || undefined,
+          referenceNo: collectForm.guaranteeChequeNo || undefined,
+        });
+      }
+    }
+
+    const depositModeLabel = includeDeposit
+      ? (collectForm.depositIsSplit ? "Split Payment (Cash / Bank / Cheque / Token)" : collectForm.depositMode)
+      : "Not Included";
+
     if (isFullCollectionDone) {
       advanceLease(lease, "collection_completed", {
         collectionCompleted: true,
-        ...(includeDeposit ? { depositCollected: true, securityDeposit: depAmt || lease.securityDeposit } : {}),
+        ...(includeDeposit ? { depositCollected: true, securityDeposit: depAmt || lease.securityDeposit, lastSecurityDepositDetails: securityDepositDetails, lastDepositMode: depositModeLabel } : {}),
         ...(includeRent ? { rentCollected: true } : {}),
         pdcCount: nextPdcs.length > 0 ? nextPdcs.length : (Number(collectForm.pdcCount) || lease.pdcCount || 12),
         startDate: collectForm.startDate || lease.startDate,
@@ -4836,7 +5004,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           item.id === lease.id
             ? ({
               ...item,
-              ...(includeDeposit ? { depositCollected: true, securityDeposit: depAmt || item.securityDeposit } : {}),
+              ...(includeDeposit ? { depositCollected: true, securityDeposit: depAmt || item.securityDeposit, lastSecurityDepositDetails: securityDepositDetails, lastDepositMode: depositModeLabel } : {}),
               ...(includeRent ? { rentCollected: true } : {}),
             } as any)
             : item
@@ -4871,7 +5039,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       monthlyRent: lease.monthlyRent,
       totalContractRent: rentTotal,
       depositAmount: depAmt,
-      depositMode: includeDeposit ? (collectForm.depositIsSplit ? "Split Payment (Cash / Bank / Cheque / Token)" : collectForm.depositMode) : "Not Included",
+      depositMode: depositModeLabel,
+      securityDepositDetails,
       pdcCount: nextPdcs.length,
       pdcs: nextPdcs.map((p) => ({
         chequeNo: p.chequeNo,
@@ -4893,6 +5062,10 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       agencyCommission: agencyAmt,
       adminCharges: adminAmt,
       utilityDeposit: utilityAmt,
+      qatarCoolDeposit: qatarCoolAmt,
+      reservationDeposit: reservationAmt,
+      serviceFeeDeposit: serviceFeeAmt,
+      guaranteeChequeDeposit: guaranteeChequeAmt,
       totalCollected: totalCollectedAmt,
       cashierName: collectForm.cashierName || "Finance Cashier",
       notes: collectForm.notes || (scope === "deposit_only"
@@ -5185,6 +5358,17 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         totalContractRent: 0,
         depositAmount: numAmount,
         depositMode: method,
+        securityDepositDetails: [
+          {
+            category: "Type 1",
+            label: "Unit Security Deposit",
+            mode: method,
+            amount: numAmount,
+            bankAccount: bank || undefined,
+            referenceNo: chequeNo || undefined,
+            date: chequeDate || undefined,
+          },
+        ],
         pdcCount: 0,
         pdcs: [],
         vouchers: [
@@ -10600,14 +10784,23 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
             </Field>
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setCollectOpen(false)}>Cancel</Button>
-            <Button onClick={submitCollect}>
-              <Banknote className="mr-2 h-4 w-4" />
-              {collectForm.collectionScope === "deposit_only"
-                ? "Confirm Security Deposit Collection"
-                : collectForm.collectionScope === "rent_only"
-                  ? "Confirm Rent Collection"
-                  : "Confirm Collection"}
+            <Button variant="outline" disabled={isSubmittingCollect} onClick={() => setCollectOpen(false)}>Cancel</Button>
+            <Button disabled={isSubmittingCollect} onClick={submitCollect}>
+              {isSubmittingCollect ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  Processing Collection...
+                </>
+              ) : (
+                <>
+                  <Banknote className="mr-2 h-4 w-4" />
+                  {collectForm.collectionScope === "deposit_only"
+                    ? "Confirm Security Deposit Collection"
+                    : collectForm.collectionScope === "rent_only"
+                      ? "Confirm Rent Collection"
+                      : "Confirm Collection"}
+                </>
+              )}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -16829,7 +17022,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                                 monthlyRent: lease.monthlyRent || 0,
                                 totalContractRent: pdcTot,
                                 depositAmount: lease.securityDeposit || 0,
-                                depositMode: "Cash / PDC",
+                                depositMode: (lease as any).lastDepositMode || "Cash / PDC",
+                                securityDepositDetails: (lease as any).lastSecurityDepositDetails,
                                 pdcCount: leasePdcs.length || lease.pdcCount || 12,
                                 pdcs:
                                   leasePdcs.length > 0
