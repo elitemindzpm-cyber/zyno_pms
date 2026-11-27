@@ -22,6 +22,7 @@ import {
   FileSpreadsheet, Download, Loader2
 } from "lucide-react";
 import { db } from "@/lib/db";
+import { postVoucherLinesToBackend } from "@/lib/finance/backend-posting";
 import { insertVoucherOnce } from "@/lib/finance/voucher-persist";
 import { FinVendorsApi, type FinVendor } from "@/lib/db-finance";
 import { ApInvoicesApi, type ProcApInvoice, type PaymentReceipt } from "@/lib/proc-invoices-api";
@@ -71,51 +72,17 @@ function postAdvanceVoucherToGL(params: {
   const refNo = params.reference || `ADV-TXN-${Date.now().toString().slice(-6)}`;
   const pvNo = `PV-ADV-${Date.now().toString().slice(-6)}`;
 
-  const newVoucher = {
-    id: `vchr-adv-${Date.now()}`,
-    voucher_no: pvNo,
-    voucher_type: "Payment Voucher",
+  // Posted through the backend (database + ledger); no browser copy is kept.
+  void postVoucherLinesToBackend({
+    type: "Payment",
     date: vDate,
-    name: `Vendor Advance Disbursement — ${params.vendorName} (${params.purpose || "Mobilization / Pre-payment"})`,
-    debit: "Advance to Vendors",
-    debit_code: "12300001",
-    credit: crName,
-    credit_code: crCode,
-    amount: params.amount,
-    method: isCash ? "Cash" : "Bank Transfer",
-    property_name: "Main Portfolio",
-    unit_ref: refNo,
-    tenant_name: params.vendorName,
-    status: "Posted",
+    reference: pvNo,
+    description: `Vendor Advance Disbursement — ${params.vendorName} (${params.purpose || "Mobilization / Pre-payment"}) [${refNo}]`,
     lines: [
-      { account_code: "12300001", account_name: "Advance to Vendors", debit: params.amount, credit: 0, description: `Advance to ${params.vendorName}` },
-      { account_code: crCode, account_name: crName, debit: 0, credit: params.amount, description: `Disbursement via ${params.paymentMode}` }
-    ]
-  };
-
-  try {
-    const k1 = "zyno-pms-finance-data-v1-vouchers";
-    const k2 = "zyno_finance_vouchers";
-    const existing1 = JSON.parse(kvStore.getItem(k1) || "[]");
-    const existing2 = JSON.parse(kvStore.getItem(k2) || "[]");
-    kvStore.setItem(k1, JSON.stringify([newVoucher, ...existing1]));
-    kvStore.setItem(k2, JSON.stringify([newVoucher, ...existing2]));
-  } catch (e) {
-    console.error("Failed to store voucher locally", e);
-  }
-
-  // Also record in db if available
-  try {
-    void insertVoucherOnce({
-      voucher_number: pvNo,
-      voucher_date: vDate,
-      voucher_type: "Payment Voucher",
-      reference_no: refNo,
-      description: `Vendor Advance Disbursement to ${params.vendorName}`,
-      total_amount: params.amount,
-      status: "POSTED"
-    });
-  } catch {}
+      { account_code: "12300001", debit: params.amount, credit: 0, description: `Advance to ${params.vendorName}` },
+      { account_code: crCode, debit: 0, credit: params.amount, description: `Disbursement via ${params.paymentMode}` },
+    ],
+  });
 
   window.dispatchEvent(new CustomEvent("finance_vouchers_updated"));
   window.dispatchEvent(new CustomEvent("ap_invoices_updated"));

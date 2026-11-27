@@ -1,4 +1,5 @@
 import { kvStore } from "@/lib/kv-store";
+import { createApInvoiceOnBackend, createArInvoiceOnBackend, postJournalToBackend } from "@/lib/finance/backend-posting";
 import { useEffect, useState, useCallback, useMemo } from "react";
 import { useRouterState } from "@tanstack/react-router";
 import { getDbState, setDbState } from "@/lib/database-state";
@@ -1545,28 +1546,17 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
       const taxAmt = inv.tax_amount || 0;
       const totalAmt = inv.amount;
 
-      const FINANCE_AP_KEY = "zyno-pms-finance-data-v1-ap";
-      // Push AP invoice to Finance AP Key
-      const existing: any[] = JSON.parse(kvStore.getItem(FINANCE_AP_KEY) || "[]");
-      const alreadyExists = existing.some((i: any) => i.invoice_no === inv.invoice_no);
-      if (!alreadyExists) {
-        existing.unshift({
-          ...inv,
-          id: `ap-mnt-${Date.now()}`,
-          status: "Unpaid",
-          base_amount: baseAmt,
-          tax_amount: taxAmt,
-          amount: totalAmt,
-          property: inv.property || "Unassigned",
-          unit_ref: inv.unit_ref || "Building Maintenance",
-          po_number: inv.work_order_id || inv.ticket_id || "—",
-          grn_number: inv.ticket_id || "—",
-          payment_terms: inv.payment_terms || "Net 30 Days",
-          settlement_mode: inv.settlement_mode || "Bank Wire / Electronic Transfer (QNB)",
-          receipt_attachment: inv.receipt_attachment,
-        });
-        kvStore.setItem(FINANCE_AP_KEY, JSON.stringify(existing));
-      }
+      // Post the AP invoice through the backend (database + ledger) instead of a browser-side cache.
+      void createApInvoiceOnBackend({
+        invoice_no: inv.invoice_no,
+        vendor: inv.vendor,
+        date: inv.date,
+        due_date: inv.due_date,
+        account: inv.account,
+        account_code: inv.account_code,
+        amount: totalAmt,
+        property: inv.property || "Unassigned",
+      });
 
       // Also register in centralized ApInvoicesApi cache so Vendor Management -> Financials -> AP Invoices reflects it
       void ApInvoicesApi.create({
@@ -1615,11 +1605,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
     amount: number;
   }) {
     try {
-      const FINANCE_JOURNALS_KEY = "zyno-pms-finance-data-v1-journals";
-      const journals: any[] = JSON.parse(kvStore.getItem(FINANCE_JOURNALS_KEY) || "[]");
-      journals.unshift({ ...entry, id: `je-mnt-${Date.now()}`, status: "Posted" });
-      kvStore.setItem(FINANCE_JOURNALS_KEY, JSON.stringify(journals));
-      window.dispatchEvent(new Event("finance_vouchers_updated"));
+      void postJournalToBackend(entry);
     } catch (e) {
       console.warn("[Maintenance] GL Journal sync failed:", e);
     }
@@ -1764,10 +1750,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
     // If "Direct Invoice" mode — also raise an AR receivable
     if (!isDepositDeduction) {
       try {
-        const FINANCE_AR_KEY = "zyno-pms-finance-data-v1-ar";
-        const existingAr: any[] = JSON.parse(kvStore.getItem(FINANCE_AR_KEY) || "[]");
-        existingAr.unshift({
-          id: `ar-cb-${Date.now()}`,
+        void createArInvoiceOnBackend({
           invoice_no: `AR-CB-${chargebackForm.workOrderId.replace("WO-", "")}`,
           tenant: chargebackForm.tenantName,
           property: chargebackForm.property,
@@ -1777,10 +1760,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
           stream: "Tenant Damage Recharge",
           account_code: "41300002",
           amount: chargebackAmount,
-          status: "Pending",
         });
-        kvStore.setItem(FINANCE_AR_KEY, JSON.stringify(existingAr));
-        window.dispatchEvent(new Event("finance_vouchers_updated"));
       } catch (e) {
         console.warn("[Maintenance] AR chargeback sync failed:", e);
       }
