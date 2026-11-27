@@ -123,6 +123,32 @@ export async function resolveUnitSl(unitId: string, propertyId: string, glCode: 
 // ───────────────────────────────────────────────────────────────────────────────
 type PostResult = { event_id: string; voucher_id: string; voucher_number: string; status: string };
 
+/**
+ * Issues the transaction receipt for a posted event (the original database did this in a trigger; the MariaDB
+ * port has no triggers). Without it the client treats every posting as failed with
+ * "was posted but its receipt was not generated", even though the ledger entry exists.
+ */
+async function issueReceiptTx(tx: any, ev: any, voucherId: string, voucherNumber: string, lines: Array<{ code: string; debit: number; credit: number; name?: string | null; description?: string | null }>) {
+  const have = await tx.$queryRaw<any[]>`SELECT id FROM fin_transaction_receipts WHERE accounting_event_id = ${ev.id} LIMIT 1`;
+  if (have.length) return;
+  const year = new Date(ev.posting_date ?? ev.event_date ?? Date.now()).getUTCFullYear();
+  await tx.$executeRaw`INSERT INTO app_sequences (name, current_value) VALUES (${'receipt_' + year}, 1) ON DUPLICATE KEY UPDATE current_value = current_value + 1`;
+  const seq = await tx.$queryRaw<{ current_value: bigint }[]>`SELECT current_value FROM app_sequences WHERE name = ${'receipt_' + year}`;
+  const n = String(Number(seq[0].current_value)).padStart(6, '0');
+  const isCash = (c: string) => c.startsWith('12000') || c.startsWith('121');
+  const net = lines.filter((l) => isCash(l.code)).reduce((a, l) => a + l.debit - l.credit, 0);
+  const direction = Math.abs(net) < 0.005 ? 'NON_CASH' : net > 0 ? 'IN' : 'OUT';
+  const amount = lines.reduce((a, l) => a + l.debit, 0);
+  const category = String(ev.event_type || 'GENERAL');
+  const payload = JSON.stringify({ lines: lines.map((l, i) => ({ line_number: i + 1, account_code: l.code, account_name: l.name ?? null, debit: l.debit, credit: l.credit, description: l.description ?? null })) });
+  await tx.$executeRaw`INSERT INTO fin_transaction_receipts
+    (id, receipt_no, acknowledgement_no, accounting_event_id, voucher_id, receipt_date, receipt_category, direction, amount, currency_code,
+     source_type, source_id, reference_no, description, tenant_id, customer_id, property_id, unit_id, lease_id, status, issued_at, receipt_payload, metadata, created_at)
+    VALUES (${randomUUID()}, ${'RCT-' + year + '-' + n}, ${'ACK-' + year + '-' + n}, ${ev.id}, ${voucherId}, ${ev.posting_date ?? ev.event_date}, ${category}, ${direction}, ${amount}, 'QAR',
+            ${ev.source_type ?? null}, ${ev.source_id ?? null}, ${voucherNumber}, ${ev.description ?? null}, ${ev.tenant_id ?? null}, ${ev.customer_id ?? null},
+            ${ev.property_id ?? null}, ${ev.unit_id ?? null}, ${ev.lease_id ?? null}, 'ISSUED', NOW(6), ${payload}, '{}', NOW(6))`;
+}
+
 export async function postAccountingEvent(eventId: string): Promise<PostResult[]> {
   return txn(async (tx) => {
     const evRows = await tx.$queryRaw<any[]>`SELECT * FROM fin_accounting_events WHERE id = ${eventId} FOR UPDATE`;
@@ -192,6 +218,7 @@ export async function postAccountingEvent(eventId: string): Promise<PostResult[]
     if (existingVoucher.length) {
       await tx.$executeRaw`UPDATE fin_accounting_events SET status = 'POSTED', voucher_id = ${existingVoucher[0].id},
         posted_at = COALESCE(posted_at, NOW()) WHERE id = ${eventId}`;
+      await issueReceiptTx(tx, ev, existingVoucher[0].id, existingVoucher[0].voucher_number, lines.map((l: any) => ({ code: l.account_code, debit: Number(l.debit) || 0, credit: Number(l.credit) || 0, name: l.account_name, description: l.description })));
       return [{ event_id: eventId, voucher_id: existingVoucher[0].id, voucher_number: existingVoucher[0].voucher_number, status: 'POSTED' }];
     }
 
@@ -229,6 +256,7 @@ export async function postAccountingEvent(eventId: string): Promise<PostResult[]
 
     await tx.$executeRaw`UPDATE fin_accounting_events SET status = 'POSTED', voucher_id = ${voucherId}, posted_at = NOW()
       WHERE id = ${eventId}`;
+    await issueReceiptTx(tx, ev, voucherId, voucherNumber, resolved.map(({ line, coa }) => ({ code: coa.account_code, debit: money(line.debit), credit: money(line.credit), name: coa.account_name, description: line.description })));
 
     return [{ event_id: eventId, voucher_id: voucherId, voucher_number: voucherNumber, status: 'POSTED' }];
   });

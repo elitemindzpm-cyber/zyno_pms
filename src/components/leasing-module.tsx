@@ -4611,8 +4611,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     const newVouchers: Voucher[] = [
       ...rentVouchers,
       ...depositVouchers,
-      ...(utilityAmt > 0 ? [{ id: `v${vouchers.length + 3}`, leaseId: lease.id, name: "Receipts Voucher - Kahramaa Deposit", receiptNo: `RV-${lease.id}-UTL`, method: "Cash", period: "Kahramaa utility deposit", debit: "Cash In Hand (12100)", credit: "Kahramaa Deposit (21100003)", amount: utilityAmt, status: "posted" as const }] : []),
-      ...(qatarCoolAmt > 0 ? [{ id: `v${vouchers.length + 4}`, leaseId: lease.id, name: "Receipts Voucher - Qatar Cool Deposit", receiptNo: `RV-${lease.id}-QC`, method: "Cash", period: "Qatar Cool utility deposit", debit: "Cash In Hand (12100)", credit: "Qatar Cool Deposit (21100004)", amount: qatarCoolAmt, status: "posted" as const }] : []),
+      ...(utilityAmt > 0 ? [{ id: `v${vouchers.length + 3}`, leaseId: lease.id, name: "Receipts Voucher - Kahramaa Deposit", receiptNo: `RV-${lease.id}-UTL`, method: "Cash", period: "Kahramaa utility deposit", debit: "Cash In Hand (12100)", credit: "Kahramaa Deposit (21100004)", amount: utilityAmt, status: "posted" as const }] : []),
+      ...(qatarCoolAmt > 0 ? [{ id: `v${vouchers.length + 4}`, leaseId: lease.id, name: "Receipts Voucher - Qatar Cool Deposit", receiptNo: `RV-${lease.id}-QC`, method: "Cash", period: "Qatar Cool utility deposit", debit: "Cash In Hand (12100)", credit: "Qatar Cool Deposit (21100003)", amount: qatarCoolAmt, status: "posted" as const }] : []),
       ...(reservationAmt > 0 ? [{ id: `v${vouchers.length + 5}`, leaseId: lease.id, name: "Receipts Voucher - Reservation Advance", receiptNo: `RV-${lease.id}-RES`, method: "Cash", period: "Reservation advance", debit: "Cash In Hand (12100)", credit: "Reservation Advance (21100001)", amount: reservationAmt, status: "posted" as const }] : []),
       ...(serviceFeeAmt > 0 ? [{ id: `v${vouchers.length + 6}`, leaseId: lease.id, name: "Receipts Voucher - Service Fee Deposit", receiptNo: `RV-${lease.id}-SVC`, method: "Cash", period: "Service fee deposit", debit: "Cash In Hand (12100)", credit: "Service Fee Deposit (21100005)", amount: serviceFeeAmt, status: "posted" as const }] : []),
       ...(guaranteeChequeAmt > 0 ? [{ id: `v${vouchers.length + 7}`, leaseId: lease.id, name: "Receipts Voucher - Guarantee Cheque", receiptNo: `RV-${lease.id}-GCHQ`, method: "Guarantee Cheque", period: "Guarantee cheque security", debit: "Guarantee Cheque In Hand (12900002)", credit: "Guarantee Cheque Received (21200001)", amount: guaranteeChequeAmt, status: "posted" as const }] : []),
@@ -10443,13 +10443,13 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                   </div>
                   <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                     <div className="space-y-1.5">
-                      <Field label="Kahramaa Deposit (21100003)">
+                      <Field label="Kahramaa Deposit (21100004)">
                         <Input type="number" value={collectForm.utilityDeposit} onChange={(e) => setCollectForm((f) => ({ ...f, utilityDeposit: e.target.value }))} placeholder="0" />
                       </Field>
                       {Number(collectForm.utilityDeposit) > 0 && renderType2Mode("utility")}
                     </div>
                     <div className="space-y-1.5">
-                      <Field label="Qatar Cool Deposit (21100004)">
+                      <Field label="Qatar Cool Deposit (21100003)">
                         <Input type="number" value={collectForm.qatarCoolDeposit} onChange={(e) => setCollectForm((f) => ({ ...f, qatarCoolDeposit: e.target.value }))} placeholder="0" />
                       </Field>
                       {Number(collectForm.qatarCoolDeposit) > 0 && renderType2Mode("qatarCool")}
@@ -10537,8 +10537,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
               } else if (depAmt > 0) {
                 impacts.push({ label: `Type 1: Unit Security Deposit (${collectForm.depositMode})`, category: "Deposit (21500)", dr: depDrLabel, drCode: depDrCode, cr: "Security Deposit Liability", crCode: "21500", amount: depAmt });
               }
-              if (utilityAmt > 0) impacts.push({ label: "Type 2: Kahramaa Utility Deposit", category: "Deposit (21100)", dr: "Cash In Hand", drCode: "12100", cr: "Kahramaa Deposit - Tenant", crCode: "21100003", amount: utilityAmt });
-              if (qatarCoolAmt > 0) impacts.push({ label: "Type 2: Qatar Cool Deposit", category: "Deposit (21100)", dr: "Cash In Hand", drCode: "12100", cr: "Qatar Cool Deposit - Tenant", crCode: "21100004", amount: qatarCoolAmt });
+              if (utilityAmt > 0) impacts.push({ label: "Type 2: Kahramaa Utility Deposit", category: "Deposit (21100)", dr: "Cash In Hand", drCode: "12100", cr: "Kahramaa Deposit - Tenant", crCode: "21100004", amount: utilityAmt });
+              if (qatarCoolAmt > 0) impacts.push({ label: "Type 2: Qatar Cool Deposit", category: "Deposit (21100)", dr: "Cash In Hand", drCode: "12100", cr: "Qatar Cool Deposit - Tenant", crCode: "21100003", amount: qatarCoolAmt });
               if (reservationAmt > 0) impacts.push({ label: "Type 2: Reservation Advance", category: "Deposit (21100)", dr: "Cash In Hand", drCode: "12100", cr: "Reservation Advance - Tenant", crCode: "21100001", amount: reservationAmt });
               if (serviceFeeAmt > 0) impacts.push({ label: "Type 2: Service Fee Deposit", category: "Deposit (21100)", dr: "Cash In Hand", drCode: "12100", cr: "Service Fee Deposit - Tenant", crCode: "21100005", amount: serviceFeeAmt });
               if (guaranteeChequeAmt > 0) impacts.push({ label: "Type 2: Guarantee Cheque Security", category: "Deposit (21100)", dr: "PDC In Hand", drCode: "12900", cr: "Guarantee Cheque Liability", crCode: "21100006", amount: guaranteeChequeAmt });

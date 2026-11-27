@@ -694,7 +694,16 @@ export async function resolveAccountingAccounts(
         transaction_type: 'SECURITY_DEPOSIT_RECEIPT',
         debit_gl_code: ctx.paymentMethod === 'CASH' ? '12100' : '12000',
         debit_sl_code: ctx.paymentMethod === 'CASH' ? '12100001' : '12000001',
-        credit_gl_code: '21500',
+        // Security deposits go to the unit's 21500 sub-ledger; the Type 2 deposits go to their own 21100 account
+        // (Reservation Advance 21100001, Qatar Cool 21100003, Kahramaa 21100004, Service Fee 21100005).
+        ...(ctx.depositType === 'GUARANTEE'
+          ? { credit_gl_code: '21200' }
+          : ctx.depositType && ctx.depositType !== 'SECURITY'
+            ? {
+                credit_gl_code: '21100',
+                credit_sl_code: ({ RESERVATION: '21100001', QATAR_COOL: '21100003', KAHRAMAA: '21100004', SERVICE_FEE: '21100005' } as Record<string, string>)[ctx.depositType] ?? '21100',
+              }
+            : { credit_gl_code: '21500' }),
         is_active: true,
       }];
     } else if (ctx.transactionType === 'DEPOSIT_TO_REFUNDABLE') {

@@ -692,7 +692,7 @@ model fin_bank_accounts {
 }
 
 model fin_bank_reconciliations {
-  id                Int      @id
+  id                Int      @id @default(autoincrement())
   account_number    String   @db.Text
   statement_date    DateTime @db.Date
   statement_balance Decimal? @default(0.0000) @db.Decimal(18, 4)
@@ -739,7 +739,7 @@ model fin_coa_accounts {
 }
 
 model fin_contracts {
-  id              Int      @id
+  id              Int      @id @default(autoincrement())
   contract_number String   @unique @db.VarChar(255)
   title           String   @db.VarChar(255)
   party_name      String   @db.Text
@@ -751,7 +751,7 @@ model fin_contracts {
 }
 
 model fin_cost_centers {
-  id                     Int                      @id
+  id                     Int                      @id @default(autoincrement())
   code                   String                   @unique @db.VarChar(255)
   name                   String                   @db.VarChar(255)
   manager                String?                  @db.Text
@@ -761,7 +761,7 @@ model fin_cost_centers {
 }
 
 model fin_customers {
-  id           Int      @id
+  id           Int      @id @default(autoincrement())
   code         String   @unique @db.VarChar(255)
   name         String   @db.VarChar(255)
   type         String?  @default("Individual") @db.VarChar(255)
@@ -771,7 +771,7 @@ model fin_customers {
 }
 
 model fin_deposits {
-  id               BigInt   @id
+  id               BigInt   @id @default(autoincrement())
   deposit_type     String   @db.Text
   coa_account_code String   @db.Text
   amount           Decimal? @db.Decimal(18, 4)
@@ -786,7 +786,7 @@ model fin_deposits {
 }
 
 model fin_financial_years {
-  id         Int      @id
+  id         Int      @id @default(autoincrement())
   name       String   @unique @db.VarChar(255)
   start_date DateTime @db.Date
   end_date   DateTime @db.Date
@@ -794,7 +794,7 @@ model fin_financial_years {
 }
 
 model fin_legal_receivables {
-  id                  BigInt   @id
+  id                  BigInt   @id @default(autoincrement())
   tenant_id           BigInt
   property_id         BigInt?
   unit_id             BigInt?
@@ -835,7 +835,7 @@ model fin_payment_allocations {
 }
 
 model fin_payroll_syncs {
-  id             BigInt   @id
+  id             BigInt   @id @default(autoincrement())
   payroll_run_id String   @db.Text
   period         String   @db.Text
   status         String   @default("Pending") @db.VarChar(255)
@@ -864,7 +864,7 @@ model fin_pdc_register {
 }
 
 model fin_posting_periods {
-  id          Int    @id
+  id          Int    @id @default(autoincrement())
   period_name String @unique @db.VarChar(255)
   year        String @db.Text
   month       Int
@@ -872,7 +872,7 @@ model fin_posting_periods {
 }
 
 model fin_regions {
-  id       Int     @id
+  id       Int     @id @default(autoincrement())
   code     String  @unique @db.VarChar(255)
   name     String  @db.VarChar(255)
   currency String? @default("QAR") @db.VarChar(255)
