@@ -1,0 +1,50 @@
+-- Receivable (AR) and payable (AP) invoices, previously kept only in browser state.
+CREATE TABLE IF NOT EXISTS fin_ar_invoices (
+  id VARCHAR(36) NOT NULL DEFAULT (UUID()),
+  invoice_no VARCHAR(100) NOT NULL,
+  tenant VARCHAR(255) NULL,
+  property VARCHAR(255) NULL,
+  unit VARCHAR(100) NULL,
+  customer_id VARCHAR(36) NULL,
+  lease_id VARCHAR(36) NULL,
+  invoice_date DATE NOT NULL,
+  due_date DATE NULL,
+  stream VARCHAR(100) NULL,
+  account_code VARCHAR(50) NOT NULL,
+  amount DECIMAL(18,4) NOT NULL,
+  paid_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
+  status VARCHAR(20) NOT NULL DEFAULT 'Pending',
+  billing_period VARCHAR(7) NULL,
+  notes TEXT NULL,
+  voucher_number VARCHAR(255) NULL,
+  receipt_voucher_number VARCHAR(255) NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_fin_ar_invoices_no (invoice_no),
+  KEY idx_fin_ar_invoices_unit_period (unit, billing_period)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
+CREATE TABLE IF NOT EXISTS fin_ap_invoices (
+  id VARCHAR(36) NOT NULL DEFAULT (UUID()),
+  invoice_no VARCHAR(100) NOT NULL,
+  vendor VARCHAR(255) NULL,
+  property VARCHAR(255) NULL,
+  invoice_date DATE NOT NULL,
+  voucher_date DATE NULL,
+  due_date DATE NULL,
+  account VARCHAR(255) NULL,
+  account_code VARCHAR(50) NOT NULL,
+  stream VARCHAR(100) NULL,
+  amount DECIMAL(18,4) NOT NULL,
+  paid_amount DECIMAL(18,4) NOT NULL DEFAULT 0,
+  status VARCHAR(20) NOT NULL DEFAULT 'Unpaid',
+  lines_json LONGTEXT NULL,
+  voucher_number VARCHAR(255) NULL,
+  payment_voucher_number VARCHAR(255) NULL,
+  created_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6),
+  updated_at DATETIME(6) NOT NULL DEFAULT CURRENT_TIMESTAMP(6) ON UPDATE CURRENT_TIMESTAMP(6),
+  PRIMARY KEY (id),
+  UNIQUE KEY uq_fin_ap_invoices_no (invoice_no)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+-- Rollback: DROP TABLE fin_ap_invoices; DROP TABLE fin_ar_invoices;

@@ -1,6 +1,7 @@
 // server/routes/accounting.ts
 // Finance / GL / Accounting Events endpoints
 import { Router, Request, Response } from 'express';
+import { randomUUID } from 'crypto';
 import prisma from '../lib/prisma';
 import { tenantMiddleware, parsePagination, paginatedResponse } from '../lib/middleware';
 import { dbAllowed } from '../lib/db-policy';
@@ -950,6 +951,182 @@ router.get('/cash-flow', async (req: Request, res: Response) => {
     const netOperatingCash = operatingInflow - operatingOutflow;
     res.json({ data: { operatingInflow, operatingOutflow, netOperatingCash, investingCash, financingCash, netCashChange: netOperatingCash + investingCash + financingCash, endingCashBalance } });
   } catch (e: any) { console.error('[cash-flow]', e?.message); res.status(500).json({ error: 'Failed to load the cash flow' }); }
+});
+
+// ── Receivable (AR) and payable (AP) invoices ──────────────────────────────────────────────────────
+// Invoices are stored in fin_ar_invoices / fin_ap_invoices; every create and settlement is posted to the ledger
+// through postManualVoucher, so the ledger, trial balance and statements always agree with the invoice registers.
+const AR_CONTROL_CODE = '12413001';   // Tenant Receivables
+const AP_CONTROL_CODE = '21000';      // Sundry Creditors (trade payables control)
+const DEFAULT_BANK_CODE = '12000001';
+const ymd = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}/.test(v) ? v.slice(0, 10) : null);
+const dateOnly = (d: any) => (d ? (d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10)) : '');
+
+function arRow(r: any) {
+  return {
+    id: String(r.id), invoice_no: r.invoice_no, tenant: r.tenant || '', property: r.property || '', unit: r.unit || '',
+    date: dateOnly(r.invoice_date), due_date: dateOnly(r.due_date), stream: r.stream || '', account_code: r.account_code,
+    amount: Number(r.amount) || 0, status: r.status, customerId: r.customer_id || undefined, billingPeriod: r.billing_period || undefined,
+    leaseId: r.lease_id || undefined, notes: r.notes || undefined, paidAmount: Number(r.paid_amount) || 0,
+  };
+}
+function apRow(r: any) {
+  let lines: any[] | undefined;
+  try { lines = r.lines_json ? JSON.parse(r.lines_json) : undefined; } catch { lines = undefined; }
+  return {
+    id: String(r.id), invoice_no: r.invoice_no, vendor: r.vendor || '', date: dateOnly(r.invoice_date), voucher_date: dateOnly(r.voucher_date) || undefined,
+    due_date: dateOnly(r.due_date), account: r.account || '', account_code: r.account_code, stream: r.stream || undefined,
+    amount: Number(r.amount) || 0, status: r.status, property: r.property || undefined, lines,
+  };
+}
+
+router.get('/ar-invoices', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view receivable invoices' });
+    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_ar_invoices ORDER BY invoice_date DESC, created_at DESC LIMIT 5000`;
+    res.json({ data: rows.map(arRow) });
+  } catch (e: any) { console.error('[ar-invoices]', e?.message); res.status(500).json({ error: 'Failed to load receivable invoices' }); }
+});
+
+// Create one or more AR invoices. A unit already invoiced for the billing period is skipped (reported back).
+router.post('/ar-invoices', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'write')) return res.status(403).json({ error: 'Not authorized to create invoices' });
+    const list: any[] = Array.isArray(req.body?.invoices) ? req.body.invoices : [];
+    if (!list.length) return res.status(400).json({ error: 'No invoices supplied' });
+    const created: any[] = []; const skipped: any[] = [];
+    for (const inv of list) {
+      const date = ymd(inv.date); const amount = Number(inv.amount) || 0;
+      const invoiceNo = String(inv.invoice_no || '').trim();
+      if (!invoiceNo || !date || amount <= 0 || !inv.account_code) return res.status(400).json({ error: 'Each invoice needs invoice_no, date, account_code and an amount above zero' });
+      const period = String(inv.billingPeriod || inv.billing_period || date).slice(0, 7);
+      const unit = String(inv.unit || '').trim();
+      if (unit) {
+        const dup = await prisma.$queryRaw<any[]>`SELECT invoice_no FROM fin_ar_invoices WHERE LOWER(unit) = ${unit.toLowerCase()} AND billing_period = ${period} LIMIT 1`;
+        if (dup.length) { skipped.push({ invoice_no: invoiceNo, reason: `Unit ${unit} is already invoiced (${dup[0].invoice_no}) for ${period}` }); continue; }
+      }
+      const exists = await prisma.$queryRaw<any[]>`SELECT id FROM fin_ar_invoices WHERE invoice_no = ${invoiceNo} LIMIT 1`;
+      if (exists.length) { skipped.push({ invoice_no: invoiceNo, reason: 'Invoice number already exists' }); continue; }
+      const posted = await postManualVoucher({
+        voucher_date: date, voucher_type: 'Journal', reference_no: invoiceNo,
+        description: `Rent invoice ${invoiceNo} — ${inv.tenant || ''} ${unit ? '(' + unit + ')' : ''}`.trim(),
+        lines: [
+          { account_code: AR_CONTROL_CODE, debit: amount, credit: 0 },
+          { account_code: String(inv.account_code), debit: 0, credit: amount },
+        ],
+        customer_id: inv.customerId || inv.customer_id || null, created_by: (req as any).user?.id ?? null,
+      });
+      const voucherNumber = posted?.[0]?.voucher_number ?? invoiceNo;
+      await prisma.$executeRaw`INSERT INTO fin_ar_invoices
+        (id, invoice_no, tenant, property, unit, customer_id, lease_id, invoice_date, due_date, stream, account_code, amount, status, billing_period, notes, voucher_number)
+        VALUES (${randomUUID()}, ${invoiceNo}, ${inv.tenant || null}, ${inv.property || null}, ${unit || null}, ${inv.customerId || inv.customer_id || null},
+                ${inv.leaseId || inv.lease_id || null}, ${date}, ${ymd(inv.due_date)}, ${inv.stream || null}, ${String(inv.account_code)}, ${amount}, 'Pending', ${period}, ${inv.notes || null}, ${voucherNumber})`;
+      created.push(invoiceNo);
+    }
+    res.status(201).json({ created, skipped });
+  } catch (e: any) {
+    if (e?.status) return res.status(e.status).json({ error: e.message });
+    console.error('[ar-invoices:create]', e?.message); res.status(500).json({ error: 'Failed to create the invoice' });
+  }
+});
+
+// Collect an AR invoice: post the receipt (Dr bank, Cr tenant receivable) and mark it paid.
+router.post('/ar-invoices/:invoiceNo/collect', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'write')) return res.status(403).json({ error: 'Not authorized to collect invoices' });
+    const invoiceNo = String(req.params.invoiceNo);
+    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_ar_invoices WHERE invoice_no = ${invoiceNo} LIMIT 1`;
+    if (!rows.length) return res.status(404).json({ error: 'Invoice not found' });
+    const inv = rows[0];
+    if (inv.status === 'Paid') return res.status(409).json({ error: 'Invoice is already paid' });
+    const date = ymd(req.body?.date) || new Date().toISOString().slice(0, 10);
+    const bank = String(req.body?.bank_gl || DEFAULT_BANK_CODE);
+    const amount = Number(inv.amount) - Number(inv.paid_amount || 0);
+    const posted = await postManualVoucher({
+      voucher_date: date, voucher_type: 'Receipt', reference_no: `RCV-${invoiceNo}`,
+      description: `${inv.tenant || ''} — Receipt for Rent Invoice ${invoiceNo} ${inv.unit ? '(' + inv.unit + ')' : ''}`.trim(),
+      lines: [{ account_code: bank, debit: amount, credit: 0 }, { account_code: AR_CONTROL_CODE, debit: 0, credit: amount }],
+      customer_id: inv.customer_id, created_by: (req as any).user?.id ?? null,
+    });
+    await prisma.$executeRaw`UPDATE fin_ar_invoices SET status = 'Paid', paid_amount = amount, receipt_voucher_number = ${posted?.[0]?.voucher_number ?? null} WHERE invoice_no = ${invoiceNo}`;
+    res.json({ data: { invoice_no: invoiceNo, status: 'Paid' } });
+  } catch (e: any) {
+    if (e?.status) return res.status(e.status).json({ error: e.message });
+    console.error('[ar-invoices:collect]', e?.message); res.status(500).json({ error: 'Failed to collect the invoice' });
+  }
+});
+
+router.get('/ap-invoices', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view payable invoices' });
+    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_ap_invoices ORDER BY invoice_date DESC, created_at DESC LIMIT 5000`;
+    res.json({ data: rows.map(apRow) });
+  } catch (e: any) { console.error('[ap-invoices]', e?.message); res.status(500).json({ error: 'Failed to load payable invoices' }); }
+});
+
+// Create an AP invoice: Dr expense (one line, or each invoice line), Cr trade payables.
+router.post('/ap-invoices', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'write')) return res.status(403).json({ error: 'Not authorized to create invoices' });
+    const b = req.body || {};
+    const invoiceNo = String(b.invoice_no || '').trim();
+    const date = ymd(b.voucher_date) || ymd(b.date);
+    const amount = Number(b.amount) || 0;
+    if (!invoiceNo || !date || amount <= 0) return res.status(400).json({ error: 'invoice_no, a date and an amount above zero are required' });
+    const exists = await prisma.$queryRaw<any[]>`SELECT id FROM fin_ap_invoices WHERE invoice_no = ${invoiceNo} LIMIT 1`;
+    if (exists.length) return res.status(409).json({ error: `Invoice ${invoiceNo} already exists` });
+    const lines: any[] = Array.isArray(b.lines) && b.lines.length ? b.lines : [{ account_code: b.account_code, amount }];
+    const debitLines = lines.filter((l) => l.account_code && Number(l.amount) > 0).map((l) => ({ account_code: String(l.account_code), debit: Number(l.amount), credit: 0, description: l.description || null }));
+    const total = debitLines.reduce((a, l) => a + l.debit, 0);
+    if (!debitLines.length) return res.status(400).json({ error: 'The invoice needs at least one expense line with an account and amount' });
+    const posted = await postManualVoucher({
+      voucher_date: date, voucher_type: 'Journal', reference_no: invoiceNo,
+      description: `Invoice ${invoiceNo} from ${b.vendor || ''}`.trim(),
+      lines: [...debitLines, { account_code: AP_CONTROL_CODE, debit: 0, credit: total }],
+      created_by: (req as any).user?.id ?? null,
+    });
+    await prisma.$executeRaw`INSERT INTO fin_ap_invoices
+      (id, invoice_no, vendor, property, invoice_date, voucher_date, due_date, account, account_code, stream, amount, status, lines_json, voucher_number)
+      VALUES (${randomUUID()}, ${invoiceNo}, ${b.vendor || null}, ${b.property || null}, ${ymd(b.date) || date}, ${ymd(b.voucher_date)}, ${ymd(b.due_date)},
+              ${b.account || null}, ${String(b.account_code || debitLines[0].account_code)}, ${b.stream || null}, ${total}, 'Unpaid',
+              ${Array.isArray(b.lines) && b.lines.length ? JSON.stringify(b.lines) : null}, ${posted?.[0]?.voucher_number ?? invoiceNo})`;
+    res.status(201).json({ data: { invoice_no: invoiceNo } });
+  } catch (e: any) {
+    if (e?.status) return res.status(e.status).json({ error: e.message });
+    console.error('[ap-invoices:create]', e?.message); res.status(500).json({ error: 'Failed to create the invoice' });
+  }
+});
+
+// Pay an AP invoice: Dr trade payables, Cr bank.
+router.post('/ap-invoices/:invoiceNo/pay', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'write')) return res.status(403).json({ error: 'Not authorized to pay invoices' });
+    const invoiceNo = String(req.params.invoiceNo);
+    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_ap_invoices WHERE invoice_no = ${invoiceNo} LIMIT 1`;
+    if (!rows.length) return res.status(404).json({ error: 'Invoice not found' });
+    const inv = rows[0];
+    if (inv.status === 'Paid') return res.status(409).json({ error: 'Invoice is already paid' });
+    const date = ymd(req.body?.date) || new Date().toISOString().slice(0, 10);
+    const bank = String(req.body?.bank_gl || DEFAULT_BANK_CODE);
+    const amount = Number(inv.amount) - Number(inv.paid_amount || 0);
+    const posted = await postManualVoucher({
+      voucher_date: date, voucher_type: 'Payment', reference_no: `PAY-${invoiceNo}`,
+      description: `${inv.vendor || ''} — Settlement for Invoice ${invoiceNo}`.trim(),
+      lines: [{ account_code: AP_CONTROL_CODE, debit: amount, credit: 0 }, { account_code: bank, debit: 0, credit: amount }],
+      created_by: (req as any).user?.id ?? null,
+    });
+    await prisma.$executeRaw`UPDATE fin_ap_invoices SET status = 'Paid', paid_amount = amount, payment_voucher_number = ${posted?.[0]?.voucher_number ?? null} WHERE invoice_no = ${invoiceNo}`;
+    res.json({ data: { invoice_no: invoiceNo, status: 'Paid' } });
+  } catch (e: any) {
+    if (e?.status) return res.status(e.status).json({ error: e.message });
+    console.error('[ap-invoices:pay]', e?.message); res.status(500).json({ error: 'Failed to pay the invoice' });
+  }
 });
 
 // Posting Engine Compliance View
