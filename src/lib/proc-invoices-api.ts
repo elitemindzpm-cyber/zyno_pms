@@ -1,4 +1,5 @@
 import { kvStore } from "@/lib/kv-store";
+import { postVoucherLinesToBackend } from "@/lib/finance/backend-posting";
 import { db } from './db';
 
 export type ProcApInvoice = {
@@ -107,82 +108,18 @@ function saveLocalReceipts(list: PaymentReceipt[]) {
 // Helper to push vouchers into Finance Store & Db
 async function postFinancePaymentVoucher(invoice: ProcApInvoice, receiptNum: string, pvNum: string) {
   const paidDate = invoice.paid_at || new Date().toISOString().slice(0, 10);
-
-  try {
-    // 1. Post to DB fin_vouchers (best-effort)
-    await db.from("fin_vouchers").insert({
-      voucher_number: pvNum,
-      voucher_date: paidDate,
-      voucher_type: "PV",
-      reference_no: invoice.invoice_number,
-      description: `Vendor Payment: ${invoice.invoice_number} | PO: ${invoice.po_number || 'N/A'} | GRN: ${invoice.grn_number || 'N/A'} | Rcpt: ${receiptNum} | Method: ${invoice.payment_method || 'Bank'}`,
-      total_amount: invoice.total_amount,
-      status: "posted",
-      posted_at: new Date().toISOString()
-    });
-  } catch (e) {
-    console.warn("[ApInvoicesApi] fin_vouchers DB insert note:", e);
-  }
-
-  // 2. Write into Finance Store kvStore — vouchers key
-  const FIN_STORE_KEY = "zyno-pms-finance-data-v1-vouchers";
-  try {
-    const existing: any[] = JSON.parse(kvStore.getItem(FIN_STORE_KEY) || "[]");
-    const pvEntry = {
-      id: `vch-pv-${Date.now()}`,
-      voucher_no: pvNum,
-      voucher_type: "Payment Voucher",
-      date: paidDate,
-      name: `Vendor Settlement — ${invoice.invoice_number} (${receiptNum})`,
-      debit: "Trade Payables - Vendors",
-      debit_code: "22100001",
-      credit: "Bank Operating Account",
-      credit_code: "12000001",
-      amount: invoice.total_amount,
-      method: invoice.payment_method || "Bank Wire",
-      status: "Posted",
-      property_name: "Procurement",
-      unit_ref: invoice.grn_number || invoice.po_number || "N/A",
-      tenant_name: String(invoice.vendor_id),
-    };
-    // Avoid duplicates
-    if (!existing.some((v: any) => v.voucher_no === pvNum)) {
-      kvStore.setItem(FIN_STORE_KEY, JSON.stringify([pvEntry, ...existing]));
-      // Notify Finance module to reload
-      window.dispatchEvent(new Event("finance_vouchers_updated"));
-    }
-  } catch (e) {
-    console.error("Failed to sync Payment Voucher to Finance Store:", e);
-  }
-
-  // 3. Write into Finance Store kvStore — payableInvoices (AP) key
-  const AP_STORE_KEY = "zyno-pms-finance-data-v1-ap";
-  try {
-    const existingAp: any[] = JSON.parse(kvStore.getItem(AP_STORE_KEY) || "[]");
-    const invNo = invoice.invoice_number;
-    // Update status to Paid if already exists, else add it
-    if (existingAp.some((i: any) => i.invoice_no === invNo)) {
-      const updatedAp = existingAp.map((i: any) =>
-        i.invoice_no === invNo ? { ...i, status: "Paid" } : i
-      );
-      kvStore.setItem(AP_STORE_KEY, JSON.stringify(updatedAp));
-    } else {
-      const apEntry = {
-        id: `ap-proc-${Date.now()}`,
-        invoice_no: invNo,
-        vendor: String(invoice.vendor_id),
-        date: invoice.invoice_date,
-        due_date: invoice.due_date || paidDate,
-        account: "51004001 - Repair and Maintenance Cost",
-        account_code: "51004001",
-        amount: invoice.total_amount,
-        status: "Paid",
-      };
-      kvStore.setItem(AP_STORE_KEY, JSON.stringify([apEntry, ...existingAp]));
-    }
-  } catch (e) {
-    console.error("Failed to sync AP Invoice to Finance Store:", e);
-  }
+  // Vendor settlement is posted through the backend: Dr Trade Payables (Sundry Creditors, the account procurement
+  // invoices are credited to), Cr Bank. Nothing is written to browser caches.
+  await postVoucherLinesToBackend({
+    type: "Payment",
+    date: paidDate,
+    reference: pvNum,
+    description: `Vendor Payment: ${invoice.invoice_number} | PO: ${invoice.po_number || 'N/A'} | GRN: ${invoice.grn_number || 'N/A'} | Rcpt: ${receiptNum}`,
+    lines: [
+      { account_code: "21000", debit: Number(invoice.total_amount) || 0, credit: 0 },
+      { account_code: "12000001", debit: 0, credit: Number(invoice.total_amount) || 0 },
+    ],
+  });
 }
 
 export const ApInvoicesApi = {
@@ -433,27 +370,6 @@ export const ApInvoicesApi = {
         }
       } catch (e) {
         console.warn("Failed cross-syncing pms_vendor_invoices:", e);
-      }
-
-      // ── Cross-sync with Finance Store AP (zyno-pms-finance-data-v1-ap) ──
-      try {
-        const finApRaw = kvStore.getItem("zyno-pms-finance-data-v1-ap");
-        if (finApRaw) {
-          const finApList: any[] = JSON.parse(finApRaw);
-          let finChanged = false;
-          const updatedFin = finApList.map((f: any) => {
-            if (f.invoice_no === existingInv.invoice_number || f.id === existingInv.id) {
-              finChanged = true;
-              return { ...f, status: payload.status === "PAID" ? "Paid" : f.status };
-            }
-            return f;
-          });
-          if (finChanged) {
-            kvStore.setItem("zyno-pms-finance-data-v1-ap", JSON.stringify(updatedFin));
-          }
-        }
-      } catch (e) {
-        console.warn("Failed cross-syncing zyno-pms-finance-data-v1-ap:", e);
       }
 
       // Dispatch global refresh events

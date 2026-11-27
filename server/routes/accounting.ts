@@ -639,7 +639,7 @@ router.get('/general-ledger', async (req: Request, res: Response) => {
       date: r.date,
       account_code: r.account_code,
       account_name: r.account_name || r.account_code,
-      account_type: r.account_type || '',
+      account_type: TB_TYPE[String(r.account_type || '').toLowerCase()] || 'Assets',
       reference: r.reference,
       source: VOUCHER_SOURCE_LABEL[String(r.voucher_type || '').toLowerCase()] || r.voucher_type || 'Journal Voucher',
       description: r.description || '',

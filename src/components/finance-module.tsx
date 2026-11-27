@@ -4463,21 +4463,6 @@ function PayableInvoiceSubModule() {
         }
       } catch {}
 
-      // Update local storage for zyno-pms-finance-data-v1-ap and finance-store state
-      try {
-        if (typeof markPayableInvoicePaid === "function") {
-          markPayableInvoicePaid(payTarget.invoice_no);
-        }
-        const finApRaw = kvStore.getItem("zyno-pms-finance-data-v1-ap");
-        if (finApRaw) {
-          const finApList: any[] = JSON.parse(finApRaw);
-          const updatedFin = finApList.map((f: any) =>
-            f.invoice_no === payTarget.invoice_no ? { ...f, status: "Paid" } : f
-          );
-          kvStore.setItem("zyno-pms-finance-data-v1-ap", JSON.stringify(updatedFin));
-        }
-      } catch {}
-
       // Add Payment Voucher into Finance Store
       const suffix = payTarget.invoice_no.replace('APINV-', '').replace('INV-AP-', '').replace('INV-', '');
       const pvNo = `PV-${suffix}`;
@@ -4486,8 +4471,8 @@ function PayableInvoiceSubModule() {
         voucher_type: "Payment Voucher",
         date: payForm.paymentDate,
         name: `Vendor Settlement — ${payTarget.invoice_no} (${payTarget.vendor})`,
-        debit: "Trade Payables - Vendors",
-        debit_code: "22100001",
+        debit: "Trade Payables - Vendors (Sundry Creditors)",
+        debit_code: "21000",
         credit: crName,
         credit_code: crCode,
         amount: payTarget.amount,
