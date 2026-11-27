@@ -136,10 +136,7 @@ function AdminDashboard() {
           mtdTotal = clearedPdcs.reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0);
         }
 
-        // If no explicit PDCs match current month, calculate from active occupied monthly rent
-        if (mtdTotal === 0 && occupiedUnits.length > 0) {
-          mtdTotal = occupiedUnits.reduce((sum: number, u: any) => sum + Number(u.current_rent || u.price || 0), 0);
-        }
+        // Collected means money actually received: no fallback to the rent roll, so it reads 0 until a cheque clears.
 
         setProperties(props);
         setRecentTickets(ticketsData || []);
