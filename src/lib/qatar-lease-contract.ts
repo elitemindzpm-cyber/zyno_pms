@@ -114,7 +114,6 @@ export interface LeaseContractData {
   earlyVacationCompensationAr?: string;
   petPolicyEn?: string;
   petPolicyAr?: string;
-  specialConditionsEn?: string;
   specialConditionsAr?: string;
 
   // Rent-Free Concession & 13-Month Term Support
