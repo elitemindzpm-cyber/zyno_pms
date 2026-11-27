@@ -1129,6 +1129,171 @@ router.post('/ap-invoices/:invoiceNo/pay', async (req: Request, res: Response) =
   }
 });
 
+// ── Legal cases, payroll runs, bank clearances, reconciliations and statements ───────────────────────
+const LEGAL_RECEIVABLE_CODE = '12411001';
+const PAYROLL_DEFAULT_EXPENSE_CODE = '51101001';
+const money2 = (n: unknown) => Math.round((Number(n) || 0) * 100) / 100;
+const readGuard = (req: Request, res: Response, what: string) => {
+  const role = (req as any).user?.role as string | undefined;
+  if (!dbAllowed(role, 'fin_vouchers', 'read')) { res.status(403).json({ error: `Not authorized to view ${what}` }); return false; }
+  return true;
+};
+const writeGuard = (req: Request, res: Response, what: string) => {
+  const role = (req as any).user?.role as string | undefined;
+  if (!dbAllowed(role, 'fin_vouchers', 'write')) { res.status(403).json({ error: `Not authorized to ${what}` }); return false; }
+  return true;
+};
+const fail = (res: Response, tag: string, e: any, msg: string) => {
+  if (e?.status) return res.status(e.status).json({ error: e.message });
+  console.error(`[${tag}]`, e?.message); return res.status(500).json({ error: msg });
+};
+
+router.get('/legal-cases', async (req: Request, res: Response) => {
+  try {
+    if (!readGuard(req, res, 'legal cases')) return;
+    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_legal_cases ORDER BY escalation_date DESC, created_at DESC`;
+    res.json({ data: rows.map((r) => ({ id: String(r.id), legal_case_id: r.legal_case_id, tenant_name: r.tenant_name || '', property_name: r.property_name || '', unit_ref: r.unit_ref || '',
+      original_amount: Number(r.original_amount) || 0, outstanding_balance: Number(r.outstanding_balance) || 0, escalation_date: dateOnly(r.escalation_date), reason: r.reason || '', status: r.status })) });
+  } catch (e: any) { fail(res, 'legal-cases', e, 'Failed to load legal cases'); }
+});
+
+// Escalate to legal: reclassify the amount from tenant receivables to legal receivables.
+router.post('/legal-cases', async (req: Request, res: Response) => {
+  try {
+    if (!writeGuard(req, res, 'escalate cases')) return;
+    const b = req.body || {};
+    const caseId = String(b.legal_case_id || '').trim(); const amount = money2(b.original_amount); const date = ymd(b.escalation_date);
+    if (!caseId || amount <= 0 || !date) return res.status(400).json({ error: 'legal_case_id, escalation_date and an amount above zero are required' });
+    const dup = await prisma.$queryRaw<any[]>`SELECT id FROM fin_legal_cases WHERE legal_case_id = ${caseId} LIMIT 1`;
+    if (dup.length) return res.status(409).json({ error: `Legal case ${caseId} already exists` });
+    const posted = await postManualVoucher({
+      voucher_date: date, voucher_type: 'Journal', reference_no: `LGL-${caseId}`,
+      description: `Legal escalation — ${b.tenant_name || ''} (${b.unit_ref || ''}) [${caseId}]`,
+      lines: [{ account_code: LEGAL_RECEIVABLE_CODE, debit: amount, credit: 0 }, { account_code: AR_CONTROL_CODE, debit: 0, credit: amount }],
+      created_by: (req as any).user?.id ?? null,
+    });
+    await prisma.$executeRaw`INSERT INTO fin_legal_cases (id, legal_case_id, tenant_name, property_name, unit_ref, original_amount, outstanding_balance, escalation_date, reason, status, voucher_number)
+      VALUES (${randomUUID()}, ${caseId}, ${b.tenant_name || null}, ${b.property_name || null}, ${b.unit_ref || null}, ${amount}, ${money2(b.outstanding_balance ?? amount)}, ${date}, ${b.reason || null}, ${b.status || 'Legal Notice Sent'}, ${posted?.[0]?.voucher_number ?? null})`;
+    res.status(201).json({ data: { legal_case_id: caseId } });
+  } catch (e: any) { fail(res, 'legal-cases:create', e, 'Failed to escalate the case'); }
+});
+
+// Record a recovery: receipt into cash / bank / PDC in hand against legal receivables, then reduce the case balance.
+router.post('/legal-cases/:caseId/recover', async (req: Request, res: Response) => {
+  try {
+    if (!writeGuard(req, res, 'record recoveries')) return;
+    const caseId = String(req.params.caseId);
+    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_legal_cases WHERE legal_case_id = ${caseId} OR id = ${caseId} LIMIT 1`;
+    if (!rows.length) return res.status(404).json({ error: 'Legal case not found' });
+    const c = rows[0];
+    const b = req.body || {};
+    const amount = money2(b.amount);
+    if (amount <= 0) return res.status(400).json({ error: 'amount must be above zero' });
+    if (amount > Number(c.outstanding_balance) + 0.001) return res.status(400).json({ error: `Recovery exceeds the outstanding balance of ${Number(c.outstanding_balance)}` });
+    const method = String(b.payment_method || 'Bank Transfer').toLowerCase();
+    const debitCode = method.includes('cash') ? CASH_IN_HAND_CODE : method.includes('pdc') ? '12900001' : String(b.bank_gl || DEFAULT_BANK_CODE);
+    const date = ymd(b.date) || new Date().toISOString().slice(0, 10);
+    await postManualVoucher({
+      voucher_date: date, voucher_type: 'Receipt', reference_no: b.reference ? `REC-${b.reference}` : undefined,
+      description: `Legal Settlement Recovery — ${c.tenant_name || ''} (${c.unit_ref || ''}) [${c.legal_case_id}]${b.narration ? ' ' + b.narration : ''}`,
+      lines: [{ account_code: debitCode, debit: amount, credit: 0 }, { account_code: LEGAL_RECEIVABLE_CODE, debit: 0, credit: amount }],
+      created_by: (req as any).user?.id ?? null,
+    });
+    const newBal = Math.max(0, money2(Number(c.outstanding_balance) - amount));
+    await prisma.$executeRaw`UPDATE fin_legal_cases SET outstanding_balance = ${newBal}, status = ${newBal <= 0 ? 'Fully Recovered' : 'Partially Recovered'} WHERE id = ${c.id}`;
+    res.json({ data: { legal_case_id: c.legal_case_id, outstanding_balance: newBal } });
+  } catch (e: any) { fail(res, 'legal-cases:recover', e, 'Failed to record the recovery'); }
+});
+
+router.get('/payroll-runs', async (req: Request, res: Response) => {
+  try {
+    if (!readGuard(req, res, 'payroll runs')) return;
+    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_payroll_runs ORDER BY created_at DESC`;
+    res.json({ data: rows.map((r) => ({ id: String(r.id), payroll_run_id: r.payroll_run_id, period: r.period || '', department: r.department || '', account_code: r.account_code || '',
+      basic_salary: Number(r.basic_salary) || 0, allowances: Number(r.allowances) || 0, overtime: Number(r.overtime) || 0, deductions: Number(r.deductions) || 0,
+      total_amount: Number(r.total_amount) || 0, bank_account: r.bank_account || '', status: r.status, error_details: r.error_details || undefined })) });
+  } catch (e: any) { fail(res, 'payroll-runs', e, 'Failed to load payroll runs'); }
+});
+
+// Post a payroll run: Dr staff cost, Cr bank.
+router.post('/payroll-runs', async (req: Request, res: Response) => {
+  try {
+    if (!writeGuard(req, res, 'post payroll')) return;
+    const b = req.body || {};
+    const runId = String(b.payroll_run_id || '').trim(); const total = money2(b.total_amount);
+    if (!runId || total <= 0) return res.status(400).json({ error: 'payroll_run_id and a total above zero are required' });
+    const dup = await prisma.$queryRaw<any[]>`SELECT id FROM fin_payroll_runs WHERE payroll_run_id = ${runId} LIMIT 1`;
+    if (dup.length) return res.status(409).json({ error: `Payroll run ${runId} is already posted` });
+    const date = ymd(b.date) || new Date().toISOString().slice(0, 10);
+    const known = await prisma.$queryRaw<any[]>`SELECT account_code FROM fin_coa_accounts WHERE account_code = ${String(b.account_code || '')} AND is_active = TRUE LIMIT 1`;
+    const expense = known.length ? String(b.account_code) : PAYROLL_DEFAULT_EXPENSE_CODE;
+    const posted = await postManualVoucher({
+      voucher_date: date, voucher_type: 'Payment', reference_no: `PAY-${runId}`,
+      description: `Payroll Disbursement for Period ${b.period || ''} - ${b.department || ''}`.trim(),
+      lines: [{ account_code: expense, debit: total, credit: 0 }, { account_code: String(b.bank_gl || DEFAULT_BANK_CODE), debit: 0, credit: total }],
+      created_by: (req as any).user?.id ?? null,
+    });
+    await prisma.$executeRaw`INSERT INTO fin_payroll_runs (id, payroll_run_id, period, department, account_code, basic_salary, allowances, overtime, deductions, total_amount, bank_account, status, error_details, voucher_number)
+      VALUES (${randomUUID()}, ${runId}, ${b.period || null}, ${b.department || null}, ${expense}, ${money2(b.basic_salary)}, ${money2(b.allowances)}, ${money2(b.overtime)}, ${money2(b.deductions)},
+              ${total}, ${b.bank_account || null}, 'Posted', ${`Successfully mapped & posted net QR ${total.toLocaleString()} from ${b.bank_account || 'bank'}`}, ${posted?.[0]?.voucher_number ?? null})`;
+    res.status(201).json({ data: { payroll_run_id: runId } });
+  } catch (e: any) { fail(res, 'payroll-runs:create', e, 'Failed to post the payroll run'); }
+});
+
+router.get('/bank-clearances', async (req: Request, res: Response) => {
+  try {
+    if (!readGuard(req, res, 'bank clearances')) return;
+    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_bank_clearances ORDER BY clearance_date DESC, created_at DESC`;
+    res.json({ data: rows.map((r) => ({ id: String(r.id), ref: r.ref, bank: r.bank || '', type: r.type || '', amount: Number(r.amount) || 0, date: dateOnly(r.clearance_date), status: r.status })) });
+  } catch (e: any) { fail(res, 'bank-clearances', e, 'Failed to load bank clearances'); }
+});
+router.post('/bank-clearances', async (req: Request, res: Response) => {
+  try {
+    if (!writeGuard(req, res, 'record clearances')) return;
+    const b = req.body || {}; const date = ymd(b.date);
+    if (!b.ref || !date || money2(b.amount) <= 0) return res.status(400).json({ error: 'ref, date and an amount above zero are required' });
+    await prisma.$executeRaw`INSERT INTO fin_bank_clearances (id, ref, bank, type, amount, clearance_date, status) VALUES (${randomUUID()}, ${String(b.ref)}, ${b.bank || null}, ${b.type || null}, ${money2(b.amount)}, ${date}, ${b.status || 'Pending Clearance'})`;
+    res.status(201).json({ data: { ref: b.ref } });
+  } catch (e: any) { fail(res, 'bank-clearances:create', e, 'Failed to record the clearance'); }
+});
+
+router.get('/bank-reconciliations', async (req: Request, res: Response) => {
+  try {
+    if (!readGuard(req, res, 'bank reconciliations')) return;
+    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_bank_recon_records ORDER BY statement_date DESC, created_at DESC`;
+    res.json({ data: rows.map((r) => ({ id: String(r.id), account_number: r.account_number, statement_date: dateOnly(r.statement_date), book_balance: Number(r.book_balance) || 0,
+      statement_balance: Number(r.statement_balance) || 0, difference: Number(r.difference) || 0, status: r.status })) });
+  } catch (e: any) { fail(res, 'bank-reconciliations', e, 'Failed to load reconciliations'); }
+});
+router.post('/bank-reconciliations', async (req: Request, res: Response) => {
+  try {
+    if (!writeGuard(req, res, 'record reconciliations')) return;
+    const b = req.body || {}; const date = ymd(b.statement_date);
+    if (!b.account_number || !date) return res.status(400).json({ error: 'account_number and statement_date are required' });
+    const book = money2(b.book_balance); const stmt = money2(b.statement_balance); const diff = money2(stmt - book);
+    await prisma.$executeRaw`INSERT INTO fin_bank_recon_records (id, account_number, statement_date, book_balance, statement_balance, difference, status)
+      VALUES (${randomUUID()}, ${String(b.account_number)}, ${date}, ${book}, ${stmt}, ${diff}, ${Math.abs(diff) < 0.01 ? 'Reconciled' : 'Discrepancy'})`;
+    res.status(201).json({ data: { difference: diff } });
+  } catch (e: any) { fail(res, 'bank-reconciliations:create', e, 'Failed to record the reconciliation'); }
+});
+
+router.get('/recon-statements', async (req: Request, res: Response) => {
+  try {
+    if (!readGuard(req, res, 'reconciliation statements')) return;
+    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_recon_statements ORDER BY created_at DESC`;
+    res.json({ data: rows.map((r) => ({ id: String(r.id), title: r.title, period: r.period || '', balance: r.balance || '', auditor: r.auditor || '' })) });
+  } catch (e: any) { fail(res, 'recon-statements', e, 'Failed to load statements'); }
+});
+router.post('/recon-statements', async (req: Request, res: Response) => {
+  try {
+    if (!writeGuard(req, res, 'archive statements')) return;
+    const b = req.body || {};
+    if (!b.title) return res.status(400).json({ error: 'title is required' });
+    await prisma.$executeRaw`INSERT INTO fin_recon_statements (id, title, period, balance, auditor) VALUES (${randomUUID()}, ${String(b.title)}, ${b.period || null}, ${b.balance || null}, ${b.auditor || null})`;
+    res.status(201).json({ data: { title: b.title } });
+  } catch (e: any) { fail(res, 'recon-statements:create', e, 'Failed to archive the statement'); }
+});
+
 // Posting Engine Compliance View
 router.get('/compliance', async (_req: Request, res: Response) => {
   try {

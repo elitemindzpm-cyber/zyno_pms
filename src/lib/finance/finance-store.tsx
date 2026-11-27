@@ -1271,11 +1271,12 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   });
   // Receivable invoices are read from the backend (fin_ar_invoices); nothing is kept in the browser.
   const [receivableInvoices, setReceivableInvoices] = useState<ReceivableInvoice[]>([]);
-  const [legalReceivables, setLegalReceivables] = useState<LegalReceivable[]>(INITIAL_LEGAL_RECEIVABLES);
-  const [payrollSyncs, setPayrollSyncs] = useState<PayrollSyncRun[]>(INITIAL_PAYROLL_SYNCS);
-  const [bankClearances, setBankClearances] = useState<BankClearanceEntry[]>(INITIAL_BANK_CLEARANCES);
-  const [bankReconciliations, setBankReconciliations] = useState<BankReconciliationRecord[]>(INITIAL_BANK_RECONCILIATIONS);
-  const [reconciliationStatements, setReconciliationStatements] = useState<ReconciliationStatementArchive[]>(INITIAL_RECON_STATEMENTS);
+  // Legal cases, payroll runs, bank clearances, reconciliations and statements are read from the backend.
+  const [legalReceivables, setLegalReceivables] = useState<LegalReceivable[]>([]);
+  const [payrollSyncs, setPayrollSyncs] = useState<PayrollSyncRun[]>([]);
+  const [bankClearances, setBankClearances] = useState<BankClearanceEntry[]>([]);
+  const [bankReconciliations, setBankReconciliations] = useState<BankReconciliationRecord[]>([]);
+  const [reconciliationStatements, setReconciliationStatements] = useState<ReconciliationStatementArchive[]>([]);
   const [cashBookEntries, setCashBookEntries] = useState<CashBookEntry[]>(() => {
     if (typeof window === "undefined") return INITIAL_CASH_BOOK;
     try {
@@ -1367,6 +1368,22 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         if (Array.isArray(apRes?.data)) setPayableInvoices(apRes.data);
       } catch (invErr) {
         console.warn("[FinanceStore] invoice registers load notice:", invErr);
+      }
+      try {
+        const [lg, pr, bc, br, rs]: any[] = await Promise.all([
+          apiRequest("/api/accounting/legal-cases"),
+          apiRequest("/api/accounting/payroll-runs"),
+          apiRequest("/api/accounting/bank-clearances"),
+          apiRequest("/api/accounting/bank-reconciliations"),
+          apiRequest("/api/accounting/recon-statements"),
+        ]);
+        if (Array.isArray(lg?.data)) setLegalReceivables(lg.data);
+        if (Array.isArray(pr?.data)) setPayrollSyncs(pr.data);
+        if (Array.isArray(bc?.data)) setBankClearances(bc.data);
+        if (Array.isArray(br?.data)) setBankReconciliations(br.data);
+        if (Array.isArray(rs?.data)) setReconciliationStatements(rs.data);
+      } catch (regErr) {
+        console.warn("[FinanceStore] registers load notice:", regErr);
       }
 
       // 3. Synthesize "PDC Received" (Entry 1 only) for every PDC in the system.
@@ -2595,12 +2612,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   }
 
   function addLegalEscalation(esc: Omit<LegalReceivable, "id">) {
-    const newLgl: LegalReceivable = {
-      ...esc,
-      id: `lgl-${Date.now()}`
-    };
-    setLegalReceivables(prev => [newLgl, ...prev]);
-    toast.success(`Legal Case ${newLgl.legal_case_id} escalated and posted to Legal Receivables (12411).`);
+    void invoiceAction("/api/accounting/legal-cases", esc).then((r) => {
+      if (r) toast.success(`Legal Case ${esc.legal_case_id} escalated and posted to Legal Receivables (12411).`);
+    });
   }
 
   function recoverLegalReceivable(
@@ -2619,140 +2633,40 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
       maturityDate?: string;
     }
   ) {
-    const isCash = paymentMethod.toLowerCase().includes("cash");
-    const isCheque = paymentMethod.toLowerCase().includes("cheque");
-    const isPdc = paymentMethod.toLowerCase().includes("pdc");
-    const methodType = isCash ? "CASH" : isPdc ? "PDC" : "BANK";
-
-    const entryDate = details?.date || new Date().toISOString().split("T")[0];
-    const finalTenant = tenantName || "Valued Tenant";
-    const finalUnit = unitRef || "General";
-    const finalProp = resolveCanonicalPropertyName(propertyName, unitRef, "Main Portfolio");
-    const detailNarration = isCheque && details?.chequeNo ? ` [Cheque #${details.chequeNo} - ${details.chequeBank || "Bank"}]` : "";
-
-    // 1. Update legal receivables balances
-    setLegalReceivables(prev => prev.map(l => {
-      if (l.legal_case_id === caseId || l.id === caseId) {
-        const newBal = Math.max(0, l.outstanding_balance - amount);
-        return {
-          ...l,
-          outstanding_balance: newBal,
-          status: newBal <= 0 ? ("Fully Recovered" as const) : ("Partially Recovered" as const)
-        };
-      }
-      return l;
-    }));
-
-    // 2. Add single local voucher entry if not already present
-    const drCode = isCash ? "12100001" : isPdc ? "12900" : "12000001";
-    const drAccount = isCash ? "Cash In Hand" : isPdc ? "PDC In Hand" : isCheque ? `Bank Account (${details?.chequeBank || "Bank"})` : "Bank Operating Account";
-
-    const voucherNumber = `VCH-REC-${bankRef}`;
-    setVouchers(prev => {
-      if (prev.some(v => v.voucher_no === voucherNumber)) return prev;
-      const rv: FinanceVoucher = {
-        id: `vch-rec-lgl-${Date.now()}`,
-        voucher_no: voucherNumber,
-        voucher_type: "Receipt Voucher",
-        date: entryDate,
-        name: `Legal Settlement Recovery — ${finalTenant} (${finalUnit}) [${caseId}]${detailNarration}`,
-        debit: drAccount,
-        debit_code: drCode,
-        credit: "Legal Receivables (12411)",
-        credit_code: "12411",
-        amount: amount,
-        method: paymentMethod,
-        status: "Posted",
-
-        property_name: finalProp,
-        unit_ref: finalUnit,
-        tenant_name: finalTenant,
-      };
-      return [rv, ...prev];
+    const narration = paymentMethod.toLowerCase().includes("cheque") && details?.chequeNo ? `[Cheque #${details.chequeNo} - ${details.chequeBank || "Bank"}]` : "";
+    void invoiceAction(`/api/accounting/legal-cases/${encodeURIComponent(caseId)}/recover`, {
+      amount,
+      reference: bankRef,
+      payment_method: paymentMethod,
+      date: details?.date,
+      narration,
+    }).then((r) => {
+      if (r) toast.success(`Recovered QR ${amount.toLocaleString()} for Legal Case ${caseId}.`);
     });
-
-    // 3. Trigger authoritative posting engine in background
-    void resolveAccountingAccounts({
-      transactionType: 'LEGAL_RECOVERY',
-      paymentMethod: methodType as any,
-      propertyId: propertyName || "1",
-      unitName: unitRef,
-    }).then(({ debit: drAcct, credit: crAcct }) => {
-      return postVoucher({
-        voucher_date: entryDate,
-        voucher_type: "Receipt",
-        description: `Legal Settlement Recovery — ${finalTenant} (${finalUnit}) [${caseId}]${detailNarration}`,
-        reference_no: bankRef,
-        lines: [
-          { account_code: drAcct.slCode, account_name: `${drAcct.glName} / ${drAcct.slName}`, debit: amount, credit: 0, description: drAcct.slName },
-          { account_code: crAcct.slCode, account_name: `${crAcct.glName} / ${crAcct.slName}`, debit: 0, credit: amount, description: crAcct.slName },
-        ],
-      });
-    }).catch(err => {
-      console.warn("[FinanceStore] Legal recovery posting note:", err?.message);
-    });
-
-    toast.success(`Recovered QR ${amount.toLocaleString()} for Legal Case ${caseId}.`);
   }
 
   function addPayrollSync(run: Omit<PayrollSyncRun, "id" | "status">) {
-    const newRun: PayrollSyncRun = {
-      ...run,
-      id: `pr-${Date.now()}`,
-      status: "Posted",
-
-      error_details: `Successfully mapped & posted net QR ${run.total_amount.toLocaleString()} from ${run.bank_account}`
-    };
-    setPayrollSyncs(prev => [newRun, ...prev]);
-
-    // Post to General Ledger as Voucher
-    const pv: FinanceVoucher = {
-      id: `vch-pr-${Date.now()}`,
-      voucher_no: `VCH-PAY-${run.payroll_run_id}`,
-      voucher_type: "Payment Voucher",
-      date: new Date().toISOString().split("T")[0],
-      name: `Payroll Disbursement for Period ${run.period} - ${run.department}`,
-      debit: "Staff Salaries & Allowances",
-      debit_code: "50100",
-      credit: "Bank Operating Account",
-      credit_code: "12000001",
-      amount: run.total_amount,
-      method: "Bank Transfer",
-      status: "Posted",
-      lines: [
-        { type: "DR", account: "Staff Salaries & Allowances", account_code: "50100", amount: run.total_amount, description: `Staff Salary Expense - Period ${run.period}` },
-        { type: "CR", account: "Bank Operating Account", account_code: "12000001", amount: run.total_amount, description: `Payroll Disbursement from ${run.bank_account}` }
-      ]
-    };
-    setVouchers(v => [pv, ...v]);
-    toast.success(`Payroll Run ${run.payroll_run_id} synced & posted to General Ledger!`);
+    void invoiceAction("/api/accounting/payroll-runs", run).then((r) => {
+      if (r) toast.success(`Payroll Run ${run.payroll_run_id} synced & posted to General Ledger!`);
+    });
   }
 
   function addBankClearance(entry: Omit<BankClearanceEntry, "id">) {
-    const newClr: BankClearanceEntry = {
-      ...entry,
-      id: `bc-${Date.now()}`
-    };
-    setBankClearances(prev => [newClr, ...prev]);
-    toast.success(`Clearance recorded for ${newClr.ref}`);
+    void invoiceAction("/api/accounting/bank-clearances", entry).then((r) => {
+      if (r) toast.success(`Clearance recorded for ${entry.ref}`);
+    });
   }
 
   function addBankReconciliation(rec: Omit<BankReconciliationRecord, "id">) {
-    const newRec: BankReconciliationRecord = {
-      ...rec,
-      id: `br-${Date.now()}`
-    };
-    setBankReconciliations(prev => [newRec, ...prev]);
-    toast.success(`Bank Reconciliation for ${newRec.statement_date} completed!`);
+    void invoiceAction("/api/accounting/bank-reconciliations", rec).then((r) => {
+      if (r) toast.success(`Bank Reconciliation for ${rec.statement_date} completed!`);
+    });
   }
 
   function addReconciliationStatement(stmt: Omit<ReconciliationStatementArchive, "id">) {
-    const newStmt: ReconciliationStatementArchive = {
-      ...stmt,
-      id: `rs-${Date.now()}`
-    };
-    setReconciliationStatements(prev => [newStmt, ...prev]);
-    toast.success(`Reconciliation Statement ${newStmt.title} archived.`);
+    void invoiceAction("/api/accounting/recon-statements", stmt).then((r) => {
+      if (r) toast.success(`Reconciliation Statement ${stmt.title} archived.`);
+    });
   }
 
   function addCashBookEntry(entry: { date: string; voucher: string; description: string; type: "in" | "out"; amount: number }) {
