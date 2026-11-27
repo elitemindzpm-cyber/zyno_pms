@@ -63,6 +63,7 @@ import {
 import { ProformaInvoiceDialog } from "@/components/proforma-invoice-dialog";
 import { BulkInvoiceDialog } from "@/components/finance/bulk-invoice-dialog";
 import { CustomerStatementSubModule } from "@/components/finance/customer-statement-submodule";
+import { RevenueRecognitionModal } from "@/components/leasing/revenue-recognition-modal";
 import { InvoiceViewDialog } from "@/components/finance/invoice-view-dialog";
 import { PropertyWiseProfitAndLossSubModule } from "@/components/finance/property-wise-pnl";
 import { UnbilledUnitsReportSubModule } from "@/components/finance/unbilled-units-report";
@@ -1486,6 +1487,7 @@ function BudgetHeadSubModule() {
 
 function FinanceDashboardSubModule() {
   const { vouchers: sharedVouchers, leases } = useAppData();
+  const [revenueRecognitionOpen, setRevenueRecognitionOpen] = useState(false);
 
   const activeLeases = (leases || []).filter((lease) => !["closed", "renewed"].includes(lease.status));
   const totalRentals = activeLeases.reduce((sum, lease) => {
@@ -1545,6 +1547,16 @@ function FinanceDashboardSubModule() {
 
   return (
     <div className="space-y-6">
+      <div className="flex justify-end">
+        <Button size="sm" variant="outline" onClick={() => setRevenueRecognitionOpen(true)}>
+          Run Month-End Revenue Recognition
+        </Button>
+      </div>
+      <RevenueRecognitionModal
+        isOpen={revenueRecognitionOpen}
+        onClose={() => setRevenueRecognitionOpen(false)}
+        onSuccess={() => setRevenueRecognitionOpen(false)}
+      />
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card className="bg-primary/5 border-primary/20 shadow-sm">
           <CardContent className="p-4">

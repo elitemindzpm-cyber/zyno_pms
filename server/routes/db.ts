@@ -453,7 +453,7 @@ router.post('/:table/update', async (req: Request, res: Response) => {
       });
     }
 
-    const { where = {} } = req.body;
+    const where = coerceWhere(modelName, req.body.where ?? {});
     const data = coerceForModel(modelName, req.body.data);
     if (!data) {
       return res.status(400).json({ data: null, error: 'No data provided for update' });
@@ -492,7 +492,7 @@ router.post('/:table/delete', async (req: Request, res: Response) => {
       });
     }
 
-    const { where = {} } = req.body;
+    const where = coerceWhere(modelName, req.body.where ?? {});
     if (modelName === 'properties') {
       const targets = await model.findMany({ where, select: { id: true } });
       for (const t of targets) await assertPropertyDeletable(t.id);

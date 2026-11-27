@@ -8,8 +8,13 @@ const dateTimeFields: Record<string, Set<string>> = {};
 const optionalStringFields: Record<string, Set<string>> = {};
 // String columns (e.g. JSON-in-LongText `metadata`): the UI sends objects, Prisma only accepts strings.
 const stringFields: Record<string, Set<string>> = {};
+// Numeric id columns: the browser sends ids as strings ("7"), but Prisma rejects a string for an Int/BigInt filter.
+const intFields: Record<string, Set<string>> = {};
+const bigIntFields: Record<string, Set<string>> = {};
 for (const m of ((Prisma as any).dmmf?.datamodel?.models ?? []) as any[]) {
   dateTimeFields[m.name] = new Set(m.fields.filter((f: any) => f.type === 'DateTime').map((f: any) => f.name));
+  intFields[m.name] = new Set(m.fields.filter((f: any) => f.type === 'Int').map((f: any) => f.name));
+  bigIntFields[m.name] = new Set(m.fields.filter((f: any) => f.type === 'BigInt').map((f: any) => f.name));
   stringFields[m.name] = new Set(m.fields.filter((f: any) => f.type === 'String' && !f.isList).map((f: any) => f.name));
   optionalStringFields[m.name] = new Set(
     m.fields.filter((f: any) => f.type === 'String' && !f.isRequired && !f.isList).map((f: any) => f.name)
@@ -41,18 +46,31 @@ function coerceRow(modelName: string, row: any) {
 // JSON-stringify them for String columns (meant for JSON values being written), so `.in()` on a
 // text column such as leases.lease_status silently matched nothing.
 export function coerceWhere(modelName: string, where: any) {
-  const fields = dateTimeFields[modelName];
-  if (!fields || !where || typeof where !== 'object' || Array.isArray(where)) return where;
+  const dates = dateTimeFields[modelName];
+  const ints = intFields[modelName];
+  const bigs = bigIntFields[modelName];
+  if (!where || typeof where !== 'object' || Array.isArray(where)) return where;
   const out: Record<string, any> = { ...where };
-  const fix = (v: any) => (typeof v === 'string' && DATE_ONLY.test(v) ? `${v}T00:00:00.000Z` : v);
+  const conv = (key: string, v: any) => {
+    if (typeof v !== 'string') return v;
+    if (dates?.has(key) && DATE_ONLY.test(v)) return `${v}T00:00:00.000Z`;
+    if (ints?.has(key) && /^-?\d+$/.test(v)) return Number(v);
+    if (bigs?.has(key) && /^-?\d+$/.test(v)) return BigInt(v);
+    return v;
+  };
   for (const key of Object.keys(out)) {
-    if (!fields.has(key)) continue;
+    if (key === 'AND' || key === 'OR' || key === 'NOT') {
+      const v = out[key];
+      out[key] = Array.isArray(v) ? v.map((x) => coerceWhere(modelName, x)) : coerceWhere(modelName, v);
+      continue;
+    }
+    if (!dates?.has(key) && !ints?.has(key) && !bigs?.has(key)) continue;
     const v = out[key];
-    if (typeof v === 'string') out[key] = fix(v);
+    if (typeof v === 'string') out[key] = conv(key, v);
     else if (v && typeof v === 'object' && !(v instanceof Date) && !Array.isArray(v)) {
       const o: Record<string, any> = { ...v };
-      for (const op of ['equals', 'gt', 'gte', 'lt', 'lte', 'not']) if (typeof o[op] === 'string') o[op] = fix(o[op]);
-      if (Array.isArray(o.in)) o.in = o.in.map(fix);
+      for (const op of ['equals', 'gt', 'gte', 'lt', 'lte', 'not']) if (typeof o[op] === 'string') o[op] = conv(key, o[op]);
+      if (Array.isArray(o.in)) o.in = o.in.map((x: any) => conv(key, x));
       out[key] = o;
     }
   }
