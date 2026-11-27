@@ -37,6 +37,28 @@ function coerceRow(modelName: string, row: any) {
   return out;
 }
 
+// Filters ({ col: { in: [...] } }, { gte: ... }) must keep their operator objects. coerceRow() would
+// JSON-stringify them for String columns (meant for JSON values being written), so `.in()` on a
+// text column such as leases.lease_status silently matched nothing.
+export function coerceWhere(modelName: string, where: any) {
+  const fields = dateTimeFields[modelName];
+  if (!fields || !where || typeof where !== 'object' || Array.isArray(where)) return where;
+  const out: Record<string, any> = { ...where };
+  const fix = (v: any) => (typeof v === 'string' && DATE_ONLY.test(v) ? `${v}T00:00:00.000Z` : v);
+  for (const key of Object.keys(out)) {
+    if (!fields.has(key)) continue;
+    const v = out[key];
+    if (typeof v === 'string') out[key] = fix(v);
+    else if (v && typeof v === 'object' && !(v instanceof Date) && !Array.isArray(v)) {
+      const o: Record<string, any> = { ...v };
+      for (const op of ['equals', 'gt', 'gte', 'lt', 'lte', 'not']) if (typeof o[op] === 'string') o[op] = fix(o[op]);
+      if (Array.isArray(o.in)) o.in = o.in.map(fix);
+      out[key] = o;
+    }
+  }
+  return out;
+}
+
 export function coerceForModel(modelName: string, data: any) {
   return Array.isArray(data) ? data.map((r) => coerceRow(modelName, r)) : coerceRow(modelName, data);
 }

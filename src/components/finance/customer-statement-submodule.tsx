@@ -815,11 +815,15 @@ export function CustomerStatementSubModule({
       if (!matchesCust) return;
 
       const vNameLower = (v.name || "").toLowerCase();
-      const isDepositReceipt = v.voucher_type === "Receipt Voucher" && (
+      // The backend stores every event-posted voucher as type "Journal", so a deposit receipt arrives as a
+      // Journal Voucher; recognise it by its "... Deposit Received" description as well.
+      const depositReceivedName = /deposit (received|receipt)/.test(vNameLower) && !/refund|deduction|offset/.test(vNameLower);
+      const isDepositReceipt = (v.voucher_type === "Receipt Voucher" || (v.voucher_type === "Journal Voucher" && depositReceivedName)) && (
         v.voucher_no.startsWith("VCH-SD-") ||
         v.voucher_no.startsWith("VCH-KAH-DEP-") ||
         vNameLower.includes("security deposit") ||
         vNameLower.includes("kahramaa deposit") ||
+        depositReceivedName ||
         v.account_code === "21500001" ||
         v.credit_code === "21500001" ||
         v.credit_code === "21500" ||
@@ -827,14 +831,16 @@ export function CustomerStatementSubModule({
         v.credit_code === "21100"
       );
 
-      const isDepositRefund = v.voucher_type === "Payment Voucher" && (
-        v.voucher_no.startsWith("PV-REF-SD") ||
-        v.voucher_no.startsWith("PV-REF-TOK") ||
-        vNameLower.includes("deposit refund") ||
-        v.account_code === "21500001" ||
-        v.debit_code === "21500001" ||
-        v.debit_code === "21100004"
-      );
+      const isDepositRefund =
+        (v.voucher_type === "Journal Voucher" && vNameLower.includes("deposit refund")) ||
+        (v.voucher_type === "Payment Voucher" && (
+          v.voucher_no.startsWith("PV-REF-SD") ||
+          v.voucher_no.startsWith("PV-REF-TOK") ||
+          vNameLower.includes("deposit refund") ||
+          v.account_code === "21500001" ||
+          v.debit_code === "21500001" ||
+          v.debit_code === "21100004"
+        ));
 
       const isDepositDeduction = v.voucher_type === "Journal Voucher" && (
         vNameLower.includes("deposit deduction") ||

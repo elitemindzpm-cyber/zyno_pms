@@ -935,7 +935,14 @@ export async function postLeaseDepositReceipt(
   return postVoucher({
     voucher_date: new Date().toISOString().split('T')[0],
     voucher_type: 'Receipt',
-    description: 'Security Deposit Received',
+    description: ({
+      SECURITY: 'Security Deposit Received',
+      GUARANTEE: 'Guarantee Deposit Received',
+      KAHRAMAA: 'Kahramaa Deposit Received',
+      QATAR_COOL: 'Qatar Cool Deposit Received',
+      SERVICE_FEE: 'Service Fee Deposit Received',
+      RESERVATION: 'Reservation Deposit Received',
+    } as Record<string, string>)[depositType] || 'Security Deposit Received',
     reference_no: reference,
     tenant_id: tenantId,
     property_id: propertyId,

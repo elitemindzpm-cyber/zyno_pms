@@ -5,8 +5,8 @@
 import { Router, Request, Response, NextFunction } from 'express';
 import prisma from '../lib/prisma';
 import { txn } from '../lib/prisma';
-import { coerceForModel, buildIncludeFromSelect } from '../lib/coerce';
-import { postAccountingEvent, resolveUnitSl, refreshEventTotals, validateEventBalance, manualPdcStatusUpdate, nextCustomerCode } from '../lib/finance-rpc';
+import { coerceForModel, coerceWhere, buildIncludeFromSelect } from '../lib/coerce';
+import { postManualVoucher, postAccountingEvent, resolveUnitSl, refreshEventTotals, validateEventBalance, manualPdcStatusUpdate, nextCustomerCode } from '../lib/finance-rpc';
 import { HttpError, sendDbError } from '../lib/errors';
 import { dbAllowed, ruleFor, rpcAllowed, type Op } from '../lib/db-policy';
 import { createLease, terminateLease, insertPdc, isTerminatedLease } from '../services/leases';
@@ -42,23 +42,52 @@ async function tenantHoldsActiveLeaseForUnitRef(claims: { sub: string; email?: s
 
 // Stock is consumed with a conditional update, so on-hand quantity can never go negative.
 async function recordMaterialUsage(usage: any) {
-  return txn(async (tx) => {
+  // Stock and the usage record are saved together; the ledger entry (Dr consumption / Cr inventory) follows.
+  // If the ledger entry cannot be posted, the issue is undone so stock and ledger never disagree.
+  let unitCost = 0;
+  const created = await txn(async (tx) => {
     const qty = Number(usage.quantity);
     if (!Number.isInteger(qty) || qty <= 0) throw new HttpError(400, 'Quantity must be a positive whole number');
     if (usage.part_id) {
-      const parts = await tx.$queryRaw<{ id: string; name: string; quantity_on_hand: number }[]>`
-        SELECT id, name, quantity_on_hand FROM inventory_parts WHERE id = ${usage.part_id} FOR UPDATE`;
+      const parts = await tx.$queryRaw<{ id: string; name: string; quantity_on_hand: number; unit_cost: unknown }[]>`
+        SELECT id, name, quantity_on_hand, unit_cost FROM inventory_parts WHERE id = ${usage.part_id} FOR UPDATE`;
       if (!parts.length) throw new HttpError(404, `Part ${usage.part_id} was not found`);
       const part = parts[0];
       if (Number(part.quantity_on_hand) < qty) {
         throw new HttpError(400,
           `Insufficient stock available for part ${part.name}. Available: ${part.quantity_on_hand}, Requested: ${qty}`);
       }
+      unitCost = Number(part.unit_cost) || 0;
       await tx.$executeRaw`UPDATE inventory_parts SET quantity_on_hand = quantity_on_hand - ${qty}
         WHERE id = ${part.id} AND quantity_on_hand >= ${qty}`;
     }
-    return tx.material_usage.create({ data: usage });
+    const data = { ...usage };
+    if ((data.cost === undefined || data.cost === null || Number(data.cost) === 0) && unitCost > 0) data.cost = unitCost * qty;
+    return tx.material_usage.create({ data });
   });
+
+  const cost = Number((created as any).cost) || 0;
+  if (cost > 0) {
+    try {
+      await postManualVoucher({
+        voucher_date: new Date().toISOString().slice(0, 10),
+        voucher_type: 'Journal',
+        reference_no: `MI-${String((created as any).id).slice(0, 18)}`,
+        description: `Material issue — part ${usage.part_id ?? ''} x ${usage.quantity}${usage.ticket_id ? ' (ticket ' + usage.ticket_id + ')' : ''}`,
+        lines: [
+          { account_code: '51004001', debit: cost, credit: 0 },   // Repair and Maintenance Cost
+          { account_code: '12800001', debit: 0, credit: cost },   // Stock-Inventory
+        ],
+      });
+    } catch (err) {
+      await txn(async (tx) => {
+        await tx.material_usage.delete({ where: { id: (created as any).id } });
+        if (usage.part_id) await tx.$executeRaw`UPDATE inventory_parts SET quantity_on_hand = quantity_on_hand + ${Number(usage.quantity)} WHERE id = ${usage.part_id}`;
+      });
+      throw err;
+    }
+  }
+  return created;
 }
 
 // Leave: the request must fit within the employee's remaining balance (balance minus pending) for that year.
@@ -175,7 +204,7 @@ router.post('/:table/query', async (req: Request, res: Response) => {
     // Filter out unsupported columns or format conditions
     const cleanWhere: Record<string, any> = {};
     // Plain dates ("2026-12-01") in a filter on a DateTime column must be full ISO timestamps for Prisma.
-    for (const [key, val] of Object.entries(coerceForModel(modelName, where) as Record<string, any>)) {
+    for (const [key, val] of Object.entries(coerceWhere(modelName, where) as Record<string, any>)) {
       if (val !== undefined) {
         cleanWhere[key] = val;
       }
