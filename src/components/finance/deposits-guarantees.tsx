@@ -409,7 +409,7 @@ export function DepositsGuarantees() {
             }
             return {
               ...d,
-              tenant_name: tenant || d.tenant_name || "Valued Tenant",
+              tenant_name: tenant || d.tenant_name || "—",
               unit_ref: unit || d.unit_ref || "—",
               property_name: prop || d.property_name || "—",
               created_at: d.created_at || vch?.voucher_date || d.deposit_date,
@@ -449,9 +449,9 @@ export function DepositsGuarantees() {
             deduction_amount: v.settlement_deductions != null ? Number(v.settlement_deductions) : undefined,
             refund_amount: v.settlement_refund != null ? Number(v.settlement_refund) : undefined,
             settled_at: v.settlement_date || (lease && (lease as any).actualVacateDate),
-            property_name: lease?.property || "Old Salata - Residence No:23",
-            unit_ref: lease?.unit || "AAA - Flat16",
-            tenant_name: lease?.tenantName || "Valued Tenant",
+            property_name: lease?.property || "—",
+            unit_ref: lease?.unit || "—",
+            tenant_name: lease?.tenantName || "—",
             lease_start_date: lease?.startDate || "2025-10-01",
             lease_end_date: lease?.endDate || "2026-09-30",
             monthly_rent: lease?.monthlyRent || 5600,
@@ -477,7 +477,7 @@ export function DepositsGuarantees() {
             settled_at: d.settled_at,
             property_name: d.property_name || "—",
             unit_ref: d.unit_ref || "—",
-            tenant_name: d.tenant_name || "Valued Tenant",
+            tenant_name: d.tenant_name || "—",
             lease_start_date: d.lease_start_date,
             lease_end_date: d.lease_end_date,
             created_at: d.created_at,
@@ -523,9 +523,9 @@ export function DepositsGuarantees() {
     try {
       const targetDep = settleTarget;
       const todayStr = new Date().toISOString().split("T")[0];
-      const targetProp = targetDep.property_name && targetDep.property_name !== "—" ? targetDep.property_name : "Old Salata - Residence No:23";
-      const targetUnit = targetDep.unit_ref && targetDep.unit_ref !== "—" ? targetDep.unit_ref : "AAA - Flat16";
-      const targetTenant = targetDep.tenant_name && targetDep.tenant_name !== "—" ? targetDep.tenant_name : "Mr. Hafeez Shaik";
+      const targetProp = targetDep.property_name && targetDep.property_name !== "—" ? targetDep.property_name : "—";
+      const targetUnit = targetDep.unit_ref && targetDep.unit_ref !== "—" ? targetDep.unit_ref : "—";
+      const targetTenant = targetDep.tenant_name && targetDep.tenant_name !== "—" ? targetDep.tenant_name : "—";
 
       const isStringId = typeof id === "string" && (id.startsWith("v") || id.startsWith("ctx-") || id.startsWith("dep-") || isNaN(Number(id)));
       if (isStringId) {
@@ -700,7 +700,7 @@ export function DepositsGuarantees() {
         receiptNo:        `REC-DEP-${Date.now().toString().slice(-6)}`,
         acknowledgementNo:`ACK-DEP-${lease.unit}-${Date.now().toString().slice(-4)}`,
         date:             collectDate,
-        tenantName:       lease.tenantName || "Valued Tenant",
+        tenantName:       lease.tenantName || "—",
         propertyName:     lease.property  || "Property",
         unitRef:          lease.unit       || "Unit",
         leaseStartDate:   lease.startDate  || collectDate,
@@ -962,9 +962,9 @@ export function DepositsGuarantees() {
       receiptNo: dep.receipt_no || (isSettled ? `REC-REF-${String(dep.id).slice(-4)}` : `REC-DEP-${String(dep.id).slice(-4)}`),
       acknowledgementNo: `DEP-ACK-${dep.id}`,
       date: isSettled && dep.settled_at ? dep.settled_at.split("T")[0] : new Date().toISOString().split("T")[0],
-      tenantName: dep.tenant_name && dep.tenant_name !== "—" ? dep.tenant_name : "Mr. Hafeez Shaik",
-      propertyName: dep.property_name && dep.property_name !== "—" ? dep.property_name : "Old Salata - Residence No:23",
-      unitRef: dep.unit_ref && dep.unit_ref !== "—" ? dep.unit_ref : "AAA - Flat16",
+      tenantName: dep.tenant_name && dep.tenant_name !== "—" ? dep.tenant_name : "—",
+      propertyName: dep.property_name && dep.property_name !== "—" ? dep.property_name : "—",
+      unitRef: dep.unit_ref && dep.unit_ref !== "—" ? dep.unit_ref : "—",
       leaseStartDate: dep.lease_start_date || "2025-10-01",
       leaseEndDate: dep.lease_end_date || "2026-09-30",
       monthlyRent: dep.monthly_rent || 5600,

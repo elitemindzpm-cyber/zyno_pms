@@ -95,6 +95,19 @@ export function resolveCanonicalPropertyName(
   const unitClean = (unitHint || "").trim();
   const unitUpper = unitClean.toUpperCase();
 
+  // A real, full property name from the record always wins. The unit-name guesses below (e.g. "flat16",
+  // "002") used to override it, which sent units of other properties to Old Salata / Neeman's.
+  const explicitProp = (propertyHint || "").trim();
+  if (
+    explicitProp &&
+    !GENERIC_PROPERTY_HINTS.has(explicitProp.toLowerCase()) &&
+    !PROPERTY_TITLE_BY_CODE[explicitProp.toUpperCase()] &&
+    !/^Building\s+[A-Z]{2,4}\d{2}$/i.test(explicitProp) &&
+    !/^[A-Z]{2,4}\d{2}-[A-Z0-9]+$/i.test(explicitProp)
+  ) {
+    return explicitProp;
+  }
+
   if (unitUpper && !GENERIC_UNIT_HINTS.has(unitClean.toLowerCase())) {
     const unitPrefixMatch = unitUpper.match(/^([A-Z]{2,4}\d{2})(?:-[A-Z0-9]+)?$/);
     if (unitPrefixMatch && PROPERTY_TITLE_BY_CODE[unitPrefixMatch[1]]) {
