@@ -589,7 +589,7 @@ export function AssetManager({ role }: { role: "admin" | "prop-mgr" }) {
 
     account_rows: [
       { id: "1", account_code: "12300001", account_name: "12300001 - Fixed Asset (Capital Cost / Asset A/C)", debit: "", credit: "" },
-      { id: "2", account_code: "22100001", account_name: "22100001 - Trade Payables (Vendors / Supplier A/C)", debit: "", credit: "" }
+      { id: "2", account_code: "21000", account_name: "21000 - Trade Payables (Vendors / Supplier A/C)", debit: "", credit: "" }
     ],
 
     has_warranty: true,
@@ -1729,7 +1729,7 @@ export function AssetManager({ role }: { role: "admin" | "prop-mgr" }) {
           dr_account: "Fixed Asset (Capital Cost / Asset A/C)",
           dr_code: "12300001",
           cr_account: "Trade Payables (Vendors / Supplier A/C)",
-          cr_code: "22100001",
+          cr_code: "21000",
           amount: acqAmount,
         });
       }
@@ -1812,7 +1812,7 @@ export function AssetManager({ role }: { role: "admin" | "prop-mgr" }) {
 
         account_rows: [
           { id: "1", account_code: "12300001", account_name: "12300001 - Fixed Asset (Capital Cost / Asset A/C)", debit: "", credit: "" },
-          { id: "2", account_code: "22100001", account_name: "22100001 - Trade Payables (Vendors / Supplier A/C)", debit: "", credit: "" }
+          { id: "2", account_code: "21000", account_name: "21000 - Trade Payables (Vendors / Supplier A/C)", debit: "", credit: "" }
         ],
         has_warranty: true,
         warranty_type: "Standard Manufacturer",
@@ -5405,7 +5405,7 @@ export function AssetManager({ role }: { role: "admin" | "prop-mgr" }) {
                       <span className="font-mono font-bold text-emerald-600">QAR {Number(form.acquisition_amount || 0).toLocaleString()}</span>
                     </div>
                     <div className="flex items-center justify-between p-2 rounded bg-card border text-xs">
-                      <span className="font-mono text-muted-foreground">Cr: 22100001 - Trade Payables (Vendors / Supplier A/C)</span>
+                      <span className="font-mono text-muted-foreground">Cr: 21000 - Trade Payables (Vendors / Supplier A/C)</span>
                       <span className="font-mono font-bold text-emerald-600">QAR {Number(form.acquisition_amount || 0).toLocaleString()}</span>
                     </div>
                   </div>

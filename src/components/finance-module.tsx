@@ -38,6 +38,7 @@ import {
   type FinPostingPeriod, type FinBank, type FinBankAccount, type FinBankReconciliation, type FinContract
 } from "@/lib/db-finance";
 import { toast } from "sonner";
+import { saveCompanyBankAccount } from "@/lib/finance/bankAccounts";
 import { request as apiRequest } from "@/lib/api-client";
 import { ExcelImportEmbedded } from "@/components/excel-import-embedded";
 import { useAppData } from "@/lib/app-data-context";
@@ -4044,7 +4045,7 @@ function GrnCostMappingSubModule() {
                 • <strong>Dr. {form.mapped_gl.split(' - ')[0]}</strong> ({form.mapped_gl.split(' - ')[1] || "Expense"}) — QAR {Number(form.amount || 0).toLocaleString()}
               </div>
               <div className="font-mono text-emerald-600 dark:text-emerald-400">
-                • <strong>Cr. 22100001</strong> Trade Payables (GRN Clearing / Supplier Liability) — QAR {Number(form.amount || 0).toLocaleString()}
+                • <strong>Cr. 21000</strong> Trade Payables (GRN Clearing / Supplier Liability) — QAR {Number(form.amount || 0).toLocaleString()}
               </div>
             </div>
           </div>
@@ -4515,7 +4516,7 @@ function PayableInvoiceSubModule() {
         payment_method: "Bank Wire / QNB Corporate Electronic",
         reference_no: `TXN-${Date.now().toString().slice(-6)}`,
         bank_account: "Qatar National Bank (QNB) - Main Operating",
-        gl_debit_account: "22100001 - Trade Payables - Vendors",
+        gl_debit_account: "21000 - Trade Payables - Vendors",
         gl_credit_account: "12000001 - Bank Operating Account (QNB)",
         status: "Settled",
         created_at: new Date().toISOString()
@@ -4867,7 +4868,7 @@ function PayableInvoiceSubModule() {
                     );
                   })}
                   <div className="flex justify-between text-emerald-700 dark:text-emerald-300 border-t border-emerald-500/20 pt-1 font-bold">
-                    <span>Cr. 22100001 - Trade Payables - Vendors ({form.vendor || "Vendor"})</span>
+                    <span>Cr. 21000 - Trade Payables - Vendors ({form.vendor || "Vendor"})</span>
                     <span>QAR {totalApAmount.toLocaleString()}</span>
                   </div>
                 </div>
@@ -5009,7 +5010,7 @@ function PayableInvoiceSubModule() {
                   General Ledger Posting Impact (Auto-Posted upon Settlement):
                 </div>
                 <div className="font-mono">
-                  • <strong className="text-blue-600">Dr. 22100001</strong> Trade Payables - Vendors — QAR {Number(payTarget.amount || 0).toLocaleString()}
+                  • <strong className="text-blue-600">Dr. 21000</strong> Trade Payables - Vendors — QAR {Number(payTarget.amount || 0).toLocaleString()}
                 </div>
                 <div className="font-mono">
                   {payForm.paymentMethod.includes("Cash") || payForm.paymentMethod.includes("Petty") ? (
@@ -6783,42 +6784,39 @@ function BankAccountSubModule() {
           opening_balance: updatedAccount.opening_balance,
           status: updatedAccount.status
         });
-      } catch (err) {
-        console.warn("DB account update error:", err);
+      } catch (err: any) {
+        toast.error(`Bank account was not updated: ${err?.message || "the server rejected it"}`);
+        return;
       }
-
-      setData(prev => {
-        const next = prev.map(a => String(a.id) === String(editingAccount.id) ? updatedAccount : a);
-        try { kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
-        return next;
-      });
+      window.dispatchEvent(new Event("banks-updated"));
+      await load();
       toast.success(`Bank account ${updatedAccount.account_number} updated successfully`);
     } else {
-      const newAccountPayload = {
-        bank_id: form.bank_id,
-        account_number: form.account_number.trim(),
-        account_title: form.account_title.trim(),
-        currency: form.currency.trim().toUpperCase() || "QAR",
-        opening_balance: Number(form.opening_balance) || 0,
-        status: form.status
-      };
-
-      let createdAccount: FinBankAccount = { id: String(Date.now()), ...newAccountPayload };
-      try {
-        const res = await FinBankAccountsApi.create(newAccountPayload);
-        if (res && res.id) {
-          createdAccount = { ...res, status: res.status || form.status };
-        }
-      } catch (err) {
-        console.warn("DB account create error:", err);
+      // New accounts are created by the backend, which assigns the account's own GL code (12000001, 12000002, ...)
+      // and creates its ledger account. A failed save is reported; nothing is kept only in the browser.
+      const bank = banksList.find((x) => String(x.id) === String(form.bank_id));
+      if (!bank) {
+        toast.error("Choose the bank for this account. Add the bank first if it is not listed.");
+        return;
       }
-
-      setData(prev => {
-        const next = [createdAccount, ...prev];
-        try { kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
-        return next;
-      });
-      toast.success("Bank account created and mapped to GL Account 12000");
+      try {
+        await saveCompanyBankAccount({
+          id: "",
+          bankName: bank.name,
+          accountTitle: form.account_title.trim(),
+          accountNumber: form.account_number.trim(),
+          iban: form.account_number.trim(),
+          glCode: "",
+          glName: "",
+          currency: form.currency.trim().toUpperCase() || "QAR",
+        });
+      } catch (err: any) {
+        toast.error(`Bank account was not saved: ${err?.message || "the server rejected it"}`);
+        return;
+      }
+      window.dispatchEvent(new Event("banks-updated"));
+      await load();
+      toast.success("Bank account created with its own GL account. It now appears in the deposit and receipt pickers.");
     }
 
     setOpen(false);
@@ -11302,7 +11300,7 @@ function NoteStatusBadge({ status }: { status: NoteStatus }) {
 // ─────────────────────────────────────────────────────────────────────────────
 // DEBIT NOTE SUB-MODULE
 // AP-side: Vendor owes us back (goods return, overcharge, etc.)
-// GL: Dr. 22100001 Trade Payables / Cr. 51xxx Expense (reversal)
+// GL: Dr. 21000 Trade Payables / Cr. 51xxx Expense (reversal)
 // ─────────────────────────────────────────────────────────────────────────────
 function DebitNoteSubModule() {
   const LS_KEY = "fin_debit_notes";
@@ -11400,7 +11398,7 @@ function DebitNoteSubModule() {
   function handlePost(dn: DebitNote) {
     const updated = notes.map(n => n.id === dn.id ? { ...n, status: "POSTED" as NoteStatus } : n);
     save(updated);
-    toast.success(`${dn.dn_number} posted to GL. Dr. ${dn.party_type === "Vendor" ? "22100001 (Trade Payables)" : "13100001 (Trade Receivables)"} / Cr. ${dn.expense_gl}`);
+    toast.success(`${dn.dn_number} posted to GL. Dr. ${dn.party_type === "Vendor" ? "21000 (Trade Payables)" : "13100001 (Trade Receivables)"} / Cr. ${dn.expense_gl}`);
   }
 
   function handleCancel(dn: DebitNote) {
@@ -11638,7 +11636,7 @@ function DebitNoteSubModule() {
               <p className="font-semibold text-rose-700 dark:text-rose-400">GL Double-Entry Posting Preview:</p>
               {form.party_type === "Vendor" ? (
                 <>
-                  <p className="font-mono">• <strong className="text-blue-600">Dr. 22100001</strong> Trade Payables - Vendors — QAR {form.amount.toLocaleString()}</p>
+                  <p className="font-mono">• <strong className="text-blue-600">Dr. 21000</strong> Trade Payables - Vendors — QAR {form.amount.toLocaleString()}</p>
                   <p className="font-mono">• <strong className="text-rose-600">Cr. {form.expense_gl}</strong> {EXPENSE_GL_OPTIONS.find(g => g.value === form.expense_gl)?.label.split("–")[1]?.trim() || "Expense Reversal"} — QAR {form.amount.toLocaleString()}</p>
                   <p className="text-muted-foreground italic text-[10px]">Reduces payable liability to vendor and reverses property direct expense.</p>
                 </>
@@ -11687,7 +11685,7 @@ function DebitNoteSubModule() {
               </div>
               <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 space-y-1 text-[11px]">
                 <p className="font-semibold">GL Journal Entry Impact:</p>
-                <p className="font-mono">Dr. {viewNote.party_type === "Customer" ? "13100001 Trade Receivables" : "22100001 Trade Payables"} — QAR {viewNote.amount.toLocaleString()}</p>
+                <p className="font-mono">Dr. {viewNote.party_type === "Customer" ? "13100001 Trade Receivables" : "21000 Trade Payables"} — QAR {viewNote.amount.toLocaleString()}</p>
                 <p className="font-mono">Cr. {viewNote.expense_gl} — QAR {viewNote.amount.toLocaleString()}</p>
               </div>
               {viewNote.notes && <p className="text-muted-foreground italic">{viewNote.notes}</p>}

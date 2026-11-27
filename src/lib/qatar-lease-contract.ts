@@ -76,6 +76,12 @@ export interface LeaseContractData {
   securityDepositMonthsEn?: string;
   securityDepositMonthsAr?: string;
   securityDepositAmount?: number;
+  // Terms agreed on the lease record (printed as "Additional Terms" when present)
+  penaltiesEn?: string;
+  maintenanceResponsibilityEn?: string;
+  utilityResponsibilityEn?: string;
+  parkingDetailsEn?: string;
+  specialConditionsEn?: string;
   electricityWaterDeposit?: number;
   electricityWaterDepositWordsEn?: string;
   electricityWaterDepositWordsAr?: string;
@@ -426,20 +432,21 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
   const rentFreeDays = localOverride?.rent_free_days ?? raw.rent_free_days ?? raw.rentFreeDays ?? (hasRentFree ? 30 : 0);
   const rentFreePosition = localOverride?.rent_free_position ?? raw.rent_free_position ?? raw.rentFreePosition ?? 'FIRST_MONTH';
 
-  const rent = Number(localOverride?.monthlyRent || raw.monthlyRent || raw.rent || raw.rental_amount || raw.current_rent || raw.price || 5500);
-  const deposit = Number(localOverride?.monthlyRent || raw.securityDeposit || raw.security_deposit || raw.security_deposit_amount || rent);
-  const utilDeposit = Number(raw.electricityWaterDeposit || 2000);
-  const pdcTotal = Number(localOverride?.pdc_count || raw.pdc_count || raw.pdcCount || 12);
+  // The lease record is authoritative; a cached override only fills what the record does not have.
+  const rent = Number(raw.monthlyRent || raw.rent || raw.rental_amount || raw.current_rent || raw.price || localOverride?.monthlyRent || 0);
+  const deposit = Number(raw.securityDepositAmount ?? raw.securityDeposit ?? raw.security_deposit ?? raw.security_deposit_amount ?? localOverride?.securityDeposit ?? 0);
+  const utilDeposit = Number(raw.electricityWaterDeposit ?? raw.utilityDeposit ?? 0);
+  const pdcTotal = Number(raw.pdc_count ?? raw.pdcCount ?? localOverride?.pdc_count ?? 12);
   const postDatedCount = Math.max(0, pdcTotal - 1);
 
-  const sDate = localOverride?.commencement_date || raw.startDate || raw.leaseStartDate || raw.commencement_date || raw.contract_start_date || "2026-09-01";
-  const eDate = localOverride?.expiry_date || raw.endDate || raw.leaseEndDate || raw.expiry_date || raw.contract_end_date || "2027-08-31";
+  const sDate = raw.startDate || raw.leaseStartDate || raw.commencement_date || raw.contract_start_date || localOverride?.commencement_date || "2026-09-01";
+  const eDate = raw.endDate || raw.leaseEndDate || raw.expiry_date || raw.contract_end_date || localOverride?.expiry_date || "2027-08-31";
 
-  const rawUnit = raw.unit || raw.unit_ref || raw.propertyUnitNumber || raw.unit_code || raw.unit_name || "04";
-  const unitNum = String(rawUnit).replace(/^(Flat|Unit|Shop|Office|Villa)\s*/i, "").trim() || "04";
+  const rawUnit = raw.unit || raw.unit_ref || raw.propertyUnitNumber || raw.unit_code || raw.unit_name || "—";
+  const unitNum = String(rawUnit).replace(/^(Flat|Unit|Shop|Office|Villa)\s*/i, "").trim() || "—";
   const propName = raw.property || raw.propertyAddressEn || raw.property_name || raw.properties?.title || "—";
-  const tenantName = localOverride?.tenant_name || raw.tenantName || raw.tenantNameEn || raw.tenant_name || raw.full_name || "—";
-  const qid = raw.tenantQid || raw.qid || raw.qatar_id || raw.customer_qid || generateDeterministicQid(tenantName);
+  const tenantName = raw.tenantName || raw.tenantNameEn || raw.tenant_name || raw.full_name || localOverride?.tenant_name || "—";
+  const qid = raw.tenantQid || raw.qid || raw.qatar_id || raw.customer_qid || "—";
   const mobile = raw.tenantMobile || raw.phone || raw.mobile || raw.mobile_number || "—";
 
   // Enforce Requirement 4: Property Code - Unit Code - Unique 4 digit Number
@@ -456,18 +463,25 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
     : null;
   const bedrooms = bedroomsNum !== null
     ? bedroomsToEnglish(bedroomsNum)
-    : "Three"; // safe default (explicitly overridable via bedroomCount)
+    : "—"; // not recorded on the unit
 
   const furnishing = raw.furnishingStatusEn || raw.furnishing || raw.furnishing_type || "—";
   const furnishingAr = furnishing === "—" ? "—" : furnishing.toLowerCase().includes("fully") ? "مفروش بالكامل" : furnishing.toLowerCase().includes("unfurnished") ? "غير مفروش" : "نصف مفروش";
 
   // Meters — use explicit passed values first, then unit-level fields
-  const elecMeter = raw.electricityNumber || raw.electricity_meter_no || raw.kahramaa_electricity_no || raw.elecMeter || "1424225";
-  const waterMeter = raw.waterNumber || raw.water_meter_no || raw.kahramaa_water_no || raw.waterMeter || "1264332";
+  const elecMeter = raw.electricityNumber || raw.electricity_meter_no || raw.kahramaa_electricity_no || raw.elecMeter || "—";
+  const waterMeter = raw.waterNumber || raw.water_meter_no || raw.kahramaa_water_no || raw.waterMeter || "—";
   const zone = raw.zoneEn || raw.area_zone || (propName.includes("WAKRA") ? "Al Wakara-90" : propName.includes("SALATA") ? "Old Salata-18" : propName);
   const zoneAr = raw.zoneAr || (zone.includes("Wakara") ? "الوكرة 90" : zone.includes("Salata") ? "السلطة القديمة 18" : zone);
-  const street = raw.streetNumber || raw.street_building_name || raw.street_no || "993";
-  const building = raw.buildingNumber || raw.building_no || raw.property_code || "01";
+  const street = raw.streetNumber || raw.street_building_name || raw.street_no || "—";
+  const building = raw.buildingNumber || raw.building_no || raw.property_code || "—";
+
+  const depositRatio = rent > 0 && deposit > 0 ? deposit / rent : 0;
+  const depositWholeMonths = depositRatio > 0 && Number.isInteger(depositRatio) && depositRatio <= 12 ? depositRatio : 0;
+  const depositMonthsEn = depositWholeMonths ? (depositWholeMonths === 1 ? "One month" : `${monthsToEnglishWords(depositWholeMonths)}`) : `QAR ${deposit.toLocaleString("en-US")}`;
+  const depositMonthsAr = depositWholeMonths ? (depositWholeMonths === 1 ? "شهر واحد" : monthsToArabicWords(depositWholeMonths)) : `${deposit.toLocaleString("en-US")} ريال قطري`;
+  const graceDays = Number(raw.rentPaymentGracePeriodDays ?? raw.gracePeriodDays ?? 7);
+  const noticeDays = Number(raw.renewalNoticePeriodDays ?? raw.noticePeriodDays ?? 30);
 
   const termMonths: number = hasRentFree
     ? 13
@@ -481,7 +495,7 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
     : (raw.leaseDurationWordsAr || monthsToArabicWords(termMonths));
 
   return {
-    contractNumber: standardContractNum,
+    contractNumber: raw.contractNumber && String(raw.contractNumber).trim() ? String(raw.contractNumber).trim() : standardContractNum,
     contractDate: raw.contractDate || formatEnglishDate(sDate),
     contractDateAr: raw.contractDateAr || formatArabicDate(sDate),
 
@@ -496,11 +510,11 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
     tenantNameEn: tenantName,
     tenantNameAr: raw.tenantNameAr || `السيد/ ${toArabicTenantName(tenantName)}`,
     tenantQid: qid,
-    tenantPoBox: raw.tenantPoBox || "200360",
+    tenantPoBox: raw.tenantPoBox || "—",
     tenantAddressEn: raw.tenantAddressEn || "Doha – Qatar",
     tenantAddressAr: raw.tenantAddressAr || "الدوحة - قطر",
     tenantMobile: mobile,
-    tenantEmail: raw.tenantEmail || "tenant@email.com",
+    tenantEmail: raw.tenantEmail || "—",
     occupancyConditionEn: raw.occupancyConditionEn || "Occupant must be one family only",
     occupancyConditionAr: raw.occupancyConditionAr || "يجب ان يكون الساكن عائلة واحدة فقط",
 
@@ -526,8 +540,8 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
     currentChequeCount: 1,
     postDatedChequeCount: postDatedCount,
     postDatedChequeCountAr: postDatedCount === 11 ? "أحد عشر" : String(postDatedCount),
-    securityDepositMonthsEn: raw.securityDepositMonthsEn || "One month",
-    securityDepositMonthsAr: raw.securityDepositMonthsAr || "شهر واحد",
+    securityDepositMonthsEn: raw.securityDepositMonthsEn || depositMonthsEn,
+    securityDepositMonthsAr: raw.securityDepositMonthsAr || depositMonthsAr,
     securityDepositAmount: deposit,
     electricityWaterDeposit: utilDeposit,
     electricityWaterDepositWordsEn: raw.electricityWaterDepositWordsEn || numberToEnglishWords(utilDeposit),
@@ -541,12 +555,12 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
     leaseEndDateAr: formatArabicDate(eDate),
     leaseMonthsCount: termMonths,
 
-    renewalNoticePeriodDays: raw.renewalNoticePeriodDays || 30,
-    renewalNoticePeriodDaysAr: raw.renewalNoticePeriodDaysAr || "30",
+    renewalNoticePeriodDays: noticeDays,
+    renewalNoticePeriodDaysAr: raw.renewalNoticePeriodDaysAr || String(noticeDays),
     inventoryReferenceEn: raw.inventoryReferenceEn || "inventory list",
     inventoryReferenceAr: raw.inventoryReferenceAr || "قائمة الجرد",
-    rentPaymentGracePeriodDays: raw.rentPaymentGracePeriodDays || 7,
-    rentPaymentGracePeriodDaysAr: raw.rentPaymentGracePeriodDaysAr || "سبعة",
+    rentPaymentGracePeriodDays: graceDays,
+    rentPaymentGracePeriodDaysAr: raw.rentPaymentGracePeriodDaysAr || numberToArabicWords(graceDays),
     landlordTerminationNoticePeriodEn: raw.landlordTerminationNoticePeriodEn || "two weeks",
     landlordTerminationNoticePeriodAr: raw.landlordTerminationNoticePeriodAr || "أسبوعين",
     governingLawEn: raw.governingLawEn || "QATAR, LAW NO.4 for the year 2008 amendments concerning of premises and building",
@@ -563,6 +577,12 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
     hasRentFree,
     rentFreeDays,
     rentFreePosition,
+
+    penaltiesEn: raw.penaltiesEn || undefined,
+    maintenanceResponsibilityEn: raw.maintenanceResponsibilityEn || undefined,
+    utilityResponsibilityEn: raw.utilityResponsibilityEn || undefined,
+    parkingDetailsEn: raw.parkingDetailsEn || undefined,
+    specialConditionsEn: raw.specialConditionsEn || undefined,
 
     landlordSignatureDate: raw.landlordSignatureDate || formatEnglishDate(sDate),
     landlordSignatureDateAr: raw.landlordSignatureDateAr || formatArabicDate(sDate),
@@ -1183,6 +1203,23 @@ export function generateBilingualLeaseContractHtml(inputData: Partial<LeaseContr
               <span class="clause-num">22)</span> ${d.petPolicyAr}
             </td>
           </tr>
+
+          <!-- Additional terms agreed on the lease record -->
+          ${(d.penaltiesEn || d.maintenanceResponsibilityEn || d.utilityResponsibilityEn || d.parkingDetailsEn || d.specialConditionsEn) ? `
+          <tr>
+            <td class="col-en">
+              <strong>Additional Terms Agreed:</strong>
+              ${d.maintenanceResponsibilityEn ? `<div>Maintenance responsibility: ${d.maintenanceResponsibilityEn}</div>` : ''}
+              ${d.utilityResponsibilityEn ? `<div>Utility responsibility: ${d.utilityResponsibilityEn}</div>` : ''}
+              ${d.parkingDetailsEn ? `<div>Parking / facilities: ${d.parkingDetailsEn}</div>` : ''}
+              ${d.penaltiesEn ? `<div>Penalties: ${d.penaltiesEn}</div>` : ''}
+              ${d.specialConditionsEn ? `<div>Special conditions: ${d.specialConditionsEn}</div>` : ''}
+            </td>
+            <td class="col-ar">
+              <strong>شروط إضافية متفق عليها:</strong>
+              <div style="direction:ltr; text-align:left;">See English column / انظر العمود الإنجليزي</div>
+            </td>
+          </tr>` : ''}
 
           <!-- Agreement Acknowledgement -->
           <tr style="font-weight: 600;">

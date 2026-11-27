@@ -1136,139 +1136,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [grnMappings, setGrnMappings] = useState<GrnCostMapping[]>(INITIAL_GRN_MAPPINGS);
   // Payable invoices are read from the backend (fin_ap_invoices); nothing is kept in the browser.
   const [payableInvoices, setPayableInvoices] = useState<PayableInvoice[]>([]);
-  const [vouchers, setVouchers] = useState<FinanceVoucher[]>(() => {
-    const initialKahramaa = buildKahramaaDepositVouchers();
-    const initialSdGuarantee = buildSecurityDepositGuaranteeVouchers();
-    const initialSpecialVouchers = [...initialKahramaa, ...initialSdGuarantee];
-    if (typeof window === "undefined") return [...initialSpecialVouchers, ...INITIAL_VOUCHERS];
-    try {
-      const saved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-vouchers`);
-      if (!saved) return [...initialSpecialVouchers, ...INITIAL_VOUCHERS];
-      const list: FinanceVoucher[] = JSON.parse(saved);
-      if (Array.isArray(list)) {
-        const seenPvSet = new Set<string>();
-        const cleaned = list.filter(v => {
-          const vNo = (v.voucher_no || "").toUpperCase();
-          const vName = (v.name || "").toLowerCase();
-          const uRef = (v.unit_ref || "").toUpperCase();
-
-          // Always refresh Kahramaa deposit vouchers and Security Deposit guarantee vouchers from authoritative Excel helpers
-          if (vNo.startsWith("VCH-KAH-DEP-") || vNo.startsWith("VCH-SD-GCHQ-")) {
-            return false;
-          }
-
-          if (v.voucher_no && v.voucher_no.startsWith("PV-SET-")) {
-            const key = `${v.tenant_name || ""}_${v.unit_ref || ""}_${v.amount}`;
-            if (seenPvSet.has(key)) return false;
-            seenPvSet.add(key);
-          }
-          return true;
-        }).map(v => {
-          const vNo = (v.voucher_no || "").toUpperCase();
-          const vName = (v.name || "").toLowerCase();
-          if (vNo.startsWith("VCH-TRF-CNL-") || vName.includes("pdc cancelled") || vName.includes("returned on bank transfer")) {
-            return {
-              ...v,
-              debit: "Customer PDC Liability",
-              debit_code: "21400",
-              credit: "PDC In Hand",
-              credit_code: "12900",
-            };
-          }
-          if (vNo.startsWith("VCH-TRF-") || vName.includes("bank transfer received in place of pdc")) {
-            return {
-              ...v,
-              debit: v.debit && !v.debit.includes("Revenue") ? v.debit : "Bank Operating Account",
-              debit_code: v.debit_code && v.debit_code !== "41100" ? v.debit_code : "12000001",
-              credit: "Tenant Receivables — Unit SL",
-              credit_code: "12413001",
-            };
-          }
-
-          const uUpper = (v.unit_ref || "").toUpperCase().trim();
-          const sdGuarantee = uUpper ? SECURITY_DEPOSIT_GUARANTEE_BY_UNIT[uUpper] : undefined;
-          const isSdVoucher =
-            (vName.includes("security deposit") || vNo.startsWith("VCH-SD-") || v.credit_code === "21500" || v.credit_code === "21500001") &&
-            !vName.includes("refund");
-          const isSdGuaranteeCheque =
-            (vName.includes("security deposit") || vNo.startsWith("VCH-SD-")) &&
-            isSdVoucher &&
-            (vName.includes("guarantee cheque") || /\|\s*pdc\b/i.test(v.name || "") || vName.includes("(pdc)") || Boolean(sdGuarantee));
-
-          const isPayrollAccrual =
-            v.credit_code === "21900" ||
-            v.debit_code === "50100" ||
-            vName.includes("payroll") ||
-            vName.includes("salary") ||
-            Number(v.amount) === 115250;
-          const normalizedAmt = isPayrollAccrual && Number(v.amount) === 115250 ? 96820 : v.amount;
-          const dateCorr = INITIAL_DATE_CORRECTIONS[v.voucher_no] || (typeof window !== "undefined" ? getStoredVoucherDateCorrections()[v.voucher_no] : null);
-
-          // For opening security deposits:
-          // Guarantee Cheques: DR 12900002 Deposit PDC In Hand / CR 21500001 Security Deposit Liability — Unit SL
-          // Cash/Bank opening deposits: DR 21500 Security Deposit Liability (Control) (not bank) / CR 21500001 Security Deposit Liability — Unit SL
-          const effectiveDrCode = dateCorr?.newBankCode || (
-            isSdGuaranteeCheque
-              ? "12900002"
-              : isSdVoucher
-                ? "21500"
-                : v.debit_code
-          );
-          const effectiveDrName = dateCorr?.newBankName || (
-            isSdGuaranteeCheque
-              ? "Deposit PDC In Hand"
-              : isSdVoucher
-                ? "Security Deposit Liability (Control)"
-                : v.debit
-          );
-          const effectiveCrCode = isSdVoucher ? "21500001" : v.credit_code;
-          const effectiveCrName = isSdVoucher ? "Security Deposit Liability — Unit SL" : v.credit;
-
-          const effectiveDate = dateCorr?.newDate || (isSdGuaranteeCheque ? GUARANTEE_CHEQUE_DATE : v.date);
-          const effectiveName = isSdGuaranteeCheque
-            ? (v.name || "")
-                .replace(/\|\s*PDC\s*$/i, "| Guarantee Cheque")
-                .replace(/^Security Deposit Receipt/i, "Guarantee Cheque — Security Deposit Receipt")
-            : v.name;
-
-          const dims = extractVoucherDimensions(effectiveName, v.property_name, v.unit_ref, v.tenant_name);
-
-          return normalizeVoucherAccounts({
-            ...v,
-            name: effectiveName,
-            amount: normalizedAmt,
-            date: effectiveDate,
-            debit_code: effectiveDrCode,
-            debit: effectiveDrName,
-            credit_code: effectiveCrCode,
-            credit: effectiveCrName,
-            account_code: effectiveCrCode,
-            property_name: dims.property_name || v.property_name,
-            unit_ref: dims.unit_ref || v.unit_ref,
-            tenant_name: dims.tenant_name || v.tenant_name,
-            ...(isSdGuaranteeCheque ? { method: "Guarantee Cheque", payment_mode: "Guarantee Cheque" } : {}),
-            lines: v.lines?.map(l => ({
-              ...l,
-              amount: isPayrollAccrual && Number(l.amount) === 115250 ? 96820 : l.amount,
-              account_code: l.type === "DR"
-                ? (dateCorr?.newBankCode || (isSdGuaranteeCheque ? "12900002" : (isSdVoucher ? "21500" : l.account_code)))
-                : (isSdVoucher ? "21500001" : l.account_code),
-              account: l.type === "DR"
-                ? (dateCorr?.newBankName || (isSdGuaranteeCheque ? "Deposit PDC In Hand" : (isSdVoucher ? "Security Deposit Liability (Control)" : l.account)))
-                : (isSdVoucher ? "Security Deposit Liability — Unit SL" : l.account),
-              property_name: resolveCanonicalPropertyName(l.property_name || dims.property_name, dims.unit_ref, l.property_name || ""),
-              description: isSdGuaranteeCheque ? effectiveName : l.description,
-            })),
-          });
-        });
-        const existingNos = new Set(cleaned.map(v => v.voucher_no));
-        const missingKahramaa = initialKahramaa.filter(kv => !existingNos.has(kv.voucher_no));
-        const missingSd = initialSdGuarantee.filter(sv => !existingNos.has(sv.voucher_no));
-        return [...missingKahramaa, ...missingSd, ...cleaned];
-      }
-      return [...initialSpecialVouchers, ...INITIAL_VOUCHERS];
-    } catch { return [...initialSpecialVouchers, ...INITIAL_VOUCHERS]; }
-  });
+  // Vouchers are loaded from the database; no sample or browser-cached vouchers are used.
+  const [vouchers, setVouchers] = useState<FinanceVoucher[]>([]);
   // Receivable invoices are read from the backend (fin_ar_invoices); nothing is kept in the browser.
   const [receivableInvoices, setReceivableInvoices] = useState<ReceivableInvoice[]>([]);
   // Legal cases, payroll runs, bank clearances, reconciliations and statements are read from the backend.
@@ -1277,13 +1146,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   const [bankClearances, setBankClearances] = useState<BankClearanceEntry[]>([]);
   const [bankReconciliations, setBankReconciliations] = useState<BankReconciliationRecord[]>([]);
   const [reconciliationStatements, setReconciliationStatements] = useState<ReconciliationStatementArchive[]>([]);
-  const [cashBookEntries, setCashBookEntries] = useState<CashBookEntry[]>(() => {
-    if (typeof window === "undefined") return INITIAL_CASH_BOOK;
-    try {
-      const saved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-cashbook`);
-      return saved ? JSON.parse(saved) : INITIAL_CASH_BOOK;
-    } catch { return INITIAL_CASH_BOOK; }
-  });
+  // The cash book is the ledger on the Cash In Hand accounts (served by the backend); no browser entries are kept.
+  const [cashBookEntries] = useState<CashBookEntry[]>([]);
   // The ledger comes from the backend (posted voucher lines in the database); the browser does not build it.
   const [allLedgerTransactions, setAllLedgerTransactions] = useState<LedgerTransaction[]>([]);
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
@@ -1906,82 +1770,7 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
         });
       }
 
-      // 5. Reload kvStore caches for AP/AR/Cashbook (vouchers are maintained authoritatively above)
-      // 5. Pull fin_payroll_syncs from Db & ensure GL reflection
-      try {
-        const { data: pSyncData } = await db
-          .from("fin_payroll_syncs")
-          .select("*")
-          .order("created_at", { ascending: false });
-
-        if (pSyncData && pSyncData.length > 0) {
-          setPayrollSyncs(pSyncData.map((s: any) => {
-            const rawSyncAmt = Number(s.total_amount) || 0;
-            const normSyncAmt = rawSyncAmt === 115250 ? 96820 : rawSyncAmt;
-            return {
-              id: s.id,
-              payroll_run_id: s.payroll_run_id,
-              period: s.period,
-              department: "Operations & Facility Management",
-              account_code: "50100",
-              basic_salary: normSyncAmt,
-              allowances: 0,
-              overtime: 0,
-              deductions: 0,
-              total_amount: normSyncAmt,
-              bank_account: "12000001 - Bank Operating Account",
-              status: s.status === "Posted" ? "Posted" : "Pending",
-              error_details: s.error_details || "Synced with GL",
-            };
-          }));
-
-          setVouchers(prev => {
-            const vMap = new Map(prev.map(v => [v.voucher_no, v]));
-            const hasExistingSalaryPayable = prev.some(v => v.credit_code === "21900" || v.debit_code === "50100");
-            pSyncData.forEach((ps: any) => {
-              const vNo = `VCH-PAY-${ps.payroll_run_id}`;
-              if (!vMap.has(vNo) && !hasExistingSalaryPayable && ps.status === "Posted") {
-                const rawAmt = Number(ps.total_amount) || 0;
-                const amt = rawAmt === 115250 ? 96820 : rawAmt;
-                const dateStr = ps.created_at ? ps.created_at.split("T")[0] : new Date().toISOString().split("T")[0];
-                vMap.set(vNo, {
-                  id: `vch-ps-${ps.id}`,
-                  voucher_no: vNo,
-                  voucher_type: "Journal Voucher",
-                  date: dateStr,
-                  name: `Payroll Salary Disbursement & Accrual — Period ${ps.period}`,
-                  debit: "Staff Salaries & Payroll",
-                  debit_code: "50100",
-                  credit: "Salary Payable",
-                  credit_code: "21900",
-                  amount: amt,
-                  method: "Payroll Journal",
-                  status: "Posted",
-
-                  lines: [
-                    { type: "DR", account: "Staff Salaries & Payroll", account_code: "50100", amount: amt, description: `Staff Salary Expense - Period ${ps.period}` },
-                    { type: "CR", account: "Salary Payable", account_code: "21900", amount: amt, description: `Salary Payable - Period ${ps.period}` },
-                  ]
-                });
-              }
-            });
-            return Array.from(vMap.values());
-          });
-        }
-      } catch (pErr) {
-        console.warn("Payroll syncs DB fetch note:", pErr);
-      }
-
-      // 6. Reload kvStore caches for AP/AR/Cashbook (vouchers are maintained authoritatively above)
-      if (typeof window !== "undefined") {
-        try {
-          const cbDataSaved = kvStore.getItem(`${FINANCE_STORAGE_KEY}-cashbook`);
-          if (cbDataSaved) {
-            const parsed = JSON.parse(cbDataSaved);
-            if (Array.isArray(parsed) && parsed.length) setCashBookEntries(parsed);
-          }
-        } catch { /* ignore */ }
-      }
+      // Payroll runs, legal cases, invoices and the ledger are loaded from the backend above; there is no browser cache to reload.
 
       if (showToast) {
         toast.success("Financial records & reports refreshed successfully");
@@ -2667,27 +2456,9 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     });
   }
 
-  function addCashBookEntry(entry: { date: string; voucher: string; description: string; type: "in" | "out"; amount: number }) {
-    setCashBookEntries(prev => {
-      const currentIn = prev.reduce((s, r) => s + (r.cash_in || 0), 0);
-      const currentOut = prev.reduce((s, r) => s + (r.cash_out || 0), 0);
-      const newTotalIn = currentIn + (entry.type === "in" ? entry.amount : 0);
-      const newTotalOut = currentOut + (entry.type === "out" ? entry.amount : 0);
-      const newBal = newTotalIn - newTotalOut;
-
-      const newEntry: CashBookEntry = {
-        id: `cb-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`,
-        date: entry.date,
-        voucher: entry.voucher,
-        description: entry.description,
-        cash_in: entry.type === "in" ? entry.amount : 0,
-        cash_out: entry.type === "out" ? entry.amount : 0,
-        balance: newBal
-      };
-      return [newEntry, ...prev];
-    });
-    toast.success("Cash Book entry recorded.");
-  }
+  // Cash movements are recorded by posting a receipt or payment (the cash book reads the ledger), so there is
+  // nothing to add in the browser. Kept so existing callers keep working.
+  function addCashBookEntry(_entry: { date: string; voucher: string; description: string; type: "in" | "out"; amount: number }) {}
 
   async function correctVoucherDate(params: {
     voucherNo: string;
