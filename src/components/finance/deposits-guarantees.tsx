@@ -379,7 +379,7 @@ export function DepositsGuarantees() {
       .subscribe();
 
     return () => { db.removeChannel(channel); };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [leases?.length, units?.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function load(showLoading = true) {
     if (showLoading) setLoading(true);
@@ -389,19 +389,28 @@ export function DepositsGuarantees() {
         const [depRes, vchRes, propsRes, unitsRes, custsRes] = await Promise.all([
           db.from("fin_deposits").select("*").order("created_at", { ascending: false }),
           db.from("fin_vouchers").select("reference_no, description, voucher_date").like("voucher_number", "VCH-SD-%"),
-          db.from("properties").select("id, title, property_name"),
-          db.from("units").select("id, unit_ref, unit_code, unit_name"),
-          db.from("customers").select("id, full_name, display_name"),
+          db.from("properties").select("id, title, property_code"),
+          db.from("units").select("id, unit_ref, unit_code, unit_name, property_id"),
+          db.from("customers").select("*"),
         ]);
         if (!depRes.error && depRes.data) {
           const propById = new Map<string, string>(
-            (propsRes.data || []).map((p: any) => [String(p.id), String(p.title || p.property_name || "").trim()])
+            (propsRes.data || []).map((p: any) => [String(p.id), String(p.title || p.property_code || "").trim()])
           );
-          const unitById = new Map<string, string>(
-            (unitsRes.data || []).map((u: any) => [String(u.id), String(u.unit_ref || u.unit_code || u.unit_name || "").trim()])
+          const unitById = new Map<string, { ref: string; propertyId?: string }>(
+            (unitsRes.data || []).map((u: any) => [
+              String(u.id),
+              {
+                ref: String(u.unit_ref || u.unit_code || u.unit_name || "").trim(),
+                propertyId: u.property_id != null ? String(u.property_id) : undefined,
+              },
+            ])
           );
           const custById = new Map<string, string>(
-            (custsRes.data || []).map((c: any) => [String(c.id), String(c.full_name || c.display_name || "").trim()])
+            (custsRes.data || []).map((c: any) => [
+              String(c.id),
+              String(c.full_name || c.display_name || c.first_name || c.name || "").trim(),
+            ])
           );
           const vchByRef = new Map<string, any>();
           (vchRes.data || []).forEach((v: any) => {
@@ -412,19 +421,25 @@ export function DepositsGuarantees() {
             const matchedLease = leases?.find(
               (l) => String(l.id) === String(d.lease_id) || String((l as any).reservationId) === String(d.lease_id)
             );
+            const unitInfo = d.unit_id ? unitById.get(String(d.unit_id)) : undefined;
+            const ctxUnit = !unitInfo?.ref && d.unit_id ? units?.find((u) => String(u.id) === String(d.unit_id)) : undefined;
             let tenant =
               d.tenant_name ||
               (d.tenant_id ? custById.get(String(d.tenant_id)) : "") ||
               matchedLease?.tenantName ||
+              ctxUnit?.currentTenant ||
               "";
             let unit =
               d.unit_ref ||
-              (d.unit_id ? unitById.get(String(d.unit_id)) : "") ||
+              unitInfo?.ref ||
+              ctxUnit?.unit ||
               matchedLease?.unit ||
               "";
             let prop =
               d.property_name ||
               (d.property_id ? propById.get(String(d.property_id)) : "") ||
+              (unitInfo?.propertyId ? propById.get(unitInfo.propertyId) : "") ||
+              ctxUnit?.property ||
               matchedLease?.property ||
               "";
             if (vch?.description) {
