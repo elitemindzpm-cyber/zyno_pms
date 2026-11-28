@@ -2687,31 +2687,26 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   // Derived Trial Balance Detailed — seeded from full COA so zero-balance
   // accounts always appear, then overlaid with actual transaction totals.
-  const trialBalanceDetailed = useMemo(() => {
-    // 1. Seed map with every account in the COA at zero debit/credit
-    const map = new Map<string, { code: string; name: string; type: "Assets" | "Liabilities" | "Capital" | "Revenue" | "Expenses"; debit: number; credit: number }>();
-    // Static COA seeding removed: only accounts with real ledger activity appear.
-
-    // 2. Overlay actual ledger transaction totals (adds accounts not in static COA too)
-    allLedgerTransactions.forEach(tx => {
-      const existing = map.get(tx.account_code) || {
-        code: tx.account_code,
-        name: tx.account_name,
-        type: tx.account_type,
-        debit: 0,
-        credit: 0
-      };
-      existing.debit += (tx.debit || 0);
-      existing.credit += (tx.credit || 0);
-      map.set(tx.account_code, existing);
-    });
-
-    return Array.from(map.values()).map(a => ({
-      ...a,
-      balance: a.debit - a.credit
-    }));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allLedgerTransactions]);
+  // Trial balance now comes from the backend (/api/accounting/trial-balance, summed from posted voucher
+  // lines in SQL), not recomputed in the browser. It reloads whenever vouchers change.
+  const [trialBalanceDetailed, setTrialBalanceDetailed] = useState<
+    { code: string; name: string; type: "Assets" | "Liabilities" | "Capital" | "Revenue" | "Expenses"; debit: number; credit: number; balance: number }[]
+  >([]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res: any = await apiRequest("/api/accounting/trial-balance");
+        if (!cancelled && Array.isArray(res?.data)) setTrialBalanceDetailed(res.data);
+      } catch (e: any) {
+        console.error("[finance-store] trial balance load failed:", e?.message || e);
+      }
+    };
+    void load();
+    const onChange = () => { void load(); };
+    window.addEventListener("finance_vouchers_updated", onChange);
+    return () => { cancelled = true; window.removeEventListener("finance_vouchers_updated", onChange); };
+  }, []);
 
   // Derived Trial Balance Summary — 100% computed by grouping account-level balances from trialBalanceDetailed
   const trialBalanceSummary = useMemo(() => {
