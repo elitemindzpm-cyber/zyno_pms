@@ -1,4 +1,3 @@
-import { kvStore } from "@/lib/kv-store";
 import { db } from "@/lib/db";
 
 export type ItemType = "asset" | "maintenance_spare" | "consumable" | "service";
@@ -305,44 +304,34 @@ export async function loadCatalogItems(): Promise<CatalogItem[]> {
 }
 
 /**
- * Saves or updates a single item in DB and kvStore.
+ * Saves or updates a single item directly in procurement_items (E3).
  */
 export async function persistCatalogItem(item: CatalogItem, currentCatalog: CatalogItem[]): Promise<CatalogItem[]> {
   const updatedCatalog = [item, ...currentCatalog.filter(c => c.item_code.toLowerCase() !== item.item_code.toLowerCase())];
 
-  try {
-    kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedCatalog));
-  } catch {}
-
-  try {
-    await db.from("procurement_items").upsert({
-      item_code: item.item_code,
-      name: item.name,
-      category: item.category,
-      item_type: item.item_type,
-      budget_type: item.budget_type,
-      budget_head: item.budget_head,
-      unit_price: Number(item.unit_price || 0),
-      unit_of_measure: item.unit_of_measure || "pcs",
-      reorder_level: Number(item.reorder_level || 0),
-      active: item.active !== false,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: "item_code" });
-  } catch (e) {
-    console.warn("[Catalog] DB persist notice:", e);
-  }
+  const { error } = await db.from("procurement_items").upsert({
+    item_code: item.item_code,
+    name: item.name,
+    category: item.category,
+    item_type: item.item_type,
+    budget_type: item.budget_type,
+    budget_head: item.budget_head,
+    unit_price: Number(item.unit_price || 0),
+    unit_of_measure: item.unit_of_measure || "pcs",
+    reorder_level: Number(item.reorder_level || 0),
+    active: item.active !== false,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: "item_code" });
+  if (error) throw new Error(error.message || "Failed to save catalog item");
 
   return updatedCatalog;
 }
 
 /**
- * Batch saves or imports items to DB and kvStore.
+ * Batch saves or imports items directly to procurement_items (E3).
  */
 export async function deleteCatalogItem(itemCode: string, currentCatalog: CatalogItem[]): Promise<CatalogItem[]> {
   const updatedCatalog = currentCatalog.filter(c => c.item_code.toLowerCase() !== itemCode.toLowerCase());
-  try {
-    kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(updatedCatalog));
-  } catch {}
   const { error } = await db.from("procurement_items").delete().eq("item_code", itemCode);
   if (error) throw new Error(error.message || "Failed to delete catalog item");
   return updatedCatalog;
@@ -350,35 +339,26 @@ export async function deleteCatalogItem(itemCode: string, currentCatalog: Catalo
 
 export async function persistCatalogBatch(newItems: CatalogItem[], currentCatalog: CatalogItem[]): Promise<CatalogItem[]> {
   const map = new Map<string, CatalogItem>();
-  // Existing items first
   currentCatalog.forEach(c => map.set(c.item_code.toLowerCase(), c));
-  // New items override or add
   newItems.forEach(n => map.set(n.item_code.toLowerCase(), n));
   const merged = Array.from(map.values());
 
-  try {
-    kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(merged));
-  } catch {}
+  const payload = newItems.map(item => ({
+    item_code: item.item_code,
+    name: item.name,
+    category: item.category || "Other",
+    item_type: item.item_type || "maintenance_spare",
+    budget_type: item.budget_type || "OPEX",
+    budget_head: item.budget_head || "Maintenance Items",
+    unit_price: Number(item.unit_price || 0),
+    unit_of_measure: item.unit_of_measure || "pcs",
+    reorder_level: Number(item.reorder_level || 0),
+    active: item.active !== false,
+    updated_at: new Date().toISOString(),
+  }));
 
-  try {
-    const payload = newItems.map(item => ({
-      item_code: item.item_code,
-      name: item.name,
-      category: item.category || "Other",
-      item_type: item.item_type || "maintenance_spare",
-      budget_type: item.budget_type || "OPEX",
-      budget_head: item.budget_head || "Maintenance Items",
-      unit_price: Number(item.unit_price || 0),
-      unit_of_measure: item.unit_of_measure || "pcs",
-      reorder_level: Number(item.reorder_level || 0),
-      active: item.active !== false,
-      updated_at: new Date().toISOString(),
-    }));
-
-    await db.from("procurement_items").upsert(payload, { onConflict: "item_code" });
-  } catch (e) {
-    console.warn("[Catalog] DB batch upsert notice:", e);
-  }
+  const { error } = await db.from("procurement_items").upsert(payload, { onConflict: "item_code" });
+  if (error) throw new Error(error.message || "Failed to batch save catalog items");
 
   return merged;
 }

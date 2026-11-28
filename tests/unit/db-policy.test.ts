@@ -44,3 +44,12 @@ test('accounting RPCs are restricted to finance roles; unknown RPCs to admins', 
   assert.equal(rpcAllowed('PROP_MGR', 'some_unknown_function'), false);
   assert.equal(rpcAllowed('ADMIN', 'some_unknown_function'), true);
 });
+
+test('TENANT can read/write maintenance_tickets; CASHIER cannot write or delete fin_posting_periods', () => {
+  assert.equal(dbAllowed('TENANT', 'maintenance_tickets', 'read'), true);
+  assert.equal(dbAllowed('TENANT', 'maintenance_tickets', 'write'), true);
+  assert.equal(dbAllowed('TENANT', 'maintenance_tickets', 'delete'), false);
+  assert.equal(dbAllowed('CASHIER', 'fin_posting_periods', 'write'), false);
+  assert.equal(dbAllowed('FINANCE', 'fin_posting_periods', 'write'), true);
+  assert.equal(dbAllowed('SUPER_ADMIN', 'fin_posting_periods', 'delete'), false);
+});

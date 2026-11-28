@@ -9,6 +9,7 @@ import prisma from '../lib/prisma';
 import { txn } from '../lib/prisma';
 import { postAccountingEvent } from '../lib/finance-rpc';
 import { HttpError, sendDbError } from '../lib/errors';
+import { money } from '../lib/money';
 
 const router = Router();
 
@@ -31,7 +32,7 @@ router.post('/webhook', async (req: Request, res: Response) => {
   }
 
   const { reference, amount, tenant_id, lease_id, customer_id, payment_method } = req.body ?? {};
-  const amt = Math.round(Number(amount) * 100) / 100;
+  const amt = money(amount);
   if (typeof reference !== 'string' || !reference.trim() || !(amt > 0)) {
     return res.status(400).json({ error: 'reference and a positive amount are required' });
   }

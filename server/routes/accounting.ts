@@ -2,10 +2,11 @@
 // Finance / GL / Accounting Events endpoints
 import { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
-import prisma from '../lib/prisma';
+import prisma, { txn } from '../lib/prisma';
 import { tenantMiddleware, parsePagination, paginatedResponse } from '../lib/middleware';
 import { dbAllowed } from '../lib/db-policy';
 import { postManualVoucher } from '../lib/finance-rpc';
+import { money as money2 } from '../lib/money';
 
 const router = Router();
 router.use(tenantMiddleware);
@@ -44,7 +45,7 @@ router.get('/vouchers', async (req: Request, res: Response) => {
   try {
     const tenantId = (req as any).tenantId;
     const { skip, take, page, limit } = parsePagination(req);
-    const where: any = { tenant_id: tenantId };
+    const where: any = {};
     const [data, total] = await Promise.all([
       prisma.fin_vouchers.findMany({ where, skip, take, orderBy: { created_at: 'desc' }, include: { fin_voucher_lines: true } }),
       prisma.fin_vouchers.count({ where }),
@@ -604,8 +605,8 @@ router.get('/general-ledger', async (req: Request, res: Response) => {
     const role = (req as any).user?.role as string | undefined;
     if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view the general ledger' });
 
-    const from = typeof req.query.from === 'string' && /^d{4}-d{2}-d{2}$/.test(req.query.from) ? req.query.from : null;
-    const to = typeof req.query.to === 'string' && /^d{4}-d{2}-d{2}$/.test(req.query.to) ? req.query.to : null;
+    const from = isoDate(req.query.from);
+    const to = isoDate(req.query.to);
 
     const rows = await prisma.$queryRaw<any[]>`
       SELECT l.id AS id,
@@ -632,9 +633,11 @@ router.get('/general-ledger', async (req: Request, res: Response) => {
          AND (${from} IS NULL OR v.voucher_date >= ${from})
          AND (${to} IS NULL OR v.voucher_date <= ${to})
        ORDER BY v.voucher_date DESC, v.created_at DESC, l.created_at ASC
-       LIMIT 20000`;
+       LIMIT 20001`;
 
-    const data = rows.map((r) => ({
+    const truncated = rows.length > 20000;
+    const sliced = truncated ? rows.slice(0, 20000) : rows;
+    const data = sliced.map((r) => ({
       id: String(r.id),
       date: r.date,
       account_code: r.account_code,
@@ -651,7 +654,7 @@ router.get('/general-ledger', async (req: Request, res: Response) => {
     }));
     const totalDebit = data.reduce((a, r) => a + r.debit, 0);
     const totalCredit = data.reduce((a, r) => a + r.credit, 0);
-    res.json({ data, totals: { debit: totalDebit, credit: totalCredit, balanced: Math.abs(totalDebit - totalCredit) < 0.01 } });
+    res.json({ data, truncated, limit: 20000, totals: { debit: totalDebit, credit: totalCredit, balanced: Math.abs(totalDebit - totalCredit) < 0.01 } });
   } catch (e: any) { res.status(500).json({ error: 'Failed to load the general ledger' }); console.error('[general-ledger]', e?.message); }
 });
 
@@ -695,9 +698,11 @@ router.get('/journals', async (req: Request, res: Response) => {
         LEFT JOIN fin_coa_accounts c ON c.account_code = l.account_code
        WHERE LOWER(v.status) = 'posted' AND LOWER(v.voucher_type) IN ('journal', 'jv', 'journal voucher')
        ORDER BY v.voucher_date DESC, v.created_at DESC, l.created_at ASC
-       LIMIT 5000`;
+       LIMIT 5001`;
+    const truncated = rows.length > 5000;
+    const sliced = truncated ? rows.slice(0, 5000) : rows;
     const byVoucher = new Map<string, any>();
-    for (const r of rows) {
+    for (const r of sliced) {
       let j = byVoucher.get(r.vid);
       if (!j) {
         j = { id: String(r.vid), je_no: r.je_no, posting_date: r.posting_date, reference: r.reference || r.je_no, narration: r.narration || '',
@@ -709,7 +714,7 @@ router.get('/journals', async (req: Request, res: Response) => {
       if (debit > 0 && !j.dr_code) { j.dr_code = r.account_code; j.dr_account = r.account_name || r.account_code; }
       if (credit > 0 && !j.cr_code) { j.cr_code = r.account_code; j.cr_account = r.account_name || r.account_code; }
     }
-    res.json({ data: Array.from(byVoucher.values()) });
+    res.json({ data: Array.from(byVoucher.values()), truncated, limit: 5000 });
   } catch (e: any) { console.error('[journals]', e?.message); res.status(500).json({ error: 'Failed to load journals' }); }
 });
 
@@ -930,9 +935,11 @@ router.get('/cash-flow', async (req: Request, res: Response) => {
              l.debit_amount AS debit, l.credit_amount AS credit
         FROM fin_voucher_lines l JOIN fin_vouchers v ON v.id = l.voucher_id
        WHERE LOWER(v.status) = 'posted'
-       LIMIT 100000`;
+       LIMIT 100001`;
+    const truncated = rows.length > 100000;
+    const sliced = truncated ? rows.slice(0, 100000) : rows;
     const byVoucher = new Map<string, any[]>();
-    for (const r of rows) { const b = byVoucher.get(r.vid) || []; b.push(r); byVoucher.set(r.vid, b); }
+    for (const r of sliced) { const b = byVoucher.get(r.vid) || []; b.push(r); byVoucher.set(r.vid, b); }
     let operatingInflow = 0, operatingOutflow = 0, investingCash = 0, financingCash = 0;
     byVoucher.forEach((lines) => {
       const cashLines = lines.filter((l) => CASH.has(l.code));
@@ -947,9 +954,9 @@ router.get('/cash-flow', async (req: Request, res: Response) => {
       else if (cashNet > 0) operatingInflow += cashNet;
       else operatingOutflow += Math.abs(cashNet);
     });
-    const endingCashBalance = rows.filter((l) => CASH.has(l.code)).reduce((a, l) => a + (Number(l.debit) || 0) - (Number(l.credit) || 0), 0);
+    const endingCashBalance = sliced.filter((l) => CASH.has(l.code)).reduce((a, l) => a + (Number(l.debit) || 0) - (Number(l.credit) || 0), 0);
     const netOperatingCash = operatingInflow - operatingOutflow;
-    res.json({ data: { operatingInflow, operatingOutflow, netOperatingCash, investingCash, financingCash, netCashChange: netOperatingCash + investingCash + financingCash, endingCashBalance } });
+    res.json({ data: { operatingInflow, operatingOutflow, netOperatingCash, investingCash, financingCash, netCashChange: netOperatingCash + investingCash + financingCash, endingCashBalance }, truncated, limit: 100000 });
   } catch (e: any) { console.error('[cash-flow]', e?.message); res.status(500).json({ error: 'Failed to load the cash flow' }); }
 });
 
@@ -984,9 +991,44 @@ router.get('/ar-invoices', async (req: Request, res: Response) => {
   try {
     const role = (req as any).user?.role as string | undefined;
     if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view receivable invoices' });
-    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_ar_invoices ORDER BY invoice_date DESC, created_at DESC LIMIT 5000`;
-    res.json({ data: rows.map(arRow) });
+    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_ar_invoices ORDER BY invoice_date DESC, created_at DESC LIMIT 5001`;
+    const truncated = rows.length > 5000;
+    const sliced = truncated ? rows.slice(0, 5000) : rows;
+    res.json({ data: sliced.map(arRow), truncated, limit: 5000 });
   } catch (e: any) { console.error('[ar-invoices]', e?.message); res.status(500).json({ error: 'Failed to load receivable invoices' }); }
+});
+
+// D8: single server-side receivables ageing. Buckets by days past DUE date against an as-of date
+// (current = not yet due), matching the AR/AP ageing report, so every screen can show the same numbers.
+router.get('/ar-ageing', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view receivable ageing' });
+    const asOf = ymd(req.query.as_of) ?? new Date().toISOString().slice(0, 10);
+    const rows = await prisma.$queryRaw<any[]>`
+      SELECT COALESCE(NULLIF(customer_id, ''), tenant) AS party_key, MAX(tenant) AS tenant,
+        SUM(CASE WHEN DATEDIFF(${asOf}, due_date) <= 0 THEN amount - COALESCE(paid_amount, 0) ELSE 0 END) AS current_amt,
+        SUM(CASE WHEN DATEDIFF(${asOf}, due_date) BETWEEN 1 AND 30 THEN amount - COALESCE(paid_amount, 0) ELSE 0 END) AS d1_30,
+        SUM(CASE WHEN DATEDIFF(${asOf}, due_date) BETWEEN 31 AND 60 THEN amount - COALESCE(paid_amount, 0) ELSE 0 END) AS d31_60,
+        SUM(CASE WHEN DATEDIFF(${asOf}, due_date) BETWEEN 61 AND 90 THEN amount - COALESCE(paid_amount, 0) ELSE 0 END) AS d61_90,
+        SUM(CASE WHEN DATEDIFF(${asOf}, due_date) > 90 THEN amount - COALESCE(paid_amount, 0) ELSE 0 END) AS d90_plus,
+        SUM(amount - COALESCE(paid_amount, 0)) AS total
+      FROM fin_ar_invoices
+      WHERE invoice_date <= ${asOf} AND LOWER(COALESCE(status, '')) NOT IN ('cancelled', 'void', 'paid')
+        AND (amount - COALESCE(paid_amount, 0)) > 0
+      GROUP BY COALESCE(NULLIF(customer_id, ''), tenant)
+      ORDER BY total DESC LIMIT 5000`;
+    const n = (v: unknown) => Math.round(Number(v ?? 0) * 100) / 100;
+    const data = rows.map((r) => ({
+      party_key: r.party_key, tenant: r.tenant, current: n(r.current_amt), d1_30: n(r.d1_30),
+      d31_60: n(r.d31_60), d61_90: n(r.d61_90), d90_plus: n(r.d90_plus), total: n(r.total),
+    }));
+    const totals = data.reduce((t, r) => ({
+      current: n(t.current + r.current), d1_30: n(t.d1_30 + r.d1_30), d31_60: n(t.d31_60 + r.d31_60),
+      d61_90: n(t.d61_90 + r.d61_90), d90_plus: n(t.d90_plus + r.d90_plus), total: n(t.total + r.total),
+    }), { current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90_plus: 0, total: 0 });
+    res.json({ as_of: asOf, data, totals });
+  } catch (e: any) { console.error('[ar-ageing]', e?.message); res.status(500).json({ error: 'Failed to load receivable ageing' }); }
 });
 
 // Create one or more AR invoices. A unit already invoiced for the billing period is skipped (reported back).
@@ -998,32 +1040,37 @@ router.post('/ar-invoices', async (req: Request, res: Response) => {
     if (!list.length) return res.status(400).json({ error: 'No invoices supplied' });
     const created: any[] = []; const skipped: any[] = [];
     for (const inv of list) {
-      const date = ymd(inv.date); const amount = Number(inv.amount) || 0;
+      const date = ymd(inv.date); const amount = money2(inv.amount);
       const invoiceNo = String(inv.invoice_no || '').trim();
       if (!invoiceNo || !date || amount <= 0 || !inv.account_code) return res.status(400).json({ error: 'Each invoice needs invoice_no, date, account_code and an amount above zero' });
       const period = String(inv.billingPeriod || inv.billing_period || date).slice(0, 7);
       const unit = String(inv.unit || '').trim();
-      if (unit) {
-        const dup = await prisma.$queryRaw<any[]>`SELECT invoice_no FROM fin_ar_invoices WHERE LOWER(unit) = ${unit.toLowerCase()} AND billing_period = ${period} LIMIT 1`;
-        if (dup.length) { skipped.push({ invoice_no: invoiceNo, reason: `Unit ${unit} is already invoiced (${dup[0].invoice_no}) for ${period}` }); continue; }
-      }
-      const exists = await prisma.$queryRaw<any[]>`SELECT id FROM fin_ar_invoices WHERE invoice_no = ${invoiceNo} LIMIT 1`;
-      if (exists.length) { skipped.push({ invoice_no: invoiceNo, reason: 'Invoice number already exists' }); continue; }
-      const posted = await postManualVoucher({
-        voucher_date: date, voucher_type: 'Journal', reference_no: invoiceNo,
-        description: `Rent invoice ${invoiceNo} — ${inv.tenant || ''} ${unit ? '(' + unit + ')' : ''}`.trim(),
-        lines: [
-          { account_code: AR_CONTROL_CODE, debit: amount, credit: 0 },
-          { account_code: String(inv.account_code), debit: 0, credit: amount },
-        ],
-        customer_id: inv.customerId || inv.customer_id || null, created_by: (req as any).user?.id ?? null,
+      const outcome = await txn(async (tx) => {
+        if (unit) {
+          const dup = await tx.$queryRaw<any[]>`SELECT invoice_no FROM fin_ar_invoices WHERE LOWER(unit) = ${unit.toLowerCase()} AND billing_period = ${period} LIMIT 1 FOR UPDATE`;
+          if (dup.length) return { skipReason: `Unit ${unit} is already invoiced (${dup[0].invoice_no}) for ${period}` };
+        }
+        const exists = await tx.$queryRaw<any[]>`SELECT id FROM fin_ar_invoices WHERE invoice_no = ${invoiceNo} LIMIT 1 FOR UPDATE`;
+        if (exists.length) return { skipReason: 'Invoice number already exists' };
+        const posted = await postManualVoucher({
+          voucher_date: date, voucher_type: 'Journal', reference_no: invoiceNo,
+          idempotency_key: `AR_CREATE|${invoiceNo}`,
+          description: `Rent invoice ${invoiceNo} — ${inv.tenant || ''} ${unit ? '(' + unit + ')' : ''}`.trim(),
+          lines: [
+            { account_code: AR_CONTROL_CODE, debit: amount, credit: 0 },
+            { account_code: String(inv.account_code), debit: 0, credit: amount },
+          ],
+          customer_id: inv.customerId || inv.customer_id || null, created_by: (req as any).user?.id ?? null,
+        }, tx);
+        const voucherNumber = posted?.[0]?.voucher_number ?? invoiceNo;
+        await tx.$executeRaw`INSERT INTO fin_ar_invoices
+          (id, invoice_no, tenant, property, unit, customer_id, lease_id, invoice_date, due_date, stream, account_code, amount, status, billing_period, notes, voucher_number)
+          VALUES (${randomUUID()}, ${invoiceNo}, ${inv.tenant || null}, ${inv.property || null}, ${unit || null}, ${inv.customerId || inv.customer_id || null},
+                  ${inv.leaseId || inv.lease_id || null}, ${date}, ${ymd(inv.due_date)}, ${inv.stream || null}, ${String(inv.account_code)}, ${amount}, 'Pending', ${period}, ${inv.notes || null}, ${voucherNumber})`;
+        return { createdNo: invoiceNo };
       });
-      const voucherNumber = posted?.[0]?.voucher_number ?? invoiceNo;
-      await prisma.$executeRaw`INSERT INTO fin_ar_invoices
-        (id, invoice_no, tenant, property, unit, customer_id, lease_id, invoice_date, due_date, stream, account_code, amount, status, billing_period, notes, voucher_number)
-        VALUES (${randomUUID()}, ${invoiceNo}, ${inv.tenant || null}, ${inv.property || null}, ${unit || null}, ${inv.customerId || inv.customer_id || null},
-                ${inv.leaseId || inv.lease_id || null}, ${date}, ${ymd(inv.due_date)}, ${inv.stream || null}, ${String(inv.account_code)}, ${amount}, 'Pending', ${period}, ${inv.notes || null}, ${voucherNumber})`;
-      created.push(invoiceNo);
+      if ('skipReason' in outcome) skipped.push({ invoice_no: invoiceNo, reason: outcome.skipReason });
+      else created.push(outcome.createdNo);
     }
     res.status(201).json({ created, skipped });
   } catch (e: any) {
@@ -1032,27 +1079,39 @@ router.post('/ar-invoices', async (req: Request, res: Response) => {
   }
 });
 
-// Collect an AR invoice: post the receipt (Dr bank, Cr tenant receivable) and mark it paid.
+// Collect an AR invoice (supports partial collection): post the receipt (Dr bank, Cr tenant receivable) and update paid_amount/status atomically.
 router.post('/ar-invoices/:invoiceNo/collect', async (req: Request, res: Response) => {
   try {
     const role = (req as any).user?.role as string | undefined;
     if (!dbAllowed(role, 'fin_vouchers', 'write')) return res.status(403).json({ error: 'Not authorized to collect invoices' });
     const invoiceNo = String(req.params.invoiceNo);
-    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_ar_invoices WHERE invoice_no = ${invoiceNo} LIMIT 1`;
-    if (!rows.length) return res.status(404).json({ error: 'Invoice not found' });
-    const inv = rows[0];
-    if (inv.status === 'Paid') return res.status(409).json({ error: 'Invoice is already paid' });
     const date = ymd(req.body?.date) || new Date().toISOString().slice(0, 10);
     const bank = String(req.body?.bank_gl || DEFAULT_BANK_CODE);
-    const amount = Number(inv.amount) - Number(inv.paid_amount || 0);
-    const posted = await postManualVoucher({
-      voucher_date: date, voucher_type: 'Receipt', reference_no: `RCV-${invoiceNo}`,
-      description: `${inv.tenant || ''} — Receipt for Rent Invoice ${invoiceNo} ${inv.unit ? '(' + inv.unit + ')' : ''}`.trim(),
-      lines: [{ account_code: bank, debit: amount, credit: 0 }, { account_code: AR_CONTROL_CODE, debit: 0, credit: amount }],
-      customer_id: inv.customer_id, created_by: (req as any).user?.id ?? null,
+
+    const result = await txn(async (tx) => {
+      const rows = await tx.$queryRaw<any[]>`SELECT * FROM fin_ar_invoices WHERE invoice_no = ${invoiceNo} LIMIT 1 FOR UPDATE`;
+      if (!rows.length) { const err: any = new Error('Invoice not found'); err.status = 404; throw err; }
+      const inv = rows[0];
+      if (inv.status === 'Paid') { const err: any = new Error('Invoice is already paid'); err.status = 409; throw err; }
+      const totalAmount = money2(inv.amount);
+      const currentPaid = money2(inv.paid_amount || 0);
+      const remaining = money2(totalAmount - currentPaid);
+      const amount = req.body?.amount !== undefined ? money2(req.body.amount) : remaining;
+      if (amount <= 0) { const err: any = new Error('Collection amount must be above zero'); err.status = 400; throw err; }
+      if (amount > remaining + 0.005) { const err: any = new Error(`Collection amount (${amount}) exceeds remaining balance (${remaining})`); err.status = 400; throw err; }
+      const newPaid = money2(currentPaid + amount);
+      const newStatus = newPaid >= totalAmount - 0.005 ? 'Paid' : 'Partial';
+      const posted = await postManualVoucher({
+        voucher_date: date, voucher_type: 'Receipt', reference_no: `RCV-${invoiceNo}`,
+        idempotency_key: `AR_COLLECT|${invoiceNo}|${newPaid}`,
+        description: `${inv.tenant || ''} — Receipt for Rent Invoice ${invoiceNo} ${inv.unit ? '(' + inv.unit + ')' : ''}`.trim(),
+        lines: [{ account_code: bank, debit: amount, credit: 0 }, { account_code: AR_CONTROL_CODE, debit: 0, credit: amount }],
+        customer_id: inv.customer_id, created_by: (req as any).user?.id ?? null,
+      }, tx);
+      await tx.$executeRaw`UPDATE fin_ar_invoices SET status = ${newStatus}, paid_amount = ${newPaid}, receipt_voucher_number = ${posted?.[0]?.voucher_number ?? null} WHERE invoice_no = ${invoiceNo}`;
+      return { invoice_no: invoiceNo, status: newStatus, paid_amount: newPaid };
     });
-    await prisma.$executeRaw`UPDATE fin_ar_invoices SET status = 'Paid', paid_amount = amount, receipt_voucher_number = ${posted?.[0]?.voucher_number ?? null} WHERE invoice_no = ${invoiceNo}`;
-    res.json({ data: { invoice_no: invoiceNo, status: 'Paid' } });
+    res.json({ data: result });
   } catch (e: any) {
     if (e?.status) return res.status(e.status).json({ error: e.message });
     console.error('[ar-invoices:collect]', e?.message); res.status(500).json({ error: 'Failed to collect the invoice' });
@@ -1063,8 +1122,10 @@ router.get('/ap-invoices', async (req: Request, res: Response) => {
   try {
     const role = (req as any).user?.role as string | undefined;
     if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view payable invoices' });
-    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_ap_invoices ORDER BY invoice_date DESC, created_at DESC LIMIT 5000`;
-    res.json({ data: rows.map(apRow) });
+    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_ap_invoices ORDER BY invoice_date DESC, created_at DESC LIMIT 5001`;
+    const truncated = rows.length > 5000;
+    const sliced = truncated ? rows.slice(0, 5000) : rows;
+    res.json({ data: sliced.map(apRow), truncated, limit: 5000 });
   } catch (e: any) { console.error('[ap-invoices]', e?.message); res.status(500).json({ error: 'Failed to load payable invoices' }); }
 });
 
@@ -1076,25 +1137,29 @@ router.post('/ap-invoices', async (req: Request, res: Response) => {
     const b = req.body || {};
     const invoiceNo = String(b.invoice_no || '').trim();
     const date = ymd(b.voucher_date) || ymd(b.date);
-    const amount = Number(b.amount) || 0;
+    const amount = money2(b.amount);
     if (!invoiceNo || !date || amount <= 0) return res.status(400).json({ error: 'invoice_no, a date and an amount above zero are required' });
-    const exists = await prisma.$queryRaw<any[]>`SELECT id FROM fin_ap_invoices WHERE invoice_no = ${invoiceNo} LIMIT 1`;
-    if (exists.length) return res.status(409).json({ error: `Invoice ${invoiceNo} already exists` });
     const lines: any[] = Array.isArray(b.lines) && b.lines.length ? b.lines : [{ account_code: b.account_code, amount }];
-    const debitLines = lines.filter((l) => l.account_code && Number(l.amount) > 0).map((l) => ({ account_code: String(l.account_code), debit: Number(l.amount), credit: 0, description: l.description || null }));
-    const total = debitLines.reduce((a, l) => a + l.debit, 0);
+    const debitLines = lines.filter((l) => l.account_code && Number(l.amount) > 0).map((l) => ({ account_code: String(l.account_code), debit: money2(l.amount), credit: 0, description: l.description || null }));
+    const total = money2(debitLines.reduce((a, l) => a + l.debit, 0));
     if (!debitLines.length) return res.status(400).json({ error: 'The invoice needs at least one expense line with an account and amount' });
-    const posted = await postManualVoucher({
-      voucher_date: date, voucher_type: 'Journal', reference_no: invoiceNo,
-      description: `Invoice ${invoiceNo} from ${b.vendor || ''}`.trim(),
-      lines: [...debitLines, { account_code: AP_CONTROL_CODE, debit: 0, credit: total }],
-      created_by: (req as any).user?.id ?? null,
+
+    await txn(async (tx) => {
+      const exists = await tx.$queryRaw<any[]>`SELECT id FROM fin_ap_invoices WHERE invoice_no = ${invoiceNo} LIMIT 1 FOR UPDATE`;
+      if (exists.length) { const err: any = new Error(`Invoice ${invoiceNo} already exists`); err.status = 409; throw err; }
+      const posted = await postManualVoucher({
+        voucher_date: date, voucher_type: 'Journal', reference_no: invoiceNo,
+        idempotency_key: `AP_CREATE|${invoiceNo}`,
+        description: `Invoice ${invoiceNo} from ${b.vendor || ''}`.trim(),
+        lines: [...debitLines, { account_code: AP_CONTROL_CODE, debit: 0, credit: total }],
+        created_by: (req as any).user?.id ?? null,
+      }, tx);
+      await tx.$executeRaw`INSERT INTO fin_ap_invoices
+        (id, invoice_no, vendor, property, invoice_date, voucher_date, due_date, account, account_code, stream, amount, status, lines_json, voucher_number)
+        VALUES (${randomUUID()}, ${invoiceNo}, ${b.vendor || null}, ${b.property || null}, ${ymd(b.date) || date}, ${ymd(b.voucher_date)}, ${ymd(b.due_date)},
+                ${b.account || null}, ${String(b.account_code || debitLines[0].account_code)}, ${b.stream || null}, ${total}, 'Unpaid',
+                ${Array.isArray(b.lines) && b.lines.length ? JSON.stringify(b.lines) : null}, ${posted?.[0]?.voucher_number ?? invoiceNo})`;
     });
-    await prisma.$executeRaw`INSERT INTO fin_ap_invoices
-      (id, invoice_no, vendor, property, invoice_date, voucher_date, due_date, account, account_code, stream, amount, status, lines_json, voucher_number)
-      VALUES (${randomUUID()}, ${invoiceNo}, ${b.vendor || null}, ${b.property || null}, ${ymd(b.date) || date}, ${ymd(b.voucher_date)}, ${ymd(b.due_date)},
-              ${b.account || null}, ${String(b.account_code || debitLines[0].account_code)}, ${b.stream || null}, ${total}, 'Unpaid',
-              ${Array.isArray(b.lines) && b.lines.length ? JSON.stringify(b.lines) : null}, ${posted?.[0]?.voucher_number ?? invoiceNo})`;
     res.status(201).json({ data: { invoice_no: invoiceNo } });
   } catch (e: any) {
     if (e?.status) return res.status(e.status).json({ error: e.message });
@@ -1102,27 +1167,39 @@ router.post('/ap-invoices', async (req: Request, res: Response) => {
   }
 });
 
-// Pay an AP invoice: Dr trade payables, Cr bank.
+// Pay an AP invoice (supports partial payment): Dr trade payables, Cr bank.
 router.post('/ap-invoices/:invoiceNo/pay', async (req: Request, res: Response) => {
   try {
     const role = (req as any).user?.role as string | undefined;
     if (!dbAllowed(role, 'fin_vouchers', 'write')) return res.status(403).json({ error: 'Not authorized to pay invoices' });
     const invoiceNo = String(req.params.invoiceNo);
-    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_ap_invoices WHERE invoice_no = ${invoiceNo} LIMIT 1`;
-    if (!rows.length) return res.status(404).json({ error: 'Invoice not found' });
-    const inv = rows[0];
-    if (inv.status === 'Paid') return res.status(409).json({ error: 'Invoice is already paid' });
     const date = ymd(req.body?.date) || new Date().toISOString().slice(0, 10);
     const bank = String(req.body?.bank_gl || DEFAULT_BANK_CODE);
-    const amount = Number(inv.amount) - Number(inv.paid_amount || 0);
-    const posted = await postManualVoucher({
-      voucher_date: date, voucher_type: 'Payment', reference_no: `PAY-${invoiceNo}`,
-      description: `${inv.vendor || ''} — Settlement for Invoice ${invoiceNo}`.trim(),
-      lines: [{ account_code: AP_CONTROL_CODE, debit: amount, credit: 0 }, { account_code: bank, debit: 0, credit: amount }],
-      created_by: (req as any).user?.id ?? null,
+
+    const result = await txn(async (tx) => {
+      const rows = await tx.$queryRaw<any[]>`SELECT * FROM fin_ap_invoices WHERE invoice_no = ${invoiceNo} LIMIT 1 FOR UPDATE`;
+      if (!rows.length) { const err: any = new Error('Invoice not found'); err.status = 404; throw err; }
+      const inv = rows[0];
+      if (inv.status === 'Paid') { const err: any = new Error('Invoice is already paid'); err.status = 409; throw err; }
+      const totalAmount = money2(inv.amount);
+      const currentPaid = money2(inv.paid_amount || 0);
+      const remaining = money2(totalAmount - currentPaid);
+      const amount = req.body?.amount !== undefined ? money2(req.body.amount) : remaining;
+      if (amount <= 0) { const err: any = new Error('Payment amount must be above zero'); err.status = 400; throw err; }
+      if (amount > remaining + 0.005) { const err: any = new Error(`Payment amount (${amount}) exceeds remaining balance (${remaining})`); err.status = 400; throw err; }
+      const newPaid = money2(currentPaid + amount);
+      const newStatus = newPaid >= totalAmount - 0.005 ? 'Paid' : 'Partial';
+      const posted = await postManualVoucher({
+        voucher_date: date, voucher_type: 'Payment', reference_no: `PAY-${invoiceNo}`,
+        idempotency_key: `AP_PAY|${invoiceNo}|${newPaid}`,
+        description: `${inv.vendor || ''} — Settlement for Invoice ${invoiceNo}`.trim(),
+        lines: [{ account_code: AP_CONTROL_CODE, debit: amount, credit: 0 }, { account_code: bank, debit: 0, credit: amount }],
+        created_by: (req as any).user?.id ?? null,
+      }, tx);
+      await tx.$executeRaw`UPDATE fin_ap_invoices SET status = ${newStatus}, paid_amount = ${newPaid}, payment_voucher_number = ${posted?.[0]?.voucher_number ?? null} WHERE invoice_no = ${invoiceNo}`;
+      return { invoice_no: invoiceNo, status: newStatus, paid_amount: newPaid };
     });
-    await prisma.$executeRaw`UPDATE fin_ap_invoices SET status = 'Paid', paid_amount = amount, payment_voucher_number = ${posted?.[0]?.voucher_number ?? null} WHERE invoice_no = ${invoiceNo}`;
-    res.json({ data: { invoice_no: invoiceNo, status: 'Paid' } });
+    res.json({ data: result });
   } catch (e: any) {
     if (e?.status) return res.status(e.status).json({ error: e.message });
     console.error('[ap-invoices:pay]', e?.message); res.status(500).json({ error: 'Failed to pay the invoice' });
@@ -1132,7 +1209,6 @@ router.post('/ap-invoices/:invoiceNo/pay', async (req: Request, res: Response) =
 // ── Legal cases, payroll runs, bank clearances, reconciliations and statements ───────────────────────
 const LEGAL_RECEIVABLE_CODE = '12411001';
 const PAYROLL_DEFAULT_EXPENSE_CODE = '51101001';
-const money2 = (n: unknown) => Math.round((Number(n) || 0) * 100) / 100;
 const readGuard = (req: Request, res: Response, what: string) => {
   const role = (req as any).user?.role as string | undefined;
   if (!dbAllowed(role, 'fin_vouchers', 'read')) { res.status(403).json({ error: `Not authorized to view ${what}` }); return false; }
@@ -1164,16 +1240,19 @@ router.post('/legal-cases', async (req: Request, res: Response) => {
     const b = req.body || {};
     const caseId = String(b.legal_case_id || '').trim(); const amount = money2(b.original_amount); const date = ymd(b.escalation_date);
     if (!caseId || amount <= 0 || !date) return res.status(400).json({ error: 'legal_case_id, escalation_date and an amount above zero are required' });
-    const dup = await prisma.$queryRaw<any[]>`SELECT id FROM fin_legal_cases WHERE legal_case_id = ${caseId} LIMIT 1`;
-    if (dup.length) return res.status(409).json({ error: `Legal case ${caseId} already exists` });
-    const posted = await postManualVoucher({
-      voucher_date: date, voucher_type: 'Journal', reference_no: `LGL-${caseId}`,
-      description: `Legal escalation — ${b.tenant_name || ''} (${b.unit_ref || ''}) [${caseId}]`,
-      lines: [{ account_code: LEGAL_RECEIVABLE_CODE, debit: amount, credit: 0 }, { account_code: AR_CONTROL_CODE, debit: 0, credit: amount }],
-      created_by: (req as any).user?.id ?? null,
+    await txn(async (tx) => {
+      const dup = await tx.$queryRaw<any[]>`SELECT id FROM fin_legal_cases WHERE legal_case_id = ${caseId} LIMIT 1 FOR UPDATE`;
+      if (dup.length) { const err: any = new Error(`Legal case ${caseId} already exists`); err.status = 409; throw err; }
+      const posted = await postManualVoucher({
+        voucher_date: date, voucher_type: 'Journal', reference_no: `LGL-${caseId}`,
+        idempotency_key: `LEGAL_ESCALATE|${caseId}`,
+        description: `Legal escalation — ${b.tenant_name || ''} (${b.unit_ref || ''}) [${caseId}]`,
+        lines: [{ account_code: LEGAL_RECEIVABLE_CODE, debit: amount, credit: 0 }, { account_code: AR_CONTROL_CODE, debit: 0, credit: amount }],
+        created_by: (req as any).user?.id ?? null,
+      }, tx);
+      await tx.$executeRaw`INSERT INTO fin_legal_cases (id, legal_case_id, tenant_name, property_name, unit_ref, original_amount, outstanding_balance, escalation_date, reason, status, voucher_number)
+        VALUES (${randomUUID()}, ${caseId}, ${b.tenant_name || null}, ${b.property_name || null}, ${b.unit_ref || null}, ${amount}, ${money2(b.outstanding_balance ?? amount)}, ${date}, ${b.reason || null}, ${b.status || 'Legal Notice Sent'}, ${posted?.[0]?.voucher_number ?? null})`;
     });
-    await prisma.$executeRaw`INSERT INTO fin_legal_cases (id, legal_case_id, tenant_name, property_name, unit_ref, original_amount, outstanding_balance, escalation_date, reason, status, voucher_number)
-      VALUES (${randomUUID()}, ${caseId}, ${b.tenant_name || null}, ${b.property_name || null}, ${b.unit_ref || null}, ${amount}, ${money2(b.outstanding_balance ?? amount)}, ${date}, ${b.reason || null}, ${b.status || 'Legal Notice Sent'}, ${posted?.[0]?.voucher_number ?? null})`;
     res.status(201).json({ data: { legal_case_id: caseId } });
   } catch (e: any) { fail(res, 'legal-cases:create', e, 'Failed to escalate the case'); }
 });
@@ -1183,25 +1262,33 @@ router.post('/legal-cases/:caseId/recover', async (req: Request, res: Response) 
   try {
     if (!writeGuard(req, res, 'record recoveries')) return;
     const caseId = String(req.params.caseId);
-    const rows = await prisma.$queryRaw<any[]>`SELECT * FROM fin_legal_cases WHERE legal_case_id = ${caseId} OR id = ${caseId} LIMIT 1`;
-    if (!rows.length) return res.status(404).json({ error: 'Legal case not found' });
-    const c = rows[0];
     const b = req.body || {};
     const amount = money2(b.amount);
     if (amount <= 0) return res.status(400).json({ error: 'amount must be above zero' });
-    if (amount > Number(c.outstanding_balance) + 0.001) return res.status(400).json({ error: `Recovery exceeds the outstanding balance of ${Number(c.outstanding_balance)}` });
     const method = String(b.payment_method || 'Bank Transfer').toLowerCase();
     const debitCode = method.includes('cash') ? CASH_IN_HAND_CODE : method.includes('pdc') ? '12900001' : String(b.bank_gl || DEFAULT_BANK_CODE);
     const date = ymd(b.date) || new Date().toISOString().slice(0, 10);
-    await postManualVoucher({
-      voucher_date: date, voucher_type: 'Receipt', reference_no: b.reference ? `REC-${b.reference}` : undefined,
-      description: `Legal Settlement Recovery — ${c.tenant_name || ''} (${c.unit_ref || ''}) [${c.legal_case_id}]${b.narration ? ' ' + b.narration : ''}`,
-      lines: [{ account_code: debitCode, debit: amount, credit: 0 }, { account_code: LEGAL_RECEIVABLE_CODE, debit: 0, credit: amount }],
-      created_by: (req as any).user?.id ?? null,
+
+    const result = await txn(async (tx) => {
+      const rows = await tx.$queryRaw<any[]>`SELECT * FROM fin_legal_cases WHERE legal_case_id = ${caseId} OR id = ${caseId} LIMIT 1 FOR UPDATE`;
+      if (!rows.length) { const err: any = new Error('Legal case not found'); err.status = 404; throw err; }
+      const c = rows[0];
+      if (amount > Number(c.outstanding_balance) + 0.001) {
+        const err: any = new Error(`Recovery exceeds the outstanding balance of ${Number(c.outstanding_balance)}`);
+        err.status = 400; throw err;
+      }
+      const newBal = Math.max(0, money2(Number(c.outstanding_balance) - amount));
+      await postManualVoucher({
+        voucher_date: date, voucher_type: 'Receipt', reference_no: b.reference ? `REC-${b.reference}` : undefined,
+        idempotency_key: `LEGAL_RECOVER|${c.legal_case_id}|${newBal}`,
+        description: `Legal Settlement Recovery — ${c.tenant_name || ''} (${c.unit_ref || ''}) [${c.legal_case_id}]${b.narration ? ' ' + b.narration : ''}`,
+        lines: [{ account_code: debitCode, debit: amount, credit: 0 }, { account_code: LEGAL_RECEIVABLE_CODE, debit: 0, credit: amount }],
+        created_by: (req as any).user?.id ?? null,
+      }, tx);
+      await tx.$executeRaw`UPDATE fin_legal_cases SET outstanding_balance = ${newBal}, status = ${newBal <= 0 ? 'Fully Recovered' : 'Partially Recovered'} WHERE id = ${c.id}`;
+      return { legal_case_id: c.legal_case_id, outstanding_balance: newBal };
     });
-    const newBal = Math.max(0, money2(Number(c.outstanding_balance) - amount));
-    await prisma.$executeRaw`UPDATE fin_legal_cases SET outstanding_balance = ${newBal}, status = ${newBal <= 0 ? 'Fully Recovered' : 'Partially Recovered'} WHERE id = ${c.id}`;
-    res.json({ data: { legal_case_id: c.legal_case_id, outstanding_balance: newBal } });
+    res.json({ data: result });
   } catch (e: any) { fail(res, 'legal-cases:recover', e, 'Failed to record the recovery'); }
 });
 
@@ -1220,22 +1307,32 @@ router.post('/payroll-runs', async (req: Request, res: Response) => {
   try {
     if (!writeGuard(req, res, 'post payroll')) return;
     const b = req.body || {};
-    const runId = String(b.payroll_run_id || '').trim(); const total = money2(b.total_amount);
-    if (!runId || total <= 0) return res.status(400).json({ error: 'payroll_run_id and a total above zero are required' });
-    const dup = await prisma.$queryRaw<any[]>`SELECT id FROM fin_payroll_runs WHERE payroll_run_id = ${runId} LIMIT 1`;
-    if (dup.length) return res.status(409).json({ error: `Payroll run ${runId} is already posted` });
+    const runId = String(b.payroll_run_id || '').trim();
+    const basic = money2(b.basic_salary);
+    const allowances = money2(b.allowances);
+    const overtime = money2(b.overtime);
+    const deductions = money2(b.deductions);
+    const hasComponents = basic > 0 || allowances > 0 || overtime > 0 || deductions > 0;
+    const total = hasComponents ? money2(basic + allowances + overtime - deductions) : money2(b.total_amount);
+    if (!runId || total <= 0) return res.status(400).json({ error: 'payroll_run_id and a positive net total are required' });
     const date = ymd(b.date) || new Date().toISOString().slice(0, 10);
-    const known = await prisma.$queryRaw<any[]>`SELECT account_code FROM fin_coa_accounts WHERE account_code = ${String(b.account_code || '')} AND is_active = TRUE LIMIT 1`;
-    const expense = known.length ? String(b.account_code) : PAYROLL_DEFAULT_EXPENSE_CODE;
-    const posted = await postManualVoucher({
-      voucher_date: date, voucher_type: 'Payment', reference_no: `PAY-${runId}`,
-      description: `Payroll Disbursement for Period ${b.period || ''} - ${b.department || ''}`.trim(),
-      lines: [{ account_code: expense, debit: total, credit: 0 }, { account_code: String(b.bank_gl || DEFAULT_BANK_CODE), debit: 0, credit: total }],
-      created_by: (req as any).user?.id ?? null,
+
+    await txn(async (tx) => {
+      const dup = await tx.$queryRaw<any[]>`SELECT id FROM fin_payroll_runs WHERE payroll_run_id = ${runId} LIMIT 1 FOR UPDATE`;
+      if (dup.length) { const err: any = new Error(`Payroll run ${runId} is already posted`); err.status = 409; throw err; }
+      const known = await tx.$queryRaw<any[]>`SELECT account_code FROM fin_coa_accounts WHERE account_code = ${String(b.account_code || '')} AND is_active = TRUE LIMIT 1`;
+      const expense = known.length ? String(b.account_code) : PAYROLL_DEFAULT_EXPENSE_CODE;
+      const posted = await postManualVoucher({
+        voucher_date: date, voucher_type: 'Payment', reference_no: `PAY-${runId}`,
+        idempotency_key: `PAYROLL_RUN|${runId}`,
+        description: `Payroll Disbursement for Period ${b.period || ''} - ${b.department || ''}`.trim(),
+        lines: [{ account_code: expense, debit: total, credit: 0 }, { account_code: String(b.bank_gl || DEFAULT_BANK_CODE), debit: 0, credit: total }],
+        created_by: (req as any).user?.id ?? null,
+      }, tx);
+      await tx.$executeRaw`INSERT INTO fin_payroll_runs (id, payroll_run_id, period, department, account_code, basic_salary, allowances, overtime, deductions, total_amount, bank_account, status, error_details, voucher_number)
+        VALUES (${randomUUID()}, ${runId}, ${b.period || null}, ${b.department || null}, ${expense}, ${basic}, ${allowances}, ${overtime}, ${deductions},
+                ${total}, ${b.bank_account || null}, 'Posted', ${`Successfully mapped & posted net QR ${total.toLocaleString()} from ${b.bank_account || 'bank'}`}, ${posted?.[0]?.voucher_number ?? null})`;
     });
-    await prisma.$executeRaw`INSERT INTO fin_payroll_runs (id, payroll_run_id, period, department, account_code, basic_salary, allowances, overtime, deductions, total_amount, bank_account, status, error_details, voucher_number)
-      VALUES (${randomUUID()}, ${runId}, ${b.period || null}, ${b.department || null}, ${expense}, ${money2(b.basic_salary)}, ${money2(b.allowances)}, ${money2(b.overtime)}, ${money2(b.deductions)},
-              ${total}, ${b.bank_account || null}, 'Posted', ${`Successfully mapped & posted net QR ${total.toLocaleString()} from ${b.bank_account || 'bank'}`}, ${posted?.[0]?.voucher_number ?? null})`;
     res.status(201).json({ data: { payroll_run_id: runId } });
   } catch (e: any) { fail(res, 'payroll-runs:create', e, 'Failed to post the payroll run'); }
 });
@@ -1292,6 +1389,200 @@ router.post('/recon-statements', async (req: Request, res: Response) => {
     await prisma.$executeRaw`INSERT INTO fin_recon_statements (id, title, period, balance, auditor) VALUES (${randomUUID()}, ${String(b.title)}, ${b.period || null}, ${b.balance || null}, ${b.auditor || null})`;
     res.status(201).json({ data: { title: b.title } });
   } catch (e: any) { fail(res, 'recon-statements:create', e, 'Failed to archive the statement'); }
+});
+
+// D8: SQL-backed AR/AP Ageing report computed in MariaDB from fin_ar_invoices / fin_ap_invoices.
+router.get('/ageing', async (req: Request, res: Response) => {
+  try {
+    if (!readGuard(req, res, 'ageing report')) return;
+    const type = String(req.query.type || 'ar').toLowerCase() === 'ap' ? 'ap' : 'ar';
+    const asOf = isoDate(req.query.as_of) || new Date().toISOString().slice(0, 10);
+
+    const rows = type === 'ap'
+      ? await prisma.$queryRaw<any[]>`
+          SELECT id, invoice_no, COALESCE(vendor, 'Unknown Vendor') AS party, COALESCE(property, '') AS property,
+                 '' AS unit, invoice_date, COALESCE(due_date, invoice_date) AS due_date,
+                 amount, paid_amount, (amount - paid_amount) AS outstanding,
+                 GREATEST(0, DATEDIFF(${asOf}, COALESCE(due_date, invoice_date))) AS days_overdue, status
+            FROM fin_ap_invoices
+           WHERE LOWER(status) <> 'paid' AND amount > paid_amount AND invoice_date <= ${asOf}
+           ORDER BY days_overdue DESC, invoice_date ASC`
+      : await prisma.$queryRaw<any[]>`
+          SELECT id, invoice_no, COALESCE(tenant, 'Unknown Tenant') AS party, COALESCE(property, '') AS property,
+                 COALESCE(unit, '') AS unit, invoice_date, COALESCE(due_date, invoice_date) AS due_date,
+                 amount, paid_amount, (amount - paid_amount) AS outstanding,
+                 GREATEST(0, DATEDIFF(${asOf}, COALESCE(due_date, invoice_date))) AS days_overdue, status
+            FROM fin_ar_invoices
+           WHERE LOWER(status) <> 'paid' AND amount > paid_amount AND invoice_date <= ${asOf}
+           ORDER BY days_overdue DESC, invoice_date ASC`;
+
+    const byParty = new Map<string, any>();
+    const totals = { current: 0, days1To30: 0, days31To60: 0, days61To90: 0, days90Plus: 0, totalOutstanding: 0 };
+
+    for (const r of rows) {
+      const days = Math.max(0, Number(r.days_overdue) || 0);
+      const out = money2(r.outstanding);
+      if (out <= 0) continue;
+      const bucket = days === 0 ? 'current' : days <= 30 ? '1_30' : days <= 60 ? '31_60' : days <= 90 ? '61_90' : '90_plus';
+      const partyKey = `${r.party}||${r.property}`;
+      let p = byParty.get(partyKey);
+      if (!p) {
+        p = { partyName: r.party, property: r.property, invoiceCount: 0, current: 0, days1To30: 0, days31To60: 0, days61To90: 0, days90Plus: 0, totalOutstanding: 0, items: [] as any[] };
+        byParty.set(partyKey, p);
+      }
+      p.invoiceCount += 1;
+      p.totalOutstanding = money2(p.totalOutstanding + out);
+      totals.totalOutstanding = money2(totals.totalOutstanding + out);
+      if (bucket === 'current') { p.current = money2(p.current + out); totals.current = money2(totals.current + out); }
+      else if (bucket === '1_30') { p.days1To30 = money2(p.days1To30 + out); totals.days1To30 = money2(totals.days1To30 + out); }
+      else if (bucket === '31_60') { p.days31To60 = money2(p.days31To60 + out); totals.days31To60 = money2(totals.days31To60 + out); }
+      else if (bucket === '61_90') { p.days61To90 = money2(p.days61To90 + out); totals.days61To90 = money2(totals.days61To90 + out); }
+      else { p.days90Plus = money2(p.days90Plus + out); totals.days90Plus = money2(totals.days90Plus + out); }
+      p.items.push({
+        id: String(r.id), invoiceNo: r.invoice_no, partyName: r.party, property: r.property, unit: r.unit,
+        invoiceDate: dateOnly(r.invoice_date), dueDate: dateOnly(r.due_date), daysOverdue: days, bucket,
+        originalAmount: money2(r.amount), paidAmount: money2(r.paid_amount), outstandingAmount: out, status: r.status,
+      });
+    }
+    res.json({ data: Array.from(byParty.values()), totals, type, asOf });
+  } catch (e: any) { fail(res, 'ageing', e, 'Failed to compute ageing report'); }
+});
+
+// D7: Single VAT rate source and GL accounts from fin_tax_configs
+router.get('/vat-config', async (_req: Request, res: Response) => {
+  try {
+    const data = await prisma.fin_tax_configs.findMany({ where: { is_active: true }, orderBy: { rate: 'asc' } });
+    res.json({ data });
+  } catch (e: any) { fail(res, 'vat-config', e, 'Failed to load VAT configuration'); }
+});
+
+// E3 / D6: Credit & Debit Notes (table-backed, with atomic GL voucher posting)
+router.get('/credit-debit-notes', async (req: Request, res: Response) => {
+  try {
+    if (!readGuard(req, res, 'credit and debit notes')) return;
+    const noteType = req.query.note_type ? String(req.query.note_type).toUpperCase() : undefined;
+    const data = await prisma.fin_credit_debit_notes.findMany({
+      where: noteType ? { note_type: noteType } : undefined,
+      orderBy: { created_at: 'desc' },
+    });
+    res.json({ data });
+  } catch (e: any) { fail(res, 'credit-debit-notes:list', e, 'Failed to load credit/debit notes'); }
+});
+
+router.post('/credit-debit-notes', async (req: Request, res: Response) => {
+  try {
+    if (!writeGuard(req, res, 'create credit/debit notes')) return;
+    const b = req.body || {};
+    const noteType = String(b.note_type || '').toUpperCase() === 'CREDIT' ? 'CREDIT' : 'DEBIT';
+    const amount = money2(b.amount);
+    const date = ymd(b.note_date || b.date) || new Date().toISOString().slice(0, 10);
+    const partyName = String(b.party_name || '').trim();
+    const accountCode = String(b.account_code || '').trim();
+    if (!partyName || amount <= 0 || !accountCode) {
+      return res.status(400).json({ error: 'party_name, account_code, and an amount above zero are required' });
+    }
+    const noteNumber = String(b.note_number || '').trim() ||
+      `${noteType === 'CREDIT' ? 'CN' : 'DN'}-${date.slice(0, 4)}-${String(Date.now()).slice(-6)}`;
+    const created = await prisma.fin_credit_debit_notes.create({
+      data: {
+        note_number: noteNumber,
+        note_type: noteType,
+        party_type: String(b.party_type || (noteType === 'CREDIT' ? 'Tenant' : 'Vendor')),
+        party_id: b.party_id ? String(b.party_id) : null,
+        party_name: partyName,
+        linked_agreement: b.linked_agreement ? String(b.linked_agreement) : null,
+        linked_invoice: b.linked_invoice ? String(b.linked_invoice) : null,
+        amount,
+        account_code: accountCode,
+        reason: b.reason ? String(b.reason) : null,
+        notes: b.notes ? String(b.notes) : null,
+        note_date: new Date(`${date}T00:00:00.000Z`),
+        status: 'DRAFT',
+      },
+    });
+    res.status(201).json({ data: created });
+  } catch (e: any) { fail(res, 'credit-debit-notes:create', e, 'Failed to create credit/debit note'); }
+});
+
+router.post('/credit-debit-notes/:id/action', async (req: Request, res: Response) => {
+  try {
+    if (!writeGuard(req, res, 'update credit/debit notes')) return;
+    const id = String(req.params.id);
+    const action = String(req.body?.action || '').toLowerCase();
+    if (!['approve', 'post', 'cancel'].includes(action)) {
+      return res.status(400).json({ error: 'action must be approve, post, or cancel' });
+    }
+    const updated = await txn(async (tx) => {
+      const rows = await tx.$queryRaw<any[]>`SELECT * FROM fin_credit_debit_notes WHERE id = ${id} LIMIT 1 FOR UPDATE`;
+      if (!rows.length) { const err: any = new Error('Note not found'); err.status = 404; throw err; }
+      const note = rows[0];
+      if (action === 'cancel') {
+        if (note.status === 'POSTED') { const err: any = new Error('Posted notes cannot be cancelled'); err.status = 409; throw err; }
+        await tx.$executeRaw`UPDATE fin_credit_debit_notes SET status = 'CANCELLED' WHERE id = ${id}`;
+        return { ...note, status: 'CANCELLED' };
+      }
+      if (action === 'approve') {
+        if (note.status !== 'DRAFT') { const err: any = new Error(`Note is already ${note.status}`); err.status = 409; throw err; }
+        await tx.$executeRaw`UPDATE fin_credit_debit_notes SET status = 'APPROVED' WHERE id = ${id}`;
+        return { ...note, status: 'APPROVED' };
+      }
+      if (note.status === 'POSTED') { const err: any = new Error('Note is already posted'); err.status = 409; throw err; }
+      const amt = money2(note.amount);
+      const isVendor = String(note.party_type).toLowerCase() === 'vendor';
+      const controlCode = isVendor ? AP_CONTROL_CODE : AR_CONTROL_CODE;
+      // Debit Note: Vendor -> Dr AP / Cr Expense; Customer -> Dr AR / Cr Revenue. Credit Note: reverse sides.
+      const lines = note.note_type === 'DEBIT'
+        ? [{ account_code: controlCode, debit: amt, credit: 0 }, { account_code: note.account_code, debit: 0, credit: amt }]
+        : [{ account_code: note.account_code, debit: amt, credit: 0 }, { account_code: controlCode, debit: 0, credit: amt }];
+      const posted = await postManualVoucher({
+        voucher_date: dateOnly(note.note_date),
+        voucher_type: 'Journal',
+        reference_no: note.note_number,
+        idempotency_key: `CDN_POST|${note.note_number}`,
+        description: `${note.note_type === 'CREDIT' ? 'Credit' : 'Debit'} Note ${note.note_number} — ${note.party_name}`,
+        lines,
+        created_by: (req as any).user?.id ?? null,
+      }, tx);
+      const voucherNumber = posted?.[0]?.voucher_number ?? null;
+      await tx.$executeRaw`UPDATE fin_credit_debit_notes SET status = 'POSTED', voucher_number = ${voucherNumber} WHERE id = ${id}`;
+      return { ...note, status: 'POSTED', voucher_number: voucherNumber };
+    });
+    res.json({ data: updated });
+  } catch (e: any) { fail(res, 'credit-debit-notes:action', e, 'Failed to process credit/debit note'); }
+});
+
+// E3: Budget heads backed by fin_budget_heads
+router.get('/budget-heads', async (req: Request, res: Response) => {
+  try {
+    if (!readGuard(req, res, 'budget heads')) return;
+    const data = await prisma.fin_budget_heads.findMany({ where: { is_active: true }, orderBy: { code: 'asc' } });
+    res.json({ data });
+  } catch (e: any) { fail(res, 'budget-heads:list', e, 'Failed to load budget heads'); }
+});
+
+router.post('/budget-heads', async (req: Request, res: Response) => {
+  try {
+    if (!writeGuard(req, res, 'manage budget heads')) return;
+    const b = req.body || {};
+    const code = String(b.code || '').trim();
+    const name = String(b.name || '').trim();
+    if (!code || !name) return res.status(400).json({ error: 'code and name are required' });
+    const row = await prisma.fin_budget_heads.upsert({
+      where: { code },
+      update: { name, budget_type: b.budget_type || 'OPEX', annual_limit: money2(b.annual_limit), allocated_amount: money2(b.allocated_amount) },
+      create: { code, name, budget_type: b.budget_type || 'OPEX', annual_limit: money2(b.annual_limit), allocated_amount: money2(b.allocated_amount), fiscal_year: Number(b.fiscal_year) || new Date().getUTCFullYear() },
+    });
+    res.status(201).json({ data: row });
+  } catch (e: any) { fail(res, 'budget-heads:save', e, 'Failed to save budget head'); }
+});
+
+router.delete('/budget-heads/:id', async (req: Request, res: Response) => {
+  try {
+    if (!writeGuard(req, res, 'delete budget heads')) return;
+    const id = String(req.params.id);
+    await prisma.fin_budget_heads.updateMany({ where: { id }, data: { is_active: false } });
+    res.json({ ok: true });
+  } catch (e: any) { fail(res, 'budget-heads:delete', e, 'Failed to delete budget head'); }
 });
 
 // Posting Engine Compliance View

@@ -36,7 +36,7 @@ export async function submitVoucherForApproval(voucher: {
     .from("fin_vouchers")
     .insert([
       {
-        voucher_no: voucherNo,
+        voucher_number: voucherNo,
         voucher_type: voucher.voucher_type,
         voucher_date: voucher.voucher_date,
         narration: voucher.narration,
@@ -54,16 +54,27 @@ export async function submitVoucherForApproval(voucher: {
 
   // Insert lines
   if (voucher.lines && voucher.lines.length > 0 && data?.id) {
-    const linesPayload = voucher.lines.map((l, idx) => ({
+    // fin_voucher_lines.account_id is a required FK, so resolve it from the account code.
+    const codes = Array.from(new Set(voucher.lines.map((l) => l.account_code)));
+    const { data: accts, error: acctErr } = await db
+      .from("fin_coa_accounts")
+      .select("id, account_code")
+      .in("account_code", codes);
+    if (acctErr) throw new Error(`Failed to resolve accounts: ${acctErr.message}`);
+    const idByCode = new Map<string, string>((accts || []).map((a: any) => [a.account_code, a.id]));
+    const missing = codes.filter((c) => !idByCode.has(c));
+    if (missing.length) throw new Error(`Unknown account code(s): ${missing.join(", ")}`);
+    const linesPayload = voucher.lines.map((l) => ({
       voucher_id: data.id,
-      line_no: idx + 1,
+      account_id: idByCode.get(l.account_code),
       account_code: l.account_code,
       account_name: l.account_name,
-      debit: l.debit || 0,
-      credit: l.credit || 0,
-      narration: l.narration || voucher.narration,
+      debit_amount: l.debit || 0,
+      credit_amount: l.credit || 0,
+      description: l.narration || voucher.narration,
     }));
-    await db.from("fin_voucher_lines").insert(linesPayload);
+    const { error: lineErr } = await db.from("fin_voucher_lines").insert(linesPayload);
+    if (lineErr) throw new Error(`Failed to save voucher lines: ${lineErr.message}`);
   }
 
   return data;
@@ -90,16 +101,16 @@ export async function approveAndPostVoucher(voucherId: string, reviewerId?: stri
   const postResult = await postVoucher({
     voucher_date: voucher.voucher_date,
     voucher_type: voucher.voucher_type || "Journal",
-    reference_no: voucher.voucher_no,
+    reference_no: voucher.voucher_number,
     description: `[APPROVED] ${voucher.narration}`,
     source_type: "VOUCHER_APPROVAL",
     source_id: voucherId,
     lines: (voucher.fin_voucher_lines || []).map((l: any) => ({
       account_code: l.account_code,
       account_name: l.account_name,
-      debit: Number(l.debit || 0),
-      credit: Number(l.credit || 0),
-      description: l.narration,
+      debit: Number(l.debit_amount || 0),
+      credit: Number(l.credit_amount || 0),
+      description: l.description,
     })),
   });
 

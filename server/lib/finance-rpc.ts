@@ -7,8 +7,7 @@ import { randomUUID } from 'crypto';
 import prisma from './prisma';
 import { txn } from './prisma';
 import { HttpError } from './errors';
-
-const money = (n: unknown) => Math.round((Number(n) || 0) * 100) / 100;
+import { money } from './money';
 
 /** Integer sequence, like a Postgres sequence. Safe under concurrent calls (single-row upsert). */
 export async function nextIntSequence(name: string): Promise<number> {
@@ -149,8 +148,26 @@ async function issueReceiptTx(tx: any, ev: any, voucherId: string, voucherNumber
             ${ev.property_id ?? null}, ${ev.unit_id ?? null}, ${ev.lease_id ?? null}, 'ISSUED', NOW(6), ${payload}, '{}', NOW(6))`;
 }
 
-export async function postAccountingEvent(eventId: string): Promise<PostResult[]> {
-  return txn(async (tx) => {
+// ───────────────────────────────────────────────────────────────────────────────
+// Period lock enforcement (A7) — missing or non-open period is treated as closed.
+// ───────────────────────────────────────────────────────────────────────────────
+export async function assertPeriodOpen(db: any, dateInput: Date | string) {
+  const d = dateInput instanceof Date ? dateInput : new Date(String(dateInput));
+  if (Number.isNaN(d.getTime())) throw new HttpError(400, 'Invalid posting date');
+  const pYear = d.getUTCFullYear();
+  const pMonth = d.getUTCMonth() + 1;
+  const period = await db.$queryRaw<{ status: string }[]>`
+    SELECT status FROM fin_posting_periods WHERE year = ${String(pYear)} AND month = ${pMonth} LIMIT 1`;
+  if (!period.length || String(period[0].status).toLowerCase() !== 'open') {
+    throw new HttpError(
+      403,
+      `Financial Period ${pYear}-${String(pMonth).padStart(2, '0')} is ${period.length ? 'closed' : 'not open'} for entries. Contact Super-Admin to reopen`,
+    );
+  }
+}
+
+export async function postAccountingEvent(eventId: string, externalTx?: any): Promise<PostResult[]> {
+  const run = async (tx: any): Promise<PostResult[]> => {
     const evRows = await tx.$queryRaw<any[]>`SELECT * FROM fin_accounting_events WHERE id = ${eventId} FOR UPDATE`;
     if (!evRows.length) throw new HttpError(404, `Accounting event ${eventId} was not found.`);
     const ev = evRows[0];
@@ -176,16 +193,8 @@ export async function postAccountingEvent(eventId: string): Promise<PostResult[]
         `Total Debits (${totalDebit}) must equal Total Credits (${totalCredit}). Out of balance by ${diff}`);
     }
 
-    // Closed financial periods accept no new entries.
-    const postDate = new Date(ev.posting_date ?? ev.event_date);
-    const pYear = postDate.getUTCFullYear();
-    const pMonth = postDate.getUTCMonth() + 1;
-    const period = await tx.$queryRaw<{ status: string }[]>`
-      SELECT status FROM fin_posting_periods WHERE year = ${String(pYear)} AND month = ${pMonth} LIMIT 1`;
-    if (period.length && String(period[0].status).toLowerCase() === 'closed') {
-      throw new HttpError(403,
-        `Financial Period ${pYear}-${String(pMonth).padStart(2, '0')} is closed for entries. Contact Super-Admin to reopen`);
-    }
+    // Closed or unseeded financial periods accept no new entries (A7).
+    await assertPeriodOpen(tx, ev.posting_date ?? ev.event_date);
     if (Math.abs(money(ev.total_debit) - totalDebit) > 0.001) {
       throw new Error(`Accounting event ${eventId} debit total does not match event lines. Event=${ev.total_debit}, Lines=${totalDebit}.`);
     }
@@ -259,7 +268,8 @@ export async function postAccountingEvent(eventId: string): Promise<PostResult[]
     await issueReceiptTx(tx, ev, voucherId, voucherNumber, resolved.map(({ line, coa }) => ({ code: coa.account_code, debit: money(line.debit), credit: money(line.credit), name: coa.account_name, description: line.description })));
 
     return [{ event_id: eventId, voucher_id: voucherId, voucher_number: voucherNumber, status: 'POSTED' }];
-  });
+  };
+  return externalTx ? run(externalTx) : txn(run);
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
@@ -346,6 +356,10 @@ export async function manualPdcStatusUpdate(args: {
   }
 
   const txResult = await txn(async (tx) => {
+    // A7: Verify posting period is open before changing PDC status or generating events.
+    const effectiveDate = args.clearedDate || args.depositDate || args.returnedDate || new Date();
+    await assertPeriodOpen(tx, effectiveDate);
+
     // Lock the cheque row so concurrent status changes run one after another.
     const rows = await tx.$queryRaw<any[]>`SELECT * FROM fin_pdc_register WHERE id = ${id} FOR UPDATE`;
     if (!rows.length) throw new HttpError(404, `PDC register row ${args.pdcId} not found`);
@@ -488,9 +502,10 @@ export interface ManualVoucherInput {
   unit_id?: string | null;
   customer_id?: string | null;
   created_by?: string | null;
+  idempotency_key?: string | null;
 }
 
-export async function postManualVoucher(input: ManualVoucherInput): Promise<PostResult[]> {
+export async function postManualVoucher(input: ManualVoucherInput, externalTx?: any): Promise<PostResult[]> {
   const date = String(input.voucher_date || '').slice(0, 10);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) throw new HttpError(400, 'voucher_date must be YYYY-MM-DD');
   const lines = (input.lines || []).map((l) => ({
@@ -507,38 +522,47 @@ export async function postManualVoucher(input: ManualVoucherInput): Promise<Post
     throw new HttpError(400, `Total Debits (${totalDebit}) must equal Total Credits (${totalCredit}).`);
   }
 
-  // Every account must exist and be active in the posting chart.
-  const codes = Array.from(new Set(lines.map((l) => l.account_code)));
-  const found = await prisma.$queryRawUnsafe<any[]>(
-    `SELECT account_code, account_name FROM fin_coa_accounts WHERE is_active = TRUE AND account_code IN (${codes.map(() => '?').join(',')})`,
-    ...codes,
-  );
-  const names = new Map(found.map((r) => [String(r.account_code), String(r.account_name)]));
-  const missing = codes.filter((c) => !names.has(c));
-  if (missing.length) throw new HttpError(400, `Account code(s) not in the chart of accounts: ${missing.join(', ')}`);
+  const run = async (tx: any): Promise<PostResult[]> => {
+    // Every account must exist and be active in the posting chart.
+    const codes = Array.from(new Set(lines.map((l) => l.account_code)));
+    const found = await tx.$queryRawUnsafe(
+      `SELECT account_code, account_name FROM fin_coa_accounts WHERE is_active = TRUE AND account_code IN (${codes.map(() => '?').join(',')})`,
+      ...codes,
+    ) as any[];
+    const names = new Map(found.map((r) => [String(r.account_code), String(r.account_name)]));
+    const missing = codes.filter((c) => !names.has(c));
+    if (missing.length) throw new HttpError(400, `Account code(s) not in the chart of accounts: ${missing.join(', ')}`);
 
-  // Closed posting periods accept no entries.
-  const y = Number(date.slice(0, 4)); const m = Number(date.slice(5, 7));
-  const period = await prisma.$queryRaw<{ status: string }[]>`SELECT status FROM fin_posting_periods WHERE year = ${String(y)} AND month = ${m} LIMIT 1`;
-  if (period.length && String(period[0].status).toLowerCase() === 'closed') {
-    throw new HttpError(403, `Financial Period ${y}-${String(m).padStart(2, '0')} is closed for entries. Contact Super-Admin to reopen`);
-  }
+    // Closed or unseeded posting periods accept no entries (A7).
+    const y = Number(date.slice(0, 4));
+    await assertPeriodOpen(tx, date);
 
-  const type = input.voucher_type && VOUCHER_PREFIX[input.voucher_type] ? input.voucher_type : 'Journal';
-  const seq = await nextIntSequence(`voucher_${type.toLowerCase()}_${y}`);
-  const reference = (input.reference_no && String(input.reference_no).trim()) || `${VOUCHER_PREFIX[type]}-${y}-${String(seq).padStart(6, '0')}`;
-  const idempotencyKey = `MANUAL|${type}|${reference}|${date}`;
+    const type = input.voucher_type && VOUCHER_PREFIX[input.voucher_type] ? input.voucher_type : 'Journal';
+    let reference = input.reference_no && String(input.reference_no).trim();
+    if (!reference) {
+      await tx.$executeRaw`INSERT INTO app_sequences (name, current_value) VALUES (${`voucher_${type.toLowerCase()}_${y}`}, 1)
+        ON DUPLICATE KEY UPDATE current_value = current_value + 1`;
+      const seqRows = await tx.$queryRaw<{ current_value: bigint }[]>`
+        SELECT current_value FROM app_sequences WHERE name = ${`voucher_${type.toLowerCase()}_${y}`}`;
+      const seq = Number(seqRows[0].current_value);
+      reference = `${VOUCHER_PREFIX[type]}-${y}-${String(seq).padStart(6, '0')}`;
+    }
+    // D2: Use explicit idempotency_key when provided; omit date for caller-supplied references so retries across dates don't double-post.
+    const idempotencyKey = input.idempotency_key
+      ? String(input.idempotency_key)
+      : input.reference_no && String(input.reference_no).trim()
+        ? `MANUAL|${type}|${reference}`
+        : `MANUAL|${type}|${reference}|${date}`;
 
-  // A repeat of the same voucher returns the one already posted.
-  const existing = await prisma.$queryRaw<any[]>`SELECT id, status FROM fin_accounting_events WHERE idempotency_key = ${idempotencyKey} LIMIT 1`;
-  if (existing.length && existing[0].status === 'POSTED') return postAccountingEvent(String(existing[0].id));
-  if (existing.length) {
-    await prisma.$executeRaw`DELETE FROM fin_accounting_event_lines WHERE event_id = ${existing[0].id}`;
-    await prisma.$executeRaw`DELETE FROM fin_accounting_events WHERE id = ${existing[0].id}`;
-  }
+    // A repeat of the same voucher returns the one already posted.
+    const existing = await tx.$queryRaw<any[]>`SELECT id, status FROM fin_accounting_events WHERE idempotency_key = ${idempotencyKey} LIMIT 1`;
+    if (existing.length && existing[0].status === 'POSTED') return postAccountingEvent(String(existing[0].id), tx);
+    if (existing.length) {
+      await tx.$executeRaw`DELETE FROM fin_accounting_event_lines WHERE event_id = ${existing[0].id}`;
+      await tx.$executeRaw`DELETE FROM fin_accounting_events WHERE id = ${existing[0].id}`;
+    }
 
-  const eventId = randomUUID();
-  await txn(async (tx) => {
+    const eventId = randomUUID();
     await tx.$executeRaw`INSERT INTO fin_accounting_events
       (id, event_type, status, event_date, posting_date, source_type, reference_number, description, idempotency_key,
        property_id, unit_id, customer_id, total_debit, total_credit, created_by)
@@ -553,14 +577,9 @@ export async function postManualVoucher(input: ManualVoucherInput): Promise<Post
         VALUES (${randomUUID()}, ${eventId}, ${n}, ${l.account_code}, ${names.get(l.account_code) || null}, ${l.debit}, ${l.credit},
                 ${l.description}, ${input.property_id || null}, ${input.unit_id || null}, ${input.customer_id || null})`;
     }
-  });
 
-  try {
-    return await postAccountingEvent(eventId);
-  } catch (err) {
-    // Nothing was posted: remove the unposted event so a failed attempt leaves no half-finished record.
-    await prisma.$executeRaw`DELETE FROM fin_accounting_event_lines WHERE event_id = ${eventId}`;
-    await prisma.$executeRaw`DELETE FROM fin_accounting_events WHERE id = ${eventId} AND status <> 'POSTED'`;
-    throw err;
-  }
+    return postAccountingEvent(eventId, tx);
+  };
+
+  return externalTx ? run(externalTx) : txn(run);
 }

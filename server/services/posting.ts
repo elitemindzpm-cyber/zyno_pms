@@ -6,6 +6,7 @@ import prisma from '../lib/prisma';
 import { txn } from '../lib/prisma';
 import { postAccountingEvent } from '../lib/finance-rpc';
 import { HttpError } from '../lib/errors';
+import { money } from '../lib/money';
 
 export type GlLine = {
   code: string;
@@ -30,21 +31,21 @@ export type PostOptions = {
   unitId?: string | null;
   customerId?: string | null;
   postingDate?: Date;
+  tx?: any;
 };
 
 export type PostedEvent = { eventId: string; voucherId: string | null; voucherNumber: string | null; duplicate: boolean };
 
-const money = (n: number) => Math.round(n * 100) / 100;
-
 export async function postGlEvent(opts: PostOptions): Promise<PostedEvent> {
+  const db = opts.tx ?? prisma;
   // Same key again: return the earlier result instead of posting twice.
-  const existing = await prisma.fin_accounting_events.findUnique({ where: { idempotency_key: opts.idempotencyKey } });
+  const existing = await db.fin_accounting_events.findUnique({ where: { idempotency_key: opts.idempotencyKey } });
   if (existing) {
     if (String(existing.status) !== 'POSTED') {
-      const [p] = await postAccountingEvent(existing.id);
+      const [p] = await postAccountingEvent(existing.id, opts.tx);
       return { eventId: existing.id, voucherId: p.voucher_id, voucherNumber: p.voucher_number, duplicate: true };
     }
-    const v = await prisma.fin_vouchers.findFirst({ where: { accounting_event_id: existing.id }, select: { id: true, voucher_number: true } });
+    const v = await db.fin_vouchers.findFirst({ where: { accounting_event_id: existing.id }, select: { id: true, voucher_number: true } });
     return { eventId: existing.id, voucherId: v?.id ?? null, voucherNumber: v?.voucher_number ?? null, duplicate: true };
   }
 
@@ -62,7 +63,7 @@ export async function postGlEvent(opts: PostOptions): Promise<PostedEvent> {
   const coa = new Map<string, { id: string; account_code: string; account_name: string }>();
   for (const l of lines) {
     if (coa.has(l.code)) continue;
-    const row = await prisma.fin_coa_accounts.findFirst({
+    const row = await db.fin_coa_accounts.findFirst({
       where: { account_code: l.code, is_active: true }, select: { id: true, account_code: true, account_name: true },
     });
     if (!row) throw new HttpError(400, `GL account ${l.code} is not active in the chart of accounts`);
@@ -71,7 +72,7 @@ export async function postGlEvent(opts: PostOptions): Promise<PostedEvent> {
 
   const eventId = crypto.randomUUID();
   const now = opts.postingDate ?? new Date();
-  await txn(async (tx) => {
+  const writeEvent = async (tx: any) => {
     await tx.fin_accounting_events.create({
       data: {
         id: eventId,
@@ -113,8 +114,15 @@ export async function postGlEvent(opts: PostOptions): Promise<PostedEvent> {
         },
       });
     }
-  });
+  };
 
+  if (opts.tx) {
+    await writeEvent(opts.tx);
+    const [posted] = await postAccountingEvent(eventId, opts.tx);
+    return { eventId, voucherId: posted.voucher_id, voucherNumber: posted.voucher_number, duplicate: false };
+  }
+
+  await txn(writeEvent);
   const [posted] = await postAccountingEvent(eventId);
   return { eventId, voucherId: posted.voucher_id, voucherNumber: posted.voucher_number, duplicate: false };
 }

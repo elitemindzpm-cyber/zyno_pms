@@ -1,11 +1,12 @@
 ﻿import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import {
   Building2, Calendar, Clock, Home, Shield, User, Phone,
   CheckCircle2, AlertTriangle, FileText, ChevronRight, Layers, Car
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { tenantLease, formatQAR } from "@/lib/mock-data";
+import { fetchPortalSummary, formatQAR, type PortalLease } from "@/lib/portal-api";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/portal/lease")({
@@ -14,16 +15,42 @@ export const Route = createFileRoute("/portal/lease")({
 });
 
 function LeasePage() {
-  const lease = tenantLease;
+  const [lease, setLease] = useState<PortalLease | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchPortalSummary()
+      .then((s) => setLease(s?.lease ?? null))
+      .catch(() => setLease(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) {
+    return <div className="py-12 text-center text-sm text-muted-foreground">Loading your lease details...</div>;
+  }
+
+  if (!lease) {
+    return (
+      <Card>
+        <CardContent className="py-12 text-center space-y-2">
+          <Building2 className="h-8 w-8 mx-auto text-muted-foreground" />
+          <p className="font-semibold">No Active Lease Found</p>
+          <p className="text-sm text-muted-foreground">There is currently no active tenancy agreement linked to your account.</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   const startMs = new Date(lease.startDate).getTime();
   const endMs = new Date(lease.endDate).getTime();
   const nowMs = Date.now();
-  const totalDays = (endMs - startMs) / 86400000;
+  const totalDays = Math.max(1, (endMs - startMs) / 86400000);
   const elapsedDays = (nowMs - startMs) / 86400000;
   const progressPct = Math.min(100, Math.max(0, (elapsedDays / totalDays) * 100));
   const daysRemaining = Math.max(0, Math.ceil((endMs - nowMs) / 86400000));
-  const noticeCutoff = new Date(endMs - lease.noticePeriodDays * 86400000).toISOString().slice(0, 10);
+  const noticeCutoff = isNaN(endMs)
+    ? "—"
+    : new Date(endMs - lease.noticePeriodDays * 86400000).toISOString().slice(0, 10);
 
   const renewalColors = {
     none: "bg-muted text-muted-foreground",

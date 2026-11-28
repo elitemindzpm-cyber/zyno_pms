@@ -3,7 +3,8 @@ import { Router, Request, Response } from 'express';
 import prisma from '../lib/prisma';
 import { parsePagination, paginatedResponse } from '../lib/middleware';
 import { assertPropertyDeletable } from '../services/property';
-import { HttpError, sendDbError } from '../lib/errors';
+import { sendDbError } from '../lib/errors';
+import { coerceForModel } from '../lib/coerce';
 
 const router = Router();
 
@@ -22,7 +23,7 @@ router.get('/', async (req: Request, res: Response) => {
     ]);
     res.json(paginatedResponse(data, total, page, limit));
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    sendDbError(res, e, 'properties.list');
   }
 });
 
@@ -37,17 +38,18 @@ router.get('/:id', async (req: Request, res: Response) => {
     if (!item) return res.status(404).json({ error: 'Not found' });
     res.json(item);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    sendDbError(res, e, 'properties.get');
   }
 });
 
 // POST /api/properties
 router.post('/', async (req: Request, res: Response) => {
   try {
-    const item = await prisma.properties.create({ data: req.body });
+    const data = coerceForModel('properties', req.body || {});
+    const item = await prisma.properties.create({ data });
     res.status(201).json(item);
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    sendDbError(res, e, 'properties.create');
   }
 });
 
@@ -55,13 +57,15 @@ router.post('/', async (req: Request, res: Response) => {
 router.patch('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
-    await prisma.properties.updateMany({
+    const data = coerceForModel('properties', req.body || {});
+    const result = await prisma.properties.updateMany({
       where: { id },
-      data: req.body,
+      data,
     });
+    if (result.count === 0) return res.status(404).json({ error: 'Property not found' });
     res.json({ success: true });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    sendDbError(res, e, 'properties.update');
   }
 });
 
@@ -70,7 +74,8 @@ router.delete('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
     await assertPropertyDeletable(id);
-    await prisma.properties.deleteMany({ where: { id } });
+    const result = await prisma.properties.deleteMany({ where: { id } });
+    if (result.count === 0) return res.status(404).json({ error: 'Property not found' });
     res.json({ success: true });
   } catch (e: any) {
     sendDbError(res, e, 'properties.delete');

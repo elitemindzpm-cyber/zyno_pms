@@ -1,9 +1,8 @@
-import { kvStore } from "@/lib/kv-store";
 /**
  * security.ts — Production Security Service
  *
  * Handles:
- *  - Persistent security audit log (DB DB + LocalStorage + in-memory fallback)
+ *  - Persistent security audit log (DB security_audit_logs table + runtime fallback buffer)
  *  - Input sanitisation (XSS prevention)
  *  - Rate limiting (client-side token bucket)
  *  - CSRF guard for server-bound mutation requests
@@ -35,31 +34,7 @@ export type AccessPolicy = {
   actions: ("read" | "write" | "delete" | "admin")[];
 };
 
-// ─── LocalStorage / In-Memory Audit Log Fallback ─────────────────────────────
-
-const STORAGE_KEY = "pms_security_audit_logs";
-
-function getLocalAuditLogs(): SecurityAuditLog[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = kvStore.getItem(STORAGE_KEY);
-    if (!raw) return [];
-    return JSON.parse(raw);
-  } catch {
-    return [];
-  }
-}
-
-function saveLocalAuditLog(record: SecurityAuditLog) {
-  if (typeof window === "undefined") return;
-  try {
-    const existing = getLocalAuditLogs();
-    const updated = [record, ...existing.filter(r => r.id !== record.id)].slice(0, 300);
-    kvStore.setItem(STORAGE_KEY, JSON.stringify(updated));
-  } catch (e) {
-    console.warn("Could not save to kvStore audit store", e);
-  }
-}
+// ─── E6: Table-Backed Audit Log (no KV store cache or client delete) ────────
 
 const _memoryLog: SecurityAuditLog[] = [];
 
@@ -75,16 +50,14 @@ export async function logSecurityEvent(
     user_agent: typeof navigator !== "undefined" ? navigator.userAgent : undefined,
   };
 
-  // Always push to in-memory log & kvStore
+  // Runtime buffer only (never persisted to kvStore)
   _memoryLog.unshift(record);
   if (_memoryLog.length > 300) _memoryLog.pop();
-  saveLocalAuditLog(record);
 
-  // Best-effort persist to Db
   try {
     const { error } = await db.from("security_audit_logs").insert(record);
     if (error) {
-      console.warn("DB security_audit_logs table unavailable or restricted by RLS; saved to local audit trail store.", error.message);
+      console.warn("security_audit_logs insert failed:", error.message);
     }
   } catch (err) {
     console.warn("Audit log DB insert skipped", err);
@@ -92,8 +65,6 @@ export async function logSecurityEvent(
 }
 
 export async function fetchSecurityAuditLogs(): Promise<SecurityAuditLog[]> {
-  const localLogs = getLocalAuditLogs();
-  
   try {
     const { data, error } = await db
       .from("security_audit_logs")
@@ -101,33 +72,18 @@ export async function fetchSecurityAuditLogs(): Promise<SecurityAuditLog[]> {
       .order("timestamp", { ascending: false })
       .limit(200);
 
-    if (error || !data || data.length === 0) {
-      return localLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+    if (error || !data) {
+      return [..._memoryLog];
     }
-
-    // Merge DB logs with local logs
-    const mergedMap = new Map<string, SecurityAuditLog>();
-    data.forEach((d: SecurityAuditLog) => mergedMap.set(d.id || d.timestamp, d));
-    localLogs.forEach((l: SecurityAuditLog) => mergedMap.set(l.id || l.timestamp, l));
-
-    return Array.from(mergedMap.values()).sort(
-      (a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
-    );
+    return data as SecurityAuditLog[];
   } catch {
-    return localLogs;
+    return [..._memoryLog];
   }
 }
 
 export async function clearSecurityAuditLogs(): Promise<void> {
-  if (typeof window !== "undefined") {
-    kvStore.removeItem(STORAGE_KEY);
-  }
+  // E6: Audit logs in the database are append-only; only clear the local runtime buffer.
   _memoryLog.length = 0;
-  try {
-    await db.from("security_audit_logs").delete().neq("id", "00000000-0000-0000-0000-000000000000");
-  } catch (err) {
-    console.warn("Could not delete from security_audit_logs table", err);
-  }
 }
 
 // ─── Input Sanitisation ──────────────────────────────────────────────────────

@@ -905,36 +905,6 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
       );
 
       if (typeof window !== "undefined") {
-        try {
-          const vKey = "finance_master_v1-vouchers";
-          const raw = kvStore.getItem(vKey);
-          const list = raw ? JSON.parse(raw) : [];
-          const today = new Date().toISOString().split("T")[0];
-          const totalAccrual = Math.round(totalGratuityProvision + totalLeaveProvision);
-          const newVch = {
-            id: `vch-accrual-${Date.now()}`,
-            voucher_no: `VCH-PAY-${runId}`,
-            voucher_type: "Journal Voucher",
-            date: today,
-            name: `Monthly EOSB & Leave Salary Accrual — ${periodStr}`,
-            debit: "Staff Cost (Provisions)",
-            debit_code: "50120",
-            credit: "Accrued Staff Liabilities",
-            credit_code: "21210",
-            amount: totalAccrual,
-            method: "Payroll Journal",
-            status: "Posted",
-            lines: [
-              { type: "DR", account: "End of Service Benefits Provision", account_code: "50120", amount: Math.round(totalGratuityProvision), description: `EOSB Gratuity Accrual - ${periodStr}` },
-              { type: "CR", account: "Accrued EOSB Liability", account_code: "21210", amount: Math.round(totalGratuityProvision), description: `EOSB Liability Provision - ${periodStr}` },
-              { type: "DR", account: "Leave Salary Provision Expense", account_code: "50130", amount: Math.round(totalLeaveProvision), description: `Leave Salary Accrual - ${periodStr}` },
-              { type: "CR", account: "Accrued Leave Salary Liability", account_code: "21220", amount: Math.round(totalLeaveProvision), description: `Leave Salary Liability - ${periodStr}` },
-            ]
-          };
-          if (!list.some((v: any) => v.voucher_no === newVch.voucher_no)) {
-            kvStore.setItem(vKey, JSON.stringify([newVch, ...list]));
-          }
-        } catch {}
         window.dispatchEvent(new CustomEvent("finance_vouchers_updated"));
       }
     } catch (err: any) {
@@ -988,35 +958,8 @@ export function HrmsModule({ role = "admin" }: HrmsModuleProps) {
             console.warn("Direct DB payroll sync note:", syncErr?.message || syncErr);
           }
 
-          // Ensure local Finance store updates immediately so Trial Balance reflects without delay
+          // Notify Finance store to refresh from server vouchers
           if (typeof window !== "undefined") {
-            try {
-              const vKey = "finance_master_v1-vouchers";
-              const raw = kvStore.getItem(vKey);
-              const list = raw ? JSON.parse(raw) : [];
-              const today = new Date().toISOString().split("T")[0];
-              const newVch = {
-                id: `vch-pay-${Date.now()}`,
-                voucher_no: `VCH-PAY-${runId}`,
-                voucher_type: "Journal Voucher",
-                date: today,
-                name: `Payroll Salary Accrual — ${cycle?.name || periodStr}`,
-                debit: "Staff Salaries & Payroll",
-                debit_code: "50100",
-                credit: "Salary Payable",
-                credit_code: "21900",
-                amount: totalSalary,
-                method: "Payroll Journal",
-                status: "Posted",
-                lines: [
-                  { type: "DR", account: "Staff Salaries & Payroll", account_code: "50100", amount: totalSalary, description: `Gross Staff Salary Expense - ${periodStr}` },
-                  { type: "CR", account: "Salary Payable", account_code: "21900", amount: totalSalary, description: `Salary Payable Liability - ${periodStr}` },
-                ]
-              };
-              if (!list.some((v: any) => v.voucher_no === newVch.voucher_no)) {
-                kvStore.setItem(vKey, JSON.stringify([newVch, ...list]));
-              }
-            } catch {}
             window.dispatchEvent(new CustomEvent("finance_vouchers_updated"));
           }
         }

@@ -3,8 +3,8 @@ import { Router, Request, Response } from 'express';
 import prisma from '../lib/prisma';
 import { parsePagination, paginatedResponse } from '../lib/middleware';
 import { createUnit } from '../services/property';
-import { HttpError, sendDbError } from '../lib/errors';
-import { ensureUnitCoaMapping } from '../lib/finance-rpc';
+import { sendDbError } from '../lib/errors';
+import { coerceForModel } from '../lib/coerce';
 
 const router = Router();
 
@@ -58,10 +58,12 @@ router.post('/', async (req: Request, res: Response) => {
 router.patch('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
-    await prisma.units.updateMany({ where: { id }, data: req.body });
+    const data = coerceForModel('units', req.body || {});
+    const result = await prisma.units.updateMany({ where: { id }, data });
+    if (result.count === 0) return res.status(404).json({ error: 'Unit not found' });
     res.json({ success: true });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    sendDbError(res, e, 'units.update');
   }
 });
 
@@ -69,10 +71,11 @@ router.patch('/:id', async (req: Request, res: Response) => {
 router.delete('/:id', async (req: Request, res: Response) => {
   try {
     const id = req.params.id as string;
-    await prisma.units.deleteMany({ where: { id } });
+    const result = await prisma.units.deleteMany({ where: { id } });
+    if (result.count === 0) return res.status(404).json({ error: 'Unit not found' });
     res.json({ success: true });
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    sendDbError(res, e, 'units.delete');
   }
 });
 

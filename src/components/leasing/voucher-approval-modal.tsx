@@ -32,7 +32,7 @@ export const VoucherApprovalModal: React.FC<VoucherApprovalModalProps> = ({
         .from("fin_vouchers")
         .select(`
           id,
-          voucher_no,
+          voucher_number,
           voucher_date,
           voucher_type,
           narration,
@@ -45,7 +45,17 @@ export const VoucherApprovalModal: React.FC<VoucherApprovalModalProps> = ({
         .order("created_at", { ascending: false });
 
       if (error) throw error;
-      setVouchers((data as any) || []);
+      setVouchers(
+        ((data as any[]) || []).map((v) => ({
+          ...v,
+          voucher_no: v.voucher_number,
+          lines: (v.fin_voucher_lines || []).map((l: any) => ({
+            ...l,
+            debit: l.debit_amount,
+            credit: l.credit_amount,
+          })),
+        })) as any,
+      );
     } catch (err: any) {
       console.error("Failed to load pending vouchers:", err);
       toast.error("Could not load pending vouchers");

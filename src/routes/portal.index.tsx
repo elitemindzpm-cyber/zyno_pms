@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
-import { tenantLease, tenantInvoices, tickets, pdcCheques, formatQAR } from "@/lib/mock-data";
+import { formatQAR, fetchPortalSummary, type PortalSummary } from "@/lib/portal-api";
 
 export const Route = createFileRoute("/portal/")({
   head: () => ({ meta: [{ title: "My Home — ZYNO Tenant Portal" }] }),
@@ -17,6 +17,8 @@ export const Route = createFileRoute("/portal/")({
 
 function PortalHome() {
   const [currentUser, setCurrentUser] = useState<{ name: string; customerId?: string } | null>(null);
+  const [summary, setSummary] = useState<PortalSummary | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     db.auth.getUser().then(({ data }) => {
@@ -28,18 +30,49 @@ function PortalHome() {
         });
       }
     });
+    fetchPortalSummary()
+      .then((s) => setSummary(s))
+      .catch(() => setSummary(null))
+      .finally(() => setLoading(false));
   }, []);
+
+  const tenantLease = summary?.lease ?? {
+    id: "",
+    contractNumber: "—",
+    property: "No Active Property",
+    unit: "—",
+    floor: "—",
+    bedrooms: 0,
+    area: "—",
+    parkingSlot: "—",
+    unitCondition: "—",
+    landlord: "Al Ameen Real Estate",
+    propertyManager: "Property Management",
+    pmContact: "—",
+    startDate: "",
+    endDate: "",
+    moveInDate: "",
+    annualRent: 0,
+    installments: 0,
+    installmentAmount: 0,
+    securityDeposit: 0,
+    noticePeriodDays: 60,
+    renewalStatus: "none" as const,
+  };
+  const tenantInvoices = summary?.invoices ?? [];
+  const tickets = summary?.tickets ?? [];
+  const pdcCheques = summary?.pdcs ?? [];
 
   const openTickets = tickets.filter(t => t.status !== "closed" && t.status !== "resolved");
   const overdueInvoices = tenantInvoices.filter(i => i.status === "overdue");
   const outstandingInvoices = tenantInvoices.filter(i => i.status === "outstanding" || i.status === "overdue");
   const outstandingTotal = outstandingInvoices.reduce((s, i) => s + i.amount, 0);
-  const nextDue = outstandingInvoices.sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0];
+  const nextDue = [...outstandingInvoices].sort((a, b) => a.dueDate.localeCompare(b.dueDate))[0];
   const upcomingPdc = pdcCheques.filter(p => p.status === "upcoming").sort((a, b) => a.dueDate.localeCompare(b.dueDate));
 
-  const daysUntilLeaseEnd = Math.ceil(
-    (new Date(tenantLease.endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
-  );
+  const daysUntilLeaseEnd = tenantLease.endDate
+    ? Math.max(0, Math.ceil((new Date(tenantLease.endDate).getTime() - Date.now()) / (1000 * 60 * 60 * 24)))
+    : 0;
 
   return (
     <div className="space-y-6">
@@ -52,7 +85,9 @@ function PortalHome() {
               <p className="text-xs uppercase tracking-widest opacity-70">
                 {tenantLease.property} &middot; {tenantLease.unit}
               </p>
-              <h2 className="mt-1 text-2xl font-semibold sm:text-3xl">Hello, {currentUser?.name || "Khalid"} 👋</h2>
+              <h2 className="mt-1 text-2xl font-semibold sm:text-3xl">
+                Hello, {summary?.lease?.customerName || currentUser?.name || "Tenant"} {loading ? "" : "👋"}
+              </h2>
             </div>
             {currentUser?.customerId && (
               <div className="inline-flex items-center gap-1.5 self-start sm:self-center px-3 py-1 rounded-full bg-white/10 backdrop-blur-sm border border-white/20 text-xs font-mono font-medium">

@@ -18,6 +18,21 @@ class QueryBuilder<T = any> {
   private _payload: any = null;
   private _onConflict?: string;
 
+  /** B2: Compose a new filter condition for a column, merging with existing filters via AND */
+  private _addWhere(column: string, condition: any) {
+    if (this._where[column] !== undefined) {
+      // Column already has a filter — compose with AND
+      const existing = this._where[column];
+      delete this._where[column];
+      if (!this._where.AND) this._where.AND = [];
+      const existingCond = { [column]: existing };
+      const newCond = { [column]: condition };
+      this._where.AND.push(existingCond, newCond);
+    } else {
+      this._where[column] = condition;
+    }
+  }
+
   constructor(tableName: string) {
     this.tableName = tableName;
   }
@@ -39,27 +54,27 @@ class QueryBuilder<T = any> {
   }
 
   gt(column: string, value: any) {
-    this._where[column] = { gt: value };
+    this._addWhere(column, { gt: value });
     return this;
   }
 
   gte(column: string, value: any) {
-    this._where[column] = { gte: value };
+    this._addWhere(column, { gte: value });
     return this;
   }
 
   lt(column: string, value: any) {
-    this._where[column] = { lt: value };
+    this._addWhere(column, { lt: value });
     return this;
   }
 
   lte(column: string, value: any) {
-    this._where[column] = { lte: value };
+    this._addWhere(column, { lte: value });
     return this;
   }
 
   in(column: string, values: any[]) {
-    this._where[column] = { in: values };
+    this._addWhere(column, { in: values });
     return this;
   }
 
@@ -130,8 +145,14 @@ class QueryBuilder<T = any> {
     return this;
   }
 
-  not(column: string, _operator: string, value: any) {
-    this._where[column] = { not: value };
+  not(column: string, operator: string, value: any) {
+    if (operator === 'is' && value === null) {
+      this._addWhere(column, { not: null });
+    } else if (operator === 'in') {
+      this._addWhere(column, { notIn: Array.isArray(value) ? value : [value] });
+    } else {
+      this._addWhere(column, { not: value });
+    }
     return this;
   }
 
@@ -141,23 +162,25 @@ class QueryBuilder<T = any> {
   }
 
   filter(column: string, operator: string, value: any) {
-    if (operator === 'eq') this._where[column] = value;
-    else if (operator === 'neq') this._where[column] = { not: value };
-    else if (operator === 'gt') this._where[column] = { gt: value };
-    else if (operator === 'gte') this._where[column] = { gte: value };
-    else if (operator === 'lt') this._where[column] = { lt: value };
-    else if (operator === 'lte') this._where[column] = { lte: value };
-    else this._where[column] = value;
+    if (operator === 'eq') this._addWhere(column, value);
+    else if (operator === 'neq') this._addWhere(column, { not: value });
+    else if (operator === 'gt') this._addWhere(column, { gt: value });
+    else if (operator === 'gte') this._addWhere(column, { gte: value });
+    else if (operator === 'lt') this._addWhere(column, { lt: value });
+    else if (operator === 'lte') this._addWhere(column, { lte: value });
+    else if (operator === 'in') this._addWhere(column, { in: Array.isArray(value) ? value : [value] });
+    else if (operator === 'like' || operator === 'ilike') this._addWhere(column, { contains: String(value).replace(/%/g, '') });
+    else this._addWhere(column, value);
     return this;
   }
 
   contains(column: string, value: any) {
-    this._where[column] = value;
+    this._addWhere(column, { contains: value });
     return this;
   }
 
   overlaps(column: string, value: any) {
-    this._where[column] = value;
+    this._addWhere(column, { hasSome: value });
     return this;
   }
 
@@ -245,15 +268,9 @@ class QueryBuilder<T = any> {
       if (onfulfilled) return onfulfilled(result);
       return result;
     } catch (err: any) {
-      // A read from a table that doesn't exist yet returns empty results, so screens show "no data"
-      // instead of an error. Writes still fail, so nothing looks saved when it wasn't.
-      if (this._action === 'select' && /not found in Prisma client/i.test(String(err?.message || ''))) {
-        const emptyData = this._countOnly ? null : this._single || this._maybeSingle ? null : [];
-        const emptyResult = { data: emptyData, error: null, count: 0 };
-        if (onfulfilled) return onfulfilled(emptyResult);
-        return emptyResult as any;
-      }
-      const errResult = { data: null, error: { message: err.message } };
+      // B5: Surface errors (including unknown tables) instead of silently returning empty data
+      console.error(`[db ${this._action} ${this.tableName}]`, err?.message || err);
+      const errResult = { data: null, error: { message: err?.message || 'Database request failed' } };
       if (onfulfilled) return onfulfilled(errResult);
       if (onrejected) return onrejected(err);
       return errResult as any;
@@ -1269,8 +1286,8 @@ export async function createPDC(payload: Omit<PDC, 'id' | 'created_at' | 'update
     if (!vErr && vData?.id) {
       // Insert both ledger lines for this receipt voucher
       await db.from('fin_voucher_lines').insert([
-        { voucher_id: vData.id, account_code: '12900001', account_name: 'Rent PDC In Hand', debit: pdc.amount, credit: 0, description: `PDC Received — Cheque #${chequeNo}` },
-        { voucher_id: vData.id, account_code: '21400001', account_name: 'Customer PDC Liability', debit: 0, credit: pdc.amount, description: `PDC Received — Cheque #${chequeNo}` },
+        { voucher_id: vData.id, account_code: '12900001', account_name: 'Rent PDC In Hand', debit_amount: pdc.amount, credit_amount: 0, description: `PDC Received — Cheque #${chequeNo}` },
+        { voucher_id: vData.id, account_code: '21400001', account_name: 'Customer PDC Liability', debit_amount: 0, credit_amount: pdc.amount, description: `PDC Received — Cheque #${chequeNo}` },
       ]);
     }
   } catch (glErr) {
@@ -1288,7 +1305,7 @@ export async function createPDC(payload: Omit<PDC, 'id' | 'created_at' | 'update
 
 export async function updatePDC(id: string, status: PDC['status']) {
   const { data, error } = await db
-    .from('pdcs').update({ status, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+    .from('pdcs').update({ status }).eq('id', id).select().single();
   if (error) throw error;
   return data as PDC;
 }
@@ -1621,7 +1638,7 @@ export async function createRentSchedule(payload: Omit<RentSchedule, 'id' | 'cre
 export async function processPDC(id: string, status: PDC['status'], depositDate?: string) {
   const update: Partial<PDC> = { status };
   if (depositDate) update.deposit_date = depositDate;
-  const { data, error } = await db.from('pdcs').update({ ...update, updated_at: new Date().toISOString() }).eq('id', id).select().single();
+  const { data, error } = await db.from('pdcs').update(update).eq('id', id).select().single();
   if (error) throw error;
   return data as PDC;
 }

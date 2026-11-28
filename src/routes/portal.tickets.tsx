@@ -1,5 +1,5 @@
 ﻿import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Plus, Filter, CheckCircle2, Clock, AlertTriangle, Phone, Wrench, Search, ChevronDown, ChevronUp } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -8,7 +8,8 @@ import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { toast } from "sonner";
-import { tickets as seed, type Ticket } from "@/lib/mock-data";
+import { db } from "@/lib/db";
+import { fetchPortalSummary, type PortalLease, type PortalTicket as Ticket } from "@/lib/portal-api";
 
 export const Route = createFileRoute("/portal/tickets")({
   head: () => ({ meta: [{ title: "Maintenance Tickets — ZYNO Tenant Portal" }] }),
@@ -33,7 +34,8 @@ const statusClass: Record<Ticket["status"], string> = {
 const statusSteps = ["new", "assigned", "in_progress", "resolved", "closed"] as Ticket["status"][];
 
 function TicketsPage() {
-  const [list, setList] = useState<Ticket[]>(seed);
+  const [list, setList] = useState<Ticket[]>([]);
+  const [lease, setLease] = useState<PortalLease | null>(null);
   const [open, setOpen] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [filterStatus, setFilterStatus] = useState("all");
@@ -43,6 +45,15 @@ function TicketsPage() {
   const [category, setCategory] = useState<Ticket["category"]>("Other");
   const [priority, setPriority] = useState<Ticket["priority"]>("Medium");
   const [complaintArea, setComplaintArea] = useState("Unit / Apartment");
+
+  useEffect(() => {
+    fetchPortalSummary()
+      .then((s) => {
+        setLease(s?.lease ?? null);
+        setList(s?.tickets ?? []);
+      })
+      .catch(() => setList([]));
+  }, []);
 
   const filtered = list.filter(t => {
     const matchStatus = filterStatus === "all" || t.status === filterStatus;
@@ -56,24 +67,42 @@ function TicketsPage() {
     closed: list.filter(t => t.status === "closed").length,
   };
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const newTicket: Ticket = {
-      id: `tkt-${Date.now()}`,
-      subject,
-      description: desc,
-      unit: "A-1201",
-      property: "Al Nakheel Residences",
-      complaintArea,
-      category,
-      priority,
-      status: "new",
-      createdAt: new Date().toISOString().slice(0, 10),
-      timeline: [{ date: new Date().toISOString().slice(0, 10), event: "Ticket raised by tenant", by: "Khalid Al-Mansouri" }],
-    };
-    setList([newTicket, ...list]);
-    toast.success("Ticket submitted. Our team will review it shortly.");
-    setSubject(""); setDesc(""); setCategory("Other"); setPriority("Medium"); setComplaintArea("Unit / Apartment"); setOpen(false);
+    try {
+      const { data, error } = await db
+        .from("maintenance_tickets")
+        .insert({
+          unit_ref: lease?.unit || null,
+          title: subject,
+          description: desc,
+          category,
+          priority: priority.toLowerCase(),
+          status: "new",
+          reported_by: lease?.customerName || "Tenant",
+        })
+        .select()
+        .single();
+      if (error) throw error;
+      const newTicket: Ticket = {
+        id: String(data?.id || `tkt-${Date.now()}`),
+        subject,
+        description: desc,
+        unit: lease?.unit || "—",
+        property: lease?.property || "—",
+        complaintArea,
+        category,
+        priority,
+        status: "new",
+        createdAt: new Date().toISOString().slice(0, 10),
+        timeline: [{ date: new Date().toISOString().slice(0, 10), event: "Ticket raised by tenant", by: lease?.customerName || "Tenant" }],
+      };
+      setList([newTicket, ...list]);
+      toast.success("Ticket submitted. Our team will review it shortly.");
+      setSubject(""); setDesc(""); setCategory("Other"); setPriority("Medium"); setComplaintArea("Unit / Apartment"); setOpen(false);
+    } catch (err: any) {
+      toast.error(err?.message || "Failed to submit maintenance ticket.");
+    }
   };
 
   return (

@@ -1640,26 +1640,7 @@ function LeasingPage() {
     }));
     setPdcs((items) => [...renewalPdcs, ...items.filter((item) => item.leaseId !== renewed.id)]);
 
-    // Persist renewal PDCs to persistent browser storage so they are immediately available in PDC Management
-    try {
-      const existingRaw = kvStore.getItem("pms_renewal_pdcs");
-      const existingList: any[] = existingRaw ? JSON.parse(existingRaw) : [];
-      const updatedList = [
-        ...renewalPdcs.map(rp => ({
-          ...rp,
-          cheque_number: rp.chequeNo,
-          cheque_date: rp.date,
-          tenant_name: rp.tenantName,
-          unit_ref: rp.unit,
-          property_name: rp.property,
-          bank_name: rp.bank,
-        })),
-        ...existingList.filter(item => item.leaseId !== renewed.id && !renewalPdcs.some(rp => rp.chequeNo === item.chequeNo && rp.unit === item.unit)),
-      ];
-      kvStore.setItem("pms_renewal_pdcs", JSON.stringify(updatedList));
-    } catch (e) {
-      console.warn("Error storing renewal PDCs to kvStore:", e);
-    }
+    window.dispatchEvent(new Event("pdcs_updated"));
 
     // Persist renewal PDCs directly to DB pdcs and fin_pdc_register
     try {

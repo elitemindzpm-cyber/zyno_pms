@@ -6,6 +6,7 @@ import { request as apiRequest } from "@/lib/api-client";
 import { insertVoucherOnce } from "./voucher-persist";
 import { resolveAccountingAccounts } from "./account-resolver";
 import { postVoucher } from "./posting-engine";
+import { checkPostingPeriodClosed, refreshPostingPeriodsCache } from "./posting-periods-cache";
 import {
   GUARANTEE_CHEQUE_DATE,
   resolvePropertyFromUnitCode,
@@ -17,18 +18,7 @@ const KAHRAMAA_DEPOSIT_BY_UNIT: Record<string, any> = {};
 
 
 export function isPostingPeriodClosed(dateStr?: string): { closed: boolean; periodName?: string } {
-  if (!dateStr || typeof window === "undefined") return { closed: false };
-  try {
-    const ym = dateStr.split("T")[0].slice(0, 7);
-    const raw = kvStore.getItem("pms_posting_periods_cache");
-    if (!raw) return { closed: false };
-    const list = JSON.parse(raw) as Array<{ period_name: string; status: string }>;
-    const found = list.find(p => p.period_name === ym);
-    if (found && (found.status === "Closed" || (found as any).is_closed)) {
-      return { closed: true, periodName: ym };
-    }
-  } catch {}
-  return { closed: false };
+  return checkPostingPeriodClosed(dateStr);
 }
 
 // ── Shared Canonical Property, Dimension & Receipt-Normalization Helpers ─────
@@ -1098,8 +1088,9 @@ function mapDbVoucherRow(r: any): FinanceVoucher {
 export function FinanceProvider({ children }: { children: ReactNode }) {
   const FINANCE_STORAGE_KEY = "zyno-pms-finance-data-v6";
 
-  // One-time cleanup of legacy/stale local caches that cause amount discrepancies
+  // Load posting periods cache from DB and clean up legacy localStorage keys
   useEffect(() => {
+    void refreshPostingPeriodsCache();
     if (typeof window !== "undefined") {
       try {
         const legacyKeys = [
@@ -2696,31 +2687,26 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
 
   // Derived Trial Balance Detailed — seeded from full COA so zero-balance
   // accounts always appear, then overlaid with actual transaction totals.
-  const trialBalanceDetailed = useMemo(() => {
-    // 1. Seed map with every account in the COA at zero debit/credit
-    const map = new Map<string, { code: string; name: string; type: "Assets" | "Liabilities" | "Capital" | "Revenue" | "Expenses"; debit: number; credit: number }>();
-    // Static COA seeding removed: only accounts with real ledger activity appear.
-
-    // 2. Overlay actual ledger transaction totals (adds accounts not in static COA too)
-    allLedgerTransactions.forEach(tx => {
-      const existing = map.get(tx.account_code) || {
-        code: tx.account_code,
-        name: tx.account_name,
-        type: tx.account_type,
-        debit: 0,
-        credit: 0
-      };
-      existing.debit += (tx.debit || 0);
-      existing.credit += (tx.credit || 0);
-      map.set(tx.account_code, existing);
-    });
-
-    return Array.from(map.values()).map(a => ({
-      ...a,
-      balance: a.debit - a.credit
-    }));
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [allLedgerTransactions]);
+  // Trial balance now comes from the backend (/api/accounting/trial-balance, summed from posted voucher
+  // lines in SQL), not recomputed in the browser. It reloads whenever vouchers change.
+  const [trialBalanceDetailed, setTrialBalanceDetailed] = useState<
+    { code: string; name: string; type: "Assets" | "Liabilities" | "Capital" | "Revenue" | "Expenses"; debit: number; credit: number; balance: number }[]
+  >([]);
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const res: any = await apiRequest("/api/accounting/trial-balance");
+        if (!cancelled && Array.isArray(res?.data)) setTrialBalanceDetailed(res.data);
+      } catch (e: any) {
+        console.error("[finance-store] trial balance load failed:", e?.message || e);
+      }
+    };
+    void load();
+    const onChange = () => { void load(); };
+    window.addEventListener("finance_vouchers_updated", onChange);
+    return () => { cancelled = true; window.removeEventListener("finance_vouchers_updated", onChange); };
+  }, []);
 
   // Derived Trial Balance Summary — 100% computed by grouping account-level balances from trialBalanceDetailed
   const trialBalanceSummary = useMemo(() => {

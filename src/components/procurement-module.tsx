@@ -1568,6 +1568,18 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
     setShowShipmentModal(true);
   }
 
+  function printGrn(grn: GoodsReceipt) {
+    const esc = (v: unknown) => String(v ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c] as string));
+    const lines = grnLines.filter((gl) => gl.goods_receipt_id === grn.id);
+    const rows = lines.map((gl) => `<tr><td>${esc(gl.description || gl.item_name)}</td><td class="n">${esc(gl.ordered_quantity)}</td><td class="n">${esc(gl.received_quantity)}</td><td class="n">${esc(gl.accepted_quantity)}</td><td class="n">${Number(gl.unit_rate || 0).toLocaleString()}</td><td class="n">${(Number(gl.accepted_quantity || 0) * Number(gl.unit_rate || 0)).toLocaleString()}</td></tr>`).join("");
+    const w = window.open("", "_blank", "width=900,height=700");
+    if (!w) { toast.error("Allow pop-ups to print the GRN"); return; }
+    w.document.write(`<!doctype html><html><head><title>${esc(grn.grn_number)}</title><style>body{font-family:Arial,sans-serif;padding:24px;font-size:12px}h1{font-size:18px;margin:0 0 4px}table{width:100%;border-collapse:collapse;margin-top:12px}th,td{border:1px solid #999;padding:6px;text-align:left}.n{text-align:right}.sig{display:flex;justify-content:space-between;margin-top:48px}</style></head><body><h1>Goods Receipt Note ${esc(grn.grn_number)}</h1><div>Date: ${esc(grn.grn_date)} &nbsp; Vendor: ${esc(getVendorName(grn.vendor_id))} &nbsp; Warehouse: ${esc(grn.warehouse_name)} &nbsp; Status: ${esc(grn.status)}</div><table><thead><tr><th>Item</th><th>Ordered</th><th>Received</th><th>Accepted</th><th>Rate (QAR)</th><th>Value (QAR)</th></tr></thead><tbody>${rows}</tbody></table><p><b>Total accepted value: QAR ${Number(grn.total_amount || 0).toLocaleString()}</b></p><div class="sig"><span>Received by: ________________</span><span>Approved by: ________________</span></div></body></html>`);
+    w.document.close();
+    w.focus();
+    w.print();
+  }
+
   async function handleSaveShipment() {
     setSaving(true);
     try {
@@ -5140,7 +5152,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                     placeholder="e.g. DHL Express, Aramex, Milaha Logistics..."
                   />
                 </Field>
-                <Field label="Bill of Lading / AWB Tracking # *">
+                <Field label="Bill of Lading / AWB Tracking # (optional)">
                   <Input
                     className="h-9 text-xs font-mono"
                     value={shipmentForm.trackingNumber}
@@ -5894,6 +5906,10 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                     </DialogDescription>
                   </div>
                   <div className="text-right">
+                    <Button type="button" variant="outline" size="sm" className="h-7 text-xs mb-1" onClick={() => printGrn(viewGrn)}>
+                      Print GRN
+                    </Button>
+                    <br />
                     <span className="text-[10px] text-muted-foreground uppercase font-bold">Accepted Total Valuation</span>
                     <p className="text-base font-bold font-mono text-emerald-600">QAR {Number(viewGrn.total_amount || 0).toLocaleString()}</p>
                   </div>

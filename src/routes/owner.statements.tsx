@@ -1,14 +1,28 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Download, Eye } from "lucide-react";
-import { mockOwnerStatements } from "@/lib/mock-data";
+import { fetchOwnerStatements, formatQAR, type OwnerStatementData } from "@/lib/portal-api";
 
 export const Route = createFileRoute("/owner/statements")({
   component: OwnerStatements,
 });
 
 function OwnerStatements() {
+  const [data, setData] = useState<OwnerStatementData | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchOwnerStatements()
+      .then((res) => setData(res))
+      .catch(() => setData(null))
+      .finally(() => setLoading(false));
+  }, []);
+
+  const totals = data?.totals ?? { gross_revenue: 0, expenses: 0, net_payable: 0 };
+  const statements = data?.statements ?? [];
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -24,8 +38,8 @@ function OwnerStatements() {
             <CardTitle className="text-sm font-medium">Gross Revenue (YTD)</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold">₨450,000</p>
-            <p className="text-xs text-muted-foreground">6 properties</p>
+            <p className="text-2xl font-bold">{formatQAR(totals.gross_revenue)}</p>
+            <p className="text-xs text-muted-foreground">{data?.property_count ?? 0} active properties</p>
           </CardContent>
         </Card>
         <Card>
@@ -33,8 +47,8 @@ function OwnerStatements() {
             <CardTitle className="text-sm font-medium">Expenses (YTD)</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold">₨82,500</p>
-            <p className="text-xs text-muted-foreground">maintenance + shared services</p>
+            <p className="text-2xl font-bold">{formatQAR(totals.expenses)}</p>
+            <p className="text-xs text-muted-foreground">posted operational &amp; maintenance expenses</p>
           </CardContent>
         </Card>
         <Card>
@@ -42,8 +56,8 @@ function OwnerStatements() {
             <CardTitle className="text-sm font-medium">Net Payable</CardTitle>
           </CardHeader>
           <CardContent>
-            <p className="text-2xl font-bold text-green-600">₨367,500</p>
-            <p className="text-xs text-muted-foreground">pending distribution</p>
+            <p className="text-2xl font-bold text-green-600">{formatQAR(totals.net_payable)}</p>
+            <p className="text-xs text-muted-foreground">net posted distribution</p>
           </CardContent>
         </Card>
       </div>
@@ -55,12 +69,16 @@ function OwnerStatements() {
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            {mockOwnerStatements.map((stmt) => (
+            {loading && <p className="text-sm text-muted-foreground py-4 text-center">Loading statements...</p>}
+            {!loading && statements.length === 0 && (
+              <p className="text-sm text-muted-foreground py-6 text-center">No posted financial periods found yet.</p>
+            )}
+            {statements.map((stmt) => (
               <div key={stmt.id} className="flex items-center justify-between p-4 border rounded-lg hover:bg-muted/50">
                 <div className="flex-1">
                   <p className="font-medium">{stmt.period}</p>
                   <p className="text-sm text-muted-foreground">
-                    Gross: ₨{stmt.gross_revenue.toLocaleString()} • Net: ₨{stmt.net_payable.toLocaleString()}
+                    Gross: {formatQAR(stmt.gross_revenue)} • Expenses: {formatQAR(stmt.expenses)} • Net: {formatQAR(stmt.net_payable)}
                   </p>
                 </div>
                 <div className="flex gap-2">

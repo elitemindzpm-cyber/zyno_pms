@@ -9,12 +9,14 @@ const optionalStringFields: Record<string, Set<string>> = {};
 // String columns (e.g. JSON-in-LongText `metadata`): the UI sends objects, Prisma only accepts strings.
 const stringFields: Record<string, Set<string>> = {};
 // Numeric id columns: the browser sends ids as strings ("7"), but Prisma rejects a string for an Int/BigInt filter.
+const decimalFields: Record<string, Set<string>> = {};
 const intFields: Record<string, Set<string>> = {};
 const bigIntFields: Record<string, Set<string>> = {};
 for (const m of ((Prisma as any).dmmf?.datamodel?.models ?? []) as any[]) {
   dateTimeFields[m.name] = new Set(m.fields.filter((f: any) => f.type === 'DateTime').map((f: any) => f.name));
   intFields[m.name] = new Set(m.fields.filter((f: any) => f.type === 'Int').map((f: any) => f.name));
   bigIntFields[m.name] = new Set(m.fields.filter((f: any) => f.type === 'BigInt').map((f: any) => f.name));
+  decimalFields[m.name] = new Set(m.fields.filter((f: any) => f.type === 'Decimal' || f.type === 'Float').map((f: any) => f.name));
   stringFields[m.name] = new Set(m.fields.filter((f: any) => f.type === 'String' && !f.isList).map((f: any) => f.name));
   optionalStringFields[m.name] = new Set(
     m.fields.filter((f: any) => f.type === 'String' && !f.isRequired && !f.isList).map((f: any) => f.name)
@@ -36,6 +38,25 @@ function coerceRow(modelName: string, row: any) {
       out[key] = JSON.stringify(out[key]);
     }
     if (optional?.has(key) && out[key] === '') {
+      out[key] = null;
+    }
+    // B7: Coerce numeric string values on write for Int columns
+    if (intFields[modelName]?.has(key) && typeof out[key] === 'string') {
+      if (out[key] === '') { out[key] = null; }
+      else if (/^-?\d+$/.test(out[key])) { out[key] = Number(out[key]); }
+    }
+    // B7: Coerce numeric string values on write for BigInt columns
+    if (bigIntFields[modelName]?.has(key) && typeof out[key] === 'string') {
+      if (out[key] === '') { out[key] = null; }
+      else if (/^-?\d+$/.test(out[key])) { out[key] = BigInt(out[key]); }
+    }
+    // B7: Coerce numeric string values on write for Decimal/Float columns
+    if (decimalFields[modelName]?.has(key) && typeof out[key] === 'string') {
+      if (out[key] === '') { out[key] = null; }
+      else if (/^-?\d+(\.\d+)?$/.test(out[key])) { out[key] = Number(out[key]); }
+    }
+    // B7: Coerce empty strings to null for Date/DateTime columns on write
+    if (fields?.has(key) && out[key] === '') {
       out[key] = null;
     }
   }
@@ -86,17 +107,41 @@ export function coerceForModel(modelName: string, data: any) {
 const modelDefs: Record<string, any> = {};
 for (const m of ((Prisma as any).dmmf?.datamodel?.models ?? []) as any[]) modelDefs[m.name] = m;
 
+// B3: FK column → relation name map, built once from Prisma DMMF.
+const fkToRelation: Record<string, Record<string, string>> = {};
+for (const m of ((Prisma as any).dmmf?.datamodel?.models ?? []) as any[]) {
+  const map: Record<string, string> = {};
+  for (const f of m.fields) {
+    if (f.kind === 'object' && f.relationFromFields?.length) {
+      for (const fk of f.relationFromFields) {
+        map[fk] = f.name;
+      }
+    }
+  }
+  fkToRelation[m.name] = map;
+}
+
 export function buildIncludeFromSelect(modelName: string, selectStr: any): Record<string, any> | undefined {
   if (typeof selectStr !== 'string' || !selectStr.includes('(')) return undefined;
   const model = modelDefs[modelName];
   if (!model) return undefined;
   const include: Record<string, any> = {};
-  const re = /([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^()]*)\)/g;
+  // B3: Match both "relation(fields)" and "alias:fk_col(fields)" patterns
+  const re = /(?:[a-zA-Z_][a-zA-Z0-9_]*:)?([a-zA-Z_][a-zA-Z0-9_]*)\s*\(([^()]*)\)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(selectStr))) {
-    const relName = m[1];
-    const relField = model.fields.find((f: any) => f.kind === 'object' && f.name === relName);
-    if (!relField) continue;
+    let relName = m[1];
+    // If the parsed name is a scalar FK column, resolve to the actual Prisma relation
+    let relField = model.fields.find((f: any) => f.kind === 'object' && f.name === relName);
+    if (!relField) {
+      // B3: Fallback — check if it's a FK column name and resolve to the relation
+      const resolved = fkToRelation[modelName]?.[relName];
+      if (resolved) {
+        relName = resolved;
+        relField = model.fields.find((f: any) => f.kind === 'object' && f.name === relName);
+      }
+      if (!relField) continue;
+    }
     const related = modelDefs[relField.type];
     if (!related) continue;
     const scalars = new Set(related.fields.filter((f: any) => f.kind !== 'object').map((f: any) => f.name));

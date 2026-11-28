@@ -709,17 +709,6 @@ export function PdcManagement() {
         arr.push(item);
         localHintsByChq.set(key, arr);
       };
-      let storedRenewalList: any[] = [];
-      try {
-        const rawRenewal = kvStore.getItem("pms_renewal_pdcs");
-        storedRenewalList = rawRenewal ? JSON.parse(rawRenewal) : [];
-        if (!Array.isArray(storedRenewalList)) storedRenewalList = [];
-      } catch {
-        storedRenewalList = [];
-      }
-      for (const ren of storedRenewalList) {
-        pushHint(ren.chequeNo || ren.cheque_number, ren);
-      }
       for (const sp of sharedPdcs || []) {
         pushHint(sp.chequeNo || (sp as any).cheque_number, sp);
       }
@@ -992,58 +981,6 @@ export function PdcManagement() {
           monthly_rent: fAmt,
           _source: "fin_pdc_register",
         });
-      }
-
-      // Step 5: Merge local renewal PDCs strictly by unit/amount/date (never shadow or cross-unit collide)
-      try {
-        for (const ren of storedRenewalList) {
-          const chq = String(ren.chequeNo || ren.cheque_number || ren.id || "").trim();
-          const uRef = String(ren.unit || ren.unit_ref || ren.unit_name || "").trim();
-          const rDate = toYmd(ren.date || ren.dueDate || ren.cheque_date);
-          const rAmt = Number(ren.amount) || 0;
-          if (!chq) continue;
-
-          const existingMatch = Array.from(dbDataMap.values()).find(
-            existing =>
-              String(existing.id) === String(ren.id) ||
-              (existing.fin_id != null && `fin-${existing.fin_id}` === String(ren.id)) ||
-              isSameLogicalPdc(existing, chq, uRef, rAmt, rDate)
-          );
-          if (existingMatch) {
-            if ((!existingMatch.unit_ref || existingMatch.unit_ref === "—") && uRef) existingMatch.unit_ref = uRef;
-            if ((!existingMatch.property_name || existingMatch.property_name === "—") && (ren.property || ren.property_name)) {
-              existingMatch.property_name = ren.property || ren.property_name;
-            }
-            if ((!existingMatch.tenant_name || existingMatch.tenant_name === "—") && (ren.tenantName || ren.tenant_name || ren.payerName)) {
-              existingMatch.tenant_name = ren.tenantName || ren.tenant_name || ren.payerName;
-            }
-            if (existingMatch.bank_name === "Qatar National Bank (QNB)" && (ren.bank || ren.bank_name)) {
-              existingMatch.bank_name = ren.bank || ren.bank_name;
-            }
-            continue;
-          }
-
-          const rowKey = `ren-${ren.id || chq}-${uRef}`;
-          dbDataMap.set(rowKey, {
-            id: ren.id || `ren-${chq}`,
-            entry_date: rDate || "2026-10-05",
-            cheque_date: rDate || "2026-10-05",
-            cheque_number: chq,
-            amount: rAmt,
-            status: normalizeStatus(ren.status),
-            bank_name: ren.bank || ren.bank_name || "Qatar National Bank (QNB)",
-            property_name: ren.property || ren.property_name || "—",
-            unit_ref: uRef || "—",
-            tenant_name: ren.tenantName || ren.tenant_name || ren.payerName || "—",
-            lease_id: ren.leaseId || ren.lease_id,
-            lease_start: ren.tenureStart || ren.lease_start,
-            lease_end: ren.tenureEnd || ren.lease_end,
-            monthly_rent: rAmt,
-            _source: "renewal_store",
-          });
-        }
-      } catch (err) {
-        console.warn("Failed to load local renewal PDCs:", err);
       }
 
       // Step 6: Include sharedPdcs from AppData context if not already matched
@@ -1334,47 +1271,8 @@ export function PdcManagement() {
     };
   }
 
-  function syncLocalRenewalPdcStatus(pdc: any, nextSharedStatus: string, bankName?: string) {
-    try {
-      const raw = kvStore.getItem("pms_renewal_pdcs");
-      if (!raw) return;
-      const list = JSON.parse(raw);
-      if (!Array.isArray(list)) return;
-      const targetChq = String(pdc.cheque_number || "").trim();
-      const targetUnit = String(pdc.unit_ref || pdc.unit_name || "").trim().toLowerCase();
-      const targetAmt = Number(pdc.amount) || 0;
-      const targetDate = String(pdc.cheque_date || "").slice(0, 10);
-
-      let changed = false;
-      const updated = list.map((item: any) => {
-        const idMatch =
-          String(item.id) === String(pdc.id) ||
-          (pdc.fin_id != null && String(item.id) === `fin-${pdc.fin_id}`) ||
-          (pdc.pdcs_id != null && String(item.id) === String(pdc.pdcs_id));
-        const iChq = String(item.chequeNo || item.cheque_number || "").trim();
-        const iUnit = String(item.unit || item.unit_ref || item.unit_name || "").trim().toLowerCase();
-        const iAmt = Number(item.amount) || 0;
-        const iDate = String(item.date || item.dueDate || item.cheque_date || "").slice(0, 10);
-        const semanticMatch =
-          iChq === targetChq &&
-          ((targetUnit && targetUnit !== "—" && iUnit === targetUnit) ||
-            (!iUnit && Math.abs(iAmt - targetAmt) < 0.01 && (!iDate || !targetDate || iDate === targetDate)));
-        if (idMatch || semanticMatch) {
-          changed = true;
-          return {
-            ...item,
-            status: nextSharedStatus,
-            ...(bankName ? { bank: bankName } : {}),
-          };
-        }
-        return item;
-      });
-      if (changed) {
-        kvStore.setItem("pms_renewal_pdcs", JSON.stringify(updated));
-      }
-    } catch {
-      // ignore storage failures
-    }
+  function syncLocalRenewalPdcStatus(_pdc: any, _nextSharedStatus: string, _bankName?: string) {
+    // PDC status is stored strictly in DB (fin_pdc_register & pdcs).
   }
 
   // ── Execute Confirmed Action & Persist to DB ────────────────────────────────
@@ -2406,22 +2304,7 @@ export function PdcManagement() {
         newStoredItems.push(sharedItem);
       }
 
-      // Persist newly registered PDCs to kvStore with deduplication by (chequeNo, unit, date)
-      try {
-        const existingStored = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
-        const safeExisting = Array.isArray(existingStored) ? existingStored : [];
-        const dedupedExisting = safeExisting.filter(
-          (ex: any) =>
-            !newStoredItems.some(
-              (n) =>
-                String(ex.chequeNo || ex.cheque_number || "").trim() === String(n.chequeNo).trim() &&
-                String(ex.unit || ex.unit_ref || "").trim().toLowerCase() === String(n.unit).trim().toLowerCase() &&
-                String(ex.date || ex.dueDate || "").slice(0, 10) === String(n.date).slice(0, 10),
-            ),
-        );
-        kvStore.setItem("pms_renewal_pdcs", JSON.stringify([...newStoredItems, ...dedupedExisting]));
-        window.dispatchEvent(new Event("pdcs_updated"));
-      } catch { /* ignore */ }
+      window.dispatchEvent(new Event("pdcs_updated"));
 
       // Update shared context & reload authoritative DB view so UI never holds stale synthetic IDs
       setSharedPdcs(prev => [...newContextPdcs, ...prev]);

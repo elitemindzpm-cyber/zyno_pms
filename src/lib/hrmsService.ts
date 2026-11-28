@@ -1,3 +1,4 @@
+import { request as apiRequest } from "@/lib/api-client";
 import { kvStore } from "@/lib/kv-store";
 import { db } from "@/lib/db";
 import { createAccountingEvent } from "@/lib/finance/accounting-event-engine";
@@ -820,13 +821,14 @@ export const HrmsApi = {
     const leaveEncashmentAmount = Math.round(totalEncashableDays * perDayBasic);
 
     // 3. Statutory Gratuity / End of Service (Qatar Labor Law: 21 days basic pay per year of service after 1+ year)
-    let gratuityAmount = 0;
-    if (emp.date_of_joining) {
-      const joinDate = new Date(emp.date_of_joining);
-      const diffYears = (exitDate.getTime() - joinDate.getTime()) / (1000 * 60 * 60 * 24 * 365.25);
-      if (diffYears >= 1) {
-        gratuityAmount = Math.round(diffYears * (basicSalary * (21 / 30)));
-      }
+    // Server-authoritative (Qatar Labour Law: 21 days basic per year after 1+ year) - see
+    // GET /api/hrms/employees/:id/gratuity-preview. No fallback: a failed call must not post a made-up figure.
+    const gratuityRes: any = await apiRequest(
+      `/api/hrms/employees/${encodeURIComponent(employeeId)}/gratuity-preview?as_of=${encodeURIComponent(lwd)}`
+    );
+    const gratuityAmount = Number(gratuityRes?.data?.gratuity_amount);
+    if (!Number.isFinite(gratuityAmount)) {
+      return { error: { message: "Could not calculate gratuity on the server" } };
     }
 
     // 4. Pending Loans or Asset Liabilities

@@ -1,6 +1,5 @@
-import { kvStore } from "@/lib/kv-store";
 import { postVoucherLinesToBackend } from "@/lib/finance/backend-posting";
-import { db } from './db';
+import { db } from "./db";
 
 export type ProcApInvoice = {
   id: string;
@@ -56,65 +55,58 @@ export type PaymentReceipt = {
   created_at: string;
 };
 
-const INVOICE_STORAGE_KEY = 'proc_ap_invoices_cache_v2';
-const RECEIPT_STORAGE_KEY = 'proc_payment_receipts_v2';
+let invoicesCache: ProcApInvoice[] = [];
+let receiptsCache: PaymentReceipt[] = [];
 
-// Real-time sync across browser tabs: when another tab saves AP invoices or receipts, tell this tab's screens to reload.
-if (typeof window !== 'undefined') {
-  window.addEventListener('storage', (e) => {
-    if (e.key === INVOICE_STORAGE_KEY) window.dispatchEvent(new Event('ap_invoices_updated'));
-    if (e.key === RECEIPT_STORAGE_KEY) window.dispatchEvent(new Event('payment_receipts_updated'));
-  });
+function mapDbReceipt(row: any): PaymentReceipt {
+  const method = String(row.payment_method || "Bank Wire / QNB Corporate");
+  return {
+    id: String(row.id),
+    receipt_number: String(row.receipt_number),
+    voucher_number: String(row.voucher_number),
+    invoice_number: String(row.invoice_number),
+    po_number: row.po_number || undefined,
+    grn_number: row.grn_number || undefined,
+    vendor_id: row.vendor_id || "",
+    vendor_name: row.vendor_name || undefined,
+    amount_paid: Number(row.amount_paid || 0),
+    payment_date: String(row.payment_date || "").slice(0, 10),
+    payment_method: method,
+    reference_no: String(row.reference_no || ""),
+    bank_account: String(row.bank_account || "Qatar National Bank (QNB) - Main Operating"),
+    gl_debit_account: "22100001 - Trade Payables - Vendors",
+    gl_credit_account: method.includes("Cash")
+      ? "12100001 - Cash in Hand / Operating Cash"
+      : "12000001 - Bank Operating Account (QNB)",
+    remarks: row.remarks || undefined,
+    status: (row.status || "Settled") as PaymentReceipt["status"],
+    created_at: String(row.created_at || new Date().toISOString()),
+  };
 }
 
-function getLocalInvoices(): ProcApInvoice[] {
+async function loadReceiptsFromDb(): Promise<PaymentReceipt[]> {
   try {
-    const raw = kvStore.getItem(INVOICE_STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (e) {
-    console.error("Failed to read local AP Invoices:", e);
+    const { data, error } = await db
+      .from("fin_payment_receipts")
+      .select("*")
+      .order("created_at", { ascending: false });
+    if (!error && Array.isArray(data)) {
+      receiptsCache = data.map(mapDbReceipt);
+    }
+  } catch {
+    // Keep last loaded cache if backend request fails transiently.
   }
-  return [];
+  return receiptsCache;
 }
 
-function saveLocalInvoices(list: ProcApInvoice[]) {
-  try {
-    kvStore.setItem(INVOICE_STORAGE_KEY, JSON.stringify(list));
-    window.dispatchEvent(new Event('ap_invoices_updated'));
-  } catch (e) {
-    console.error("Failed to save local AP Invoices:", e);
-  }
-}
-
-function getLocalReceipts(): PaymentReceipt[] {
-  try {
-    const raw = kvStore.getItem(RECEIPT_STORAGE_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch (e) {
-    console.error("Failed to read local Payment Receipts:", e);
-  }
-  return [];
-}
-
-function saveLocalReceipts(list: PaymentReceipt[]) {
-  try {
-    kvStore.setItem(RECEIPT_STORAGE_KEY, JSON.stringify(list));
-    window.dispatchEvent(new Event('payment_receipts_updated'));
-  } catch (e) {
-    console.error("Failed to save local Payment Receipts:", e);
-  }
-}
-
-// Helper to push vouchers into Finance Store & Db
+// Helper to push payment settlement voucher into Backend Ledger
 async function postFinancePaymentVoucher(invoice: ProcApInvoice, receiptNum: string, pvNum: string) {
   const paidDate = invoice.paid_at || new Date().toISOString().slice(0, 10);
-  // Vendor settlement is posted through the backend: Dr Trade Payables (Sundry Creditors, the account procurement
-  // invoices are credited to), Cr Bank. Nothing is written to browser caches.
   await postVoucherLinesToBackend({
     type: "Payment",
     date: paidDate,
     reference: pvNum,
-    description: `Vendor Payment: ${invoice.invoice_number} | PO: ${invoice.po_number || 'N/A'} | GRN: ${invoice.grn_number || 'N/A'} | Rcpt: ${receiptNum}`,
+    description: `Vendor Payment: ${invoice.invoice_number} | PO: ${invoice.po_number || "N/A"} | GRN: ${invoice.grn_number || "N/A"} | Rcpt: ${receiptNum}`,
     lines: [
       { account_code: "21000", debit: Number(invoice.total_amount) || 0, credit: 0 },
       { account_code: "12000001", debit: 0, credit: Number(invoice.total_amount) || 0 },
@@ -126,129 +118,75 @@ export const ApInvoicesApi = {
   fetchAll: async (): Promise<ProcApInvoice[]> => {
     let invoices: ProcApInvoice[] = [];
 
-    // 1. Try fetching from Db
+    // 1. Fetch persisted AP invoices & payment receipts from MariaDB in parallel
     try {
-      const { data, error } = await db.from('proc_ap_invoices').select('*').order('created_at', { ascending: false });
-      if (!error && Array.isArray(data) && data.length > 0) {
-        invoices = data;
+      const [invRes] = await Promise.all([
+        db.from("proc_ap_invoices").select("*").order("created_at", { ascending: false }),
+        loadReceiptsFromDb(),
+      ]);
+      if (!invRes.error && Array.isArray(invRes.data)) {
+        invoices = invRes.data;
       }
     } catch {
-      // ignore
+      invoices = [...invoicesCache];
     }
 
-    // 2. LocalStorage Procurement Invoices
-    if (invoices.length === 0) {
-      invoices = getLocalInvoices();
-    }
-
-    const existingInvNumbers = new Set(invoices.map(i => i.invoice_number).filter(Boolean));
-
-    // 3. Auto-sync / synthesize from proc_goods_receipts (GRNs)
+    // 2. Auto-synthesize missing AP invoices directly from proc_goods_receipts (GRNs) and persist to DB
     try {
       const [grnRes, poRes] = await Promise.all([
-        db.from('proc_goods_receipts').select('*').order('created_at', { ascending: false }),
-        db.from('proc_purchase_orders').select('*')
+        db.from("proc_goods_receipts").select("*").order("created_at", { ascending: false }),
+        db.from("proc_purchase_orders").select("*"),
       ]);
 
       const grns = grnRes.data || [];
       const pos = poRes.data || [];
       const poMap = new Map<string, any>(pos.map((p: any) => [p.id, p] as [string, any]));
 
-      const existingGrnNumbers = new Set(invoices.map(i => i.grn_number).filter(Boolean));
-      let hasNew = false;
+      const existingGrnNumbers = new Set(invoices.map((i) => i.grn_number).filter(Boolean));
+      const existingInvNumbers = new Set(invoices.map((i) => i.invoice_number).filter(Boolean));
 
       for (const grn of grns) {
-        if (!existingGrnNumbers.has(grn.grn_number)) {
-          const po = poMap.get(grn.purchase_order_id);
-          const grnSuffix = grn.grn_number ? grn.grn_number.replace(/^GRN-/, '') : String(Date.now()).slice(-6);
-          const invNumber = `APINV-${grnSuffix}`;
-          
-          const newInv: ProcApInvoice = {
-            id: `inv-auto-${grn.id || grnSuffix}`,
-            invoice_number: invNumber,
-            vendor_id: grn.vendor_id || po?.vendor_id || "1",
-            po_number: po?.doc_number || "—",
-            grn_number: grn.grn_number,
-            invoice_date: grn.grn_date || new Date().toISOString().slice(0, 10),
-            due_date: new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
-            amount: Number(grn.total_amount || 0),
-            tax_amount: 0,
-            total_amount: Number(grn.total_amount || 0),
-            amount_paid: 0,
-            status: "DRAFT",
-            posting_status: "UNPOSTED",
-            source_type: "PROCUREMENT",
-            remarks: `Auto-generated from GRN ${grn.grn_number} against PO ${po?.doc_number || 'N/A'}`,
-            created_at: grn.created_at || new Date().toISOString()
-          };
+        if (!grn.grn_number || existingGrnNumbers.has(grn.grn_number)) continue;
+        const po = poMap.get(grn.purchase_order_id);
+        const grnSuffix = grn.grn_number.replace(/^GRN-/, "");
+        const invNumber = `APINV-${grnSuffix}`;
+        if (existingInvNumbers.has(invNumber)) continue;
 
-          invoices.push(newInv);
-          existingGrnNumbers.add(grn.grn_number);
-          existingInvNumbers.add(invNumber);
-          hasNew = true;
+        const payload = {
+          invoice_number: invNumber,
+          vendor_id: String(grn.vendor_id || po?.vendor_id || "1"),
+          po_number: po?.doc_number || "—",
+          grn_number: grn.grn_number,
+          invoice_date: grn.grn_date || new Date().toISOString().slice(0, 10),
+          due_date: new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
+          amount: Number(grn.total_amount || 0),
+          tax_amount: 0,
+          total_amount: Number(grn.total_amount || 0),
+          status: "DRAFT",
+          remarks: `Auto-generated from GRN ${grn.grn_number} against PO ${po?.doc_number || "N/A"}`,
+        };
+
+        try {
+          const { data: inserted } = await db.from("proc_ap_invoices").insert(payload).select().single();
+          invoices.push(inserted || { ...payload, id: `inv-auto-${grn.id || grnSuffix}` } as ProcApInvoice);
+        } catch {
+          invoices.push({ ...payload, id: `inv-auto-${grn.id || grnSuffix}` } as ProcApInvoice);
         }
-      }
-
-      // 4. Merge Maintenance Vendor Invoices (pms_vendor_invoices)
-      try {
-        const mntInvoicesRaw = kvStore.getItem("pms_vendor_invoices");
-        if (mntInvoicesRaw) {
-          const mntInvoices: any[] = JSON.parse(mntInvoicesRaw);
-          for (const m of mntInvoices) {
-            if (m.invoiceNo && !existingInvNumbers.has(m.invoiceNo)) {
-              invoices.push({
-                id: m.id || `mnt-inv-${m.invoiceNo}`,
-                invoice_number: m.invoiceNo,
-                vendor_id: m.vendorName || "Carrier Middle East Qatar",
-                vendor_name: m.vendorName,
-                po_number: m.workOrderId || m.ticketId || "—",
-                grn_number: m.ticketId || "—",
-                invoice_date: m.invoiceDate || new Date().toISOString().slice(0, 10),
-                due_date: m.dueDate || new Date(Date.now() + 30 * 86400000).toISOString().slice(0, 10),
-                amount: Number(m.baseAmount !== undefined ? m.baseAmount : (Number(m.amount || 0) - Number(m.taxAmount || 0))),
-                tax_amount: Number(m.taxAmount || 0),
-                total_amount: Number(m.amount || 0),
-                amount_paid: m.status === "Approved" || m.status === "PAID" || m.status === "Paid" ? Number(m.amount || 0) : 0,
-                status: (m.status === "Approved" || m.status === "PAID" || m.status === "Paid") ? "PAID" : "SUBMITTED",
-                posting_status: (m.status === "Approved" || m.status === "PAID" || m.status === "Paid") ? "POSTED" : "UNPOSTED",
-                remarks: m.partsDescription || m.labourDescription || "Maintenance Contractor Invoice",
-                receipt_attachment: m.receiptAttachment || m.receiptFileName,
-                source_type: "MAINTENANCE",
-                property: m.property,
-                unit_ref: m.unitRef,
-                expense_gl_account: m.glAccount,
-                created_at: m.invoiceDate || new Date().toISOString()
-              });
-              existingInvNumbers.add(m.invoiceNo);
-              hasNew = true;
-            }
-          }
-        }
-      } catch (e) {
-        console.warn("Failed merging pms_vendor_invoices in ApInvoicesApi:", e);
-      }
-
-      if (hasNew) {
-        saveLocalInvoices(invoices);
+        existingGrnNumbers.add(grn.grn_number);
+        existingInvNumbers.add(invNumber);
       }
     } catch (e) {
-      console.error("Error auto-synthesizing AP Invoices from GRNs / Maintenance:", e);
+      console.error("Error auto-synthesizing AP Invoices from GRNs:", e);
     }
 
+    invoicesCache = invoices;
     return invoices;
   },
 
-  create: async (payload: Omit<ProcApInvoice, 'id'>): Promise<ProcApInvoice> => {
-    const id = `inv-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-    const newRecord: ProcApInvoice = {
-      ...payload,
-      id,
-      created_at: new Date().toISOString()
-    };
-
-    // Try DB insert
-    try {
-      const { data } = await db.from('proc_ap_invoices').insert({
+  create: async (payload: Omit<ProcApInvoice, "id">): Promise<ProcApInvoice> => {
+    const { data, error } = await db
+      .from("proc_ap_invoices")
+      .insert({
         invoice_number: payload.invoice_number,
         vendor_id: payload.vendor_id,
         po_number: payload.po_number || null,
@@ -259,154 +197,133 @@ export const ApInvoicesApi = {
         tax_amount: payload.tax_amount || 0,
         total_amount: payload.total_amount,
         status: payload.status || "DRAFT",
-        remarks: payload.remarks || null
-      }).select().single();
+        remarks: payload.remarks || null,
+      })
+      .select()
+      .single();
 
-      if (data) {
-        newRecord.id = data.id || id;
-      }
-    } catch {
-      // continue to local storage
+    if (error) {
+      throw new Error(error.message || "Failed to create AP invoice");
     }
 
-    const current = getLocalInvoices();
-    const updated = [newRecord, ...current.filter(i => i.invoice_number !== newRecord.invoice_number)];
-    saveLocalInvoices(updated);
-
+    const newRecord: ProcApInvoice = {
+      ...payload,
+      ...(data || {}),
+      id: String(data?.id || `inv-${Date.now()}`),
+      created_at: data?.created_at || new Date().toISOString(),
+    };
+    invoicesCache = [newRecord, ...invoicesCache.filter((i) => i.invoice_number !== newRecord.invoice_number)];
+    window.dispatchEvent(new Event("ap_invoices_updated"));
     return newRecord;
   },
 
   update: async (id: string, payload: Partial<ProcApInvoice>): Promise<void> => {
-    try {
-      await db.from('proc_ap_invoices').update(payload).eq('id', id);
-    } catch {
-      // ignore
+    const { error } = await db.from("proc_ap_invoices").update(payload).eq("id", id);
+    if (error) {
+      throw new Error(error.message || "Failed to update AP invoice");
     }
 
-    const current = getLocalInvoices();
-    const existingInv = current.find(i => i.id === id || i.invoice_number === payload.invoice_number);
+    let existingInv = invoicesCache.find((i) => i.id === id || i.invoice_number === payload.invoice_number);
+    if (!existingInv) {
+      const { data } = await db.from("proc_ap_invoices").select("*").eq("id", id).maybeSingle();
+      if (data) existingInv = data as ProcApInvoice;
+    }
 
-    const updated = current.map(i => {
-      if (i.id === id || i.invoice_number === payload.invoice_number) {
-        const merged: ProcApInvoice = {
-          ...i,
-          ...payload,
-          paid_at: payload.status === "PAID" ? (i.paid_at || new Date().toISOString().slice(0, 10)) : i.paid_at
-        };
-        return merged;
-      }
-      return i;
-    });
-    saveLocalInvoices(updated);
+    invoicesCache = invoicesCache.map((i) =>
+      i.id === id || i.invoice_number === payload.invoice_number
+        ? {
+            ...i,
+            ...payload,
+            paid_at: payload.status === "PAID" ? i.paid_at || new Date().toISOString().slice(0, 10) : i.paid_at,
+          }
+        : i,
+    );
+    window.dispatchEvent(new Event("ap_invoices_updated"));
 
-    // When a payment (Full or Partial) is disbursed, create/append an installment Payment Receipt
-    if ((payload.status === "PAID" || (payload.status as any) === "PARTIAL") && existingInv) {
-      const suffix = existingInv.invoice_number.replace(/^APINV-/, '');
-      const existingReceipts = getLocalReceipts();
-      const invoiceReceipts = existingReceipts.filter(r => r.invoice_number === existingInv.invoice_number);
+    if ((payload.status === "PAID" || payload.status === "PARTIAL") && existingInv) {
+      await loadReceiptsFromDb();
+      const suffix = existingInv.invoice_number.replace(/^APINV-/, "");
+      const invoiceReceipts = receiptsCache.filter((r) => r.invoice_number === existingInv!.invoice_number);
       const installmentIndex = invoiceReceipts.length + 1;
-      
-      const rcptNum = invoiceReceipts.length === 0 && payload.status === "PAID" 
-        ? `RCPT-${suffix}` 
-        : `RCPT-${suffix}-P${installmentIndex}`;
-      const pvNum = invoiceReceipts.length === 0 && payload.status === "PAID"
-        ? `PV-${suffix}`
-        : `PV-${suffix}-P${installmentIndex}`;
 
-      // amount_paid is the running total paid on the invoice, so this receipt is what was added since the last payment.
+      const rcptNum =
+        invoiceReceipts.length === 0 && payload.status === "PAID"
+          ? `RCPT-${suffix}`
+          : `RCPT-${suffix}-P${installmentIndex}`;
+      const pvNum =
+        invoiceReceipts.length === 0 && payload.status === "PAID"
+          ? `PV-${suffix}`
+          : `PV-${suffix}-P${installmentIndex}`;
+
       const previouslyPaid = Number(existingInv.amount_paid || 0);
       const runningPaid = Number(payload.amount_paid || existingInv.total_amount);
-      const paidAmount = runningPaid > previouslyPaid ? Math.round((runningPaid - previouslyPaid) * 100) / 100 : runningPaid;
-
-      const receipt: PaymentReceipt = {
-        id: `rcpt-${Date.now()}-${installmentIndex}`,
+      const paidAmount =
+        runningPaid > previouslyPaid ? Math.round((runningPaid - previouslyPaid) * 100) / 100 : runningPaid;
+      const bankAccount = payload.payment_method?.includes("CBQ")
+        ? "Commercial Bank of Qatar (CBQ) - Operational (IBAN: QA99CBQA00000000654321)"
+        : payload.payment_method?.includes("Cash")
+          ? "12100001 - Cash in Hand (Office Cashier Vault)"
+          : "Qatar National Bank (QNB) - Main Operating (IBAN: QA42QNBA00000000123456)";
+      const receiptRow = {
         receipt_number: rcptNum,
         voucher_number: pvNum,
         invoice_number: existingInv.invoice_number,
-        po_number: existingInv.po_number,
-        grn_number: existingInv.grn_number,
-        vendor_id: existingInv.vendor_id,
+        po_number: existingInv.po_number || null,
+        grn_number: existingInv.grn_number || null,
+        vendor_id: String(existingInv.vendor_id || ""),
+        vendor_name: existingInv.vendor_name || null,
         amount_paid: paidAmount,
         payment_date: new Date().toISOString().slice(0, 10),
         payment_method: payload.payment_method || "Bank Wire / QNB Corporate",
         reference_no: payload.payment_reference || `TXN-${Date.now().toString().slice(-6)}`,
-        bank_account: payload.payment_method?.includes("CBQ") 
-          ? "Commercial Bank of Qatar (CBQ) - Operational (IBAN: QA99CBQA00000000654321)"
-          : payload.payment_method?.includes("Cash") 
-          ? "12100001 - Cash in Hand (Office Cashier Vault)"
-          : "Qatar National Bank (QNB) - Main Operating (IBAN: QA42QNBA00000000123456)",
-        gl_debit_account: "22100001 - Trade Payables - Vendors",
-        gl_credit_account: payload.payment_method?.includes("Cash") 
-          ? "12100001 - Cash in Hand / Operating Cash" 
-          : "12000001 - Bank Operating Account (QNB)",
+        bank_account: bankAccount,
         remarks: `${payload.status === "PAID" ? "Final Settlement" : `Installment #${installmentIndex}`} for Invoice ${existingInv.invoice_number}`,
         status: payload.status === "PAID" ? "Settled" : "Partial",
-        created_at: new Date().toISOString()
       };
 
-      // Append new receipt into receipt store
-      const updatedReceipts = [receipt, ...existingReceipts.filter(r => r.id !== receipt.id)];
-      saveLocalReceipts(updatedReceipts);
-
-      // Post to Finance module vouchers & reports
-      void postFinancePaymentVoucher({ ...existingInv, total_amount: paidAmount, payment_method: payload.payment_method || existingInv.payment_method }, rcptNum, pvNum);
-
-      // ── Cross-sync with Maintenance Vendor Invoices (pms_vendor_invoices) ──
       try {
-        const mntRaw = kvStore.getItem("pms_vendor_invoices");
-        if (mntRaw) {
-          const mntList: any[] = JSON.parse(mntRaw);
-          let mntChanged = false;
-          const updatedMnt = mntList.map((m: any) => {
-            if (m.invoiceNo === existingInv.invoice_number || m.id === existingInv.id) {
-              mntChanged = true;
-              return { ...m, status: payload.status === "PAID" ? "Approved" : m.status };
-            }
-            return m;
-          });
-          if (mntChanged) {
-            kvStore.setItem("pms_vendor_invoices", JSON.stringify(updatedMnt));
-          }
-        }
+        const { data: insertedRcpt } = await db.from("fin_payment_receipts").insert(receiptRow).select().single();
+        const mapped = mapDbReceipt(insertedRcpt || { ...receiptRow, id: `rcpt-${Date.now()}` });
+        receiptsCache = [mapped, ...receiptsCache.filter((r) => r.receipt_number !== mapped.receipt_number)];
+        window.dispatchEvent(new Event("payment_receipts_updated"));
       } catch (e) {
-        console.warn("Failed cross-syncing pms_vendor_invoices:", e);
+        console.warn("Failed saving payment receipt to fin_payment_receipts:", e);
       }
 
-      // Dispatch global refresh events
+      void postFinancePaymentVoucher(
+        {
+          ...existingInv,
+          total_amount: paidAmount,
+          payment_method: payload.payment_method || existingInv.payment_method,
+        },
+        rcptNum,
+        pvNum,
+      );
+
       window.dispatchEvent(new Event("finance_vouchers_updated"));
       window.dispatchEvent(new Event("pms_vendor_invoices_updated"));
     }
   },
 
   delete: async (id: string): Promise<void> => {
-    try {
-      await db.from('proc_ap_invoices').delete().eq('id', id);
-    } catch {
-      // ignore
+    const { error } = await db.from("proc_ap_invoices").delete().eq("id", id);
+    if (error) {
+      throw new Error(error.message || "Failed to delete AP invoice");
     }
-
-    const current = getLocalInvoices();
-    const updated = current.filter(i => i.id !== id);
-    saveLocalInvoices(updated);
+    invoicesCache = invoicesCache.filter((i) => i.id !== id);
+    window.dispatchEvent(new Event("ap_invoices_updated"));
   },
 
-  // Receipts API
-  getAllReceipts: (): PaymentReceipt[] => {
-    return getLocalReceipts();
-  },
+  refreshReceipts: loadReceiptsFromDb,
 
-  getReceiptByInvoice: (invoiceNumber: string): PaymentReceipt | undefined => {
-    const receipts = getLocalReceipts();
-    return receipts.find(r => r.invoice_number === invoiceNumber);
-  },
+  getAllReceipts: (): PaymentReceipt[] => receiptsCache,
 
-  getAllReceiptsForInvoice: (invoiceNumber: string): PaymentReceipt[] => {
-    const receipts = getLocalReceipts();
-    return receipts.filter(r => r.invoice_number === invoiceNumber);
-  },
+  getReceiptByInvoice: (invoiceNumber: string): PaymentReceipt | undefined =>
+    receiptsCache.find((r) => r.invoice_number === invoiceNumber),
 
-  getReceiptByGrn: (grnNumber: string): PaymentReceipt | undefined => {
-    const receipts = getLocalReceipts();
-    return receipts.find(r => r.grn_number === grnNumber);
-  }
+  getAllReceiptsForInvoice: (invoiceNumber: string): PaymentReceipt[] =>
+    receiptsCache.filter((r) => r.invoice_number === invoiceNumber),
+
+  getReceiptByGrn: (grnNumber: string): PaymentReceipt | undefined =>
+    receiptsCache.find((r) => r.grn_number === grnNumber),
 };

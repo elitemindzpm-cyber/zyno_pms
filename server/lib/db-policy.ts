@@ -20,6 +20,8 @@ const TABLE_RULES: Record<string, Rule> = {
   platform_subscription_plans: ADMIN_ONLY,
   tenant_organisations: ADMIN_ONLY,
   security_audit_logs: { read: ADMIN_ROLES, write: SUPER_ADMIN, delete: [] },
+  maintenance_tickets: { read: [...STAFF_ROLES, 'TENANT'], write: [...STAFF_ROLES, 'TENANT'], delete: ADMIN_ROLES },
+  fin_posting_periods: { read: STAFF_ROLES, write: [...ADMIN_ROLES, 'FINANCE'], delete: [] },
 };
 
 // Accounting: only finance roles post or change ledger data; nobody below admin deletes it.

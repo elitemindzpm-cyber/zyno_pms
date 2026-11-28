@@ -1,5 +1,5 @@
 ﻿import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { CalendarCheck2, Clock, Users, CheckCircle2, XCircle, Plus } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
@@ -8,7 +8,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { facilities, myBookings as seedBookings, formatQAR, type FacilityBooking, type MyFacilityBooking } from "@/lib/mock-data";
+import {
+  fetchPortalSummary,
+  formatQAR,
+  type PortalBookingItem as MyFacilityBooking,
+  type PortalFacility as FacilityBooking,
+} from "@/lib/portal-api";
 
 export const Route = createFileRoute("/portal/bookings")({
   head: () => ({ meta: [{ title: "Facility Bookings — ZYNO Tenant Portal" }] }),
@@ -24,10 +29,23 @@ const slotOptions = ["06:00–07:00", "07:00–08:00", "09:00–10:00", "10:00�
   "14:00–15:00", "15:00–16:00", "16:00–17:00", "17:00–18:00", "18:00–20:00", "20:00–22:00"];
 
 function BookingsPage() {
-  const [myBookingsList, setMyBookingsList] = useState<MyFacilityBooking[]>(seedBookings);
+  const [facilities, setFacilities] = useState<FacilityBooking[]>([]);
+  const [myBookingsList, setMyBookingsList] = useState<MyFacilityBooking[]>([]);
   const [bookingDialog, setBookingDialog] = useState<FacilityBooking | null>(null);
   const [selectedDate, setSelectedDate] = useState("");
   const [selectedSlot, setSelectedSlot] = useState(slotOptions[0]);
+
+  useEffect(() => {
+    fetchPortalSummary()
+      .then((s) => {
+        setFacilities(s?.facilities ?? []);
+        setMyBookingsList(s?.bookings ?? []);
+      })
+      .catch(() => {
+        setFacilities([]);
+        setMyBookingsList([]);
+      });
+  }, []);
 
   const confirmBooking = () => {
     if (!bookingDialog) return;

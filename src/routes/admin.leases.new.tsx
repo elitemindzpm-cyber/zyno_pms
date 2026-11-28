@@ -82,36 +82,14 @@ function NewLeaseForm() {
           lease_status: 'DRAFT',
           payment_frequency: 'Monthly',
           number_of_pdc: Number(formData.pdcCount) || 12,
+          has_rent_free: Boolean(formData.hasRentFree),
+          rent_free_period_days: formData.hasRentFree ? Number(formData.rentFreeDays) : 0,
+          rent_free_position: formData.rentFreePosition || 'FIRST_MONTH',
         })
         .select()
         .single();
 
       if (leaseError) throw leaseError;
-
-      // 3. Persist overrides to browser storage for instant reload hydration
-      try {
-        const stored = JSON.parse(kvStore.getItem('pms_custom_lease_overrides') || '{}');
-        const overridePayload = {
-          commencement_date: formData.startDate,
-          expiry_date: formData.endDate,
-          monthlyRent: mRent,
-          rental_amount: annRent,
-          lease_status: 'DRAFT',
-          tenant_name: formData.customerName,
-          has_rent_free: formData.hasRentFree,
-          rent_free_days: formData.hasRentFree ? Number(formData.rentFreeDays) : 0,
-          rent_free_position: formData.rentFreePosition,
-          pdc_count: Number(formData.pdcCount) || 12,
-          updated_at: new Date().toISOString(),
-        };
-        stored[formData.leaseNumber] = overridePayload;
-        if (leaseData?.id) {
-          stored[leaseData.id] = overridePayload;
-        }
-        kvStore.setItem('pms_custom_lease_overrides', JSON.stringify(stored));
-      } catch (e) {
-        console.warn("Could not save to kvStore:", e);
-      }
 
       toast.success(formData.hasRentFree ? "13-Month Concession Lease Draft created successfully!" : "Lease draft created successfully!");
       navigate({ to: "/admin/leases", search: { tab: "agreement" } });

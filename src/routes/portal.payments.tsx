@@ -1,18 +1,18 @@
 ﻿import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { CreditCard, Download, AlertTriangle, CheckCircle2, Clock, Filter } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { payments, tenantInvoices, pdcCheques, tenantLease, formatQAR, type Payment } from "@/lib/mock-data";
+import { fetchPortalSummary, formatQAR, type PortalInvoice, type PortalLease, type PortalPayment, type PortalPdc } from "@/lib/portal-api";
 
 export const Route = createFileRoute("/portal/payments")({
   head: () => ({ meta: [{ title: "Payments — ZYNO Tenant Portal" }] }),
   component: PaymentsPage,
 });
 
-const methodColor: Record<Payment["method"], string> = {
+const methodColor: Record<string, string> = {
   SADAD: "bg-primary/10 text-primary",
   Mada: "bg-gold/15 text-gold-foreground",
   "Apple Pay": "bg-foreground/5 text-foreground",
@@ -23,13 +23,33 @@ const methodColor: Record<Payment["method"], string> = {
 };
 
 function PaymentsPage() {
+  const [tenantInvoices, setTenantInvoices] = useState<PortalInvoice[]>([]);
+  const [pdcCheques, setPdcCheques] = useState<PortalPdc[]>([]);
+  const [payments, setPayments] = useState<PortalPayment[]>([]);
+  const [tenantLease, setTenantLease] = useState<PortalLease | null>(null);
+  const [filterStatus, setFilterStatus] = useState("all");
+
+  useEffect(() => {
+    fetchPortalSummary()
+      .then((s) => {
+        setTenantLease(s?.lease ?? null);
+        setTenantInvoices(s?.invoices ?? []);
+        setPdcCheques(s?.pdcs ?? []);
+        setPayments(s?.payments ?? []);
+      })
+      .catch(() => {
+        setTenantInvoices([]);
+        setPdcCheques([]);
+        setPayments([]);
+      });
+  }, []);
+
   const overdueInvoices = tenantInvoices.filter(i => i.status === "overdue");
   const outstandingInvoices = tenantInvoices.filter(i => i.status === "outstanding" || i.status === "overdue");
   const paidInvoices = tenantInvoices.filter(i => i.status === "paid");
   const outstandingTotal = outstandingInvoices.reduce((s, i) => s + i.amount, 0);
   const totalPaid = payments.filter(p => p.status === "completed").reduce((s, p) => s + p.amount, 0);
   const upcomingPdc = pdcCheques.filter(p => p.status === "upcoming");
-  const [filterStatus, setFilterStatus] = useState("all");
 
   const filteredPayments = filterStatus === "all" ? payments : payments.filter(p => p.status === filterStatus);
 
@@ -53,7 +73,7 @@ function PaymentsPage() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Kpi label="Outstanding Balance" value={formatQAR(outstandingTotal)} tone={overdueInvoices.length > 0 ? "danger" : outstandingTotal > 0 ? "warn" : "success"} hint={`${outstandingInvoices.length} invoices pending`} />
         <Kpi label="Total Paid (This Year)" value={formatQAR(totalPaid)} tone="success" hint={`${paidInvoices.length} receipts issued`} />
-        <Kpi label="Annual Rent" value={formatQAR(tenantLease.annualRent)} tone="neutral" hint={`${tenantLease.installments} installments · ${formatQAR(tenantLease.installmentAmount)} each`} />
+        <Kpi label="Annual Rent" value={formatQAR(tenantLease?.annualRent ?? 0)} tone="neutral" hint={tenantLease ? `${tenantLease.installments} installments · ${formatQAR(tenantLease.installmentAmount)} each` : "No active lease"} />
         <Kpi label="Upcoming PDC Cheques" value={String(upcomingPdc.length)} tone="neutral" hint={upcomingPdc[0] ? `Next: ${upcomingPdc[0].dueDate}` : "All submitted"} />
       </div>
 
@@ -122,7 +142,7 @@ function PaymentsPage() {
             <CardContent className="p-0">
               <div className="border-b border-border px-5 py-4">
                 <h3 className="font-semibold">Post-Dated Cheque (PDC) Schedule</h3>
-                <p className="text-xs text-muted-foreground mt-0.5">Cheques submitted to {tenantLease.landlord} for the lease period.</p>
+                <p className="text-xs text-muted-foreground mt-0.5">Cheques submitted to {tenantLease?.landlord || "Landlord"} for the lease period.</p>
               </div>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">

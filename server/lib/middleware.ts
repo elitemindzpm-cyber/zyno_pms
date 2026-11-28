@@ -18,8 +18,10 @@ export function tenantMiddleware(req: Request, res: Response, next: NextFunction
  * Parse standard pagination query params: ?page=1&limit=25
  */
 export function parsePagination(req: Request): { skip: number; take: number; page: number; limit: number } {
-  const page  = Math.max(1, parseInt((req.query.page  as string) || '1', 10));
-  const limit = Math.min(100, parseInt((req.query.limit as string) || '25', 10));
+  const rawPage = parseInt(String(req.query.page ?? ''), 10);
+  const rawLimit = parseInt(String(req.query.limit ?? ''), 10);
+  const page = Number.isFinite(rawPage) && rawPage >= 1 ? rawPage : 1;
+  const limit = Number.isFinite(rawLimit) && rawLimit >= 1 ? Math.min(100, rawLimit) : 25;
   return { skip: (page - 1) * limit, take: limit, page, limit };
 }
 
