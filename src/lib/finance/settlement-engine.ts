@@ -16,8 +16,9 @@
  */
 
 import { db } from '../db';
+import { request as apiRequest } from '../api-client';
 import { resolveAccountingAccounts, normalizeUuid } from './account-resolver';
-import { postVoucher, postRentInvoiceReversal, type PostingResult } from './posting-engine';
+import { type PostingResult } from './posting-engine';
 import { returnPdc } from './pdcService';
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -123,18 +124,17 @@ async function resolveLeaseFinanceContext(params: {
     }
   }
 
-  // Fallback to valid placeholder UUIDs for demo/in-memory records so that posting proceeds smoothly
-  const fallbackPropertyId = normalizeUuid(propertyId) || '00000000-0000-0000-0000-000000000001';
-  const fallbackUnitId = normalizeUuid(unitId) || '00000000-0000-0000-0000-000000000002';
-  const fallbackTenantId = normalizeUuid(tenantId) || '00000000-0000-0000-0000-000000000003';
-  const fallbackLeaseId = normalizeUuid(leaseUuid) || '00000000-0000-0000-0000-000000000004';
-
-  return {
-    leaseUuid: fallbackLeaseId,
-    tenantId: fallbackTenantId,
-    propertyId: fallbackPropertyId,
-    unitId: fallbackUnitId,
+  // No placeholder fallbacks: a settlement must be posted against a real lease, tenant, property and unit.
+  const ids = {
+    leaseUuid: normalizeUuid(leaseUuid),
+    tenantId: normalizeUuid(tenantId),
+    propertyId: normalizeUuid(propertyId),
+    unitId: normalizeUuid(unitId),
   };
+  if (!ids.leaseUuid || !ids.tenantId || !ids.propertyId || !ids.unitId) {
+    throw new Error('Cannot post the settlement: the lease, tenant, property or unit could not be resolved to a real record.');
+  }
+  return ids as { leaseUuid: string; tenantId: string; propertyId: string; unitId: string };
 }
 
 // ── Master Settlement Execution ───────────────────────────────────────────────
@@ -175,6 +175,18 @@ export async function executeFinalSettlement(
     ? { ...baseSummary, netRefundAmount: Number(totalDeposit.toFixed(2)), netRecoveryAmount: 0, isRefund: true }
     : baseSummary;
   const vouchers: PostingResult[] = [];
+  // Vouchers are queued here and posted together, in one server transaction, at the end.
+  const queue: Array<{ voucher_date: string; voucher_type: string; reference_no?: string; description: string; lines: Array<{ account_code: string; debit: number; credit: number; description?: string }> }> = [];
+  const queueVoucher = (v: any) => {
+    queue.push({
+      voucher_date: v.voucher_date,
+      voucher_type: v.voucher_type,
+      reference_no: v.reference_no,
+      description: v.description,
+      lines: (v.lines || []).map((l: any) => ({ account_code: l.account_code, debit: Number(l.debit || 0), credit: Number(l.credit || 0), description: l.description })),
+    });
+    return {} as PostingResult;
+  };
 
   // 1. Move each deposit bucket from its source GL to its refundable counterpart.
   //    Source-account driven: SECURITY → 21500[unit SL], QATAR_COOL → 21100003, etc.
@@ -189,7 +201,7 @@ export async function executeFinalSettlement(
       unitName: financeInput.unitName,
     });
 
-    const vchDep = await postVoucher({
+    const vchDep = queueVoucher({
       voucher_date: dateStr,
       voucher_type: 'Journal',
       description: `Final Settlement: Move ${bucket.depositType} Deposit to Refundable – ${financeInput.unitName || ''}`,
@@ -234,7 +246,7 @@ export async function executeFinalSettlement(
         unitName: financeInput.unitName,
       });
 
-      const vchChg = await postVoucher({
+      const vchChg = queueVoucher({
         voucher_date: dateStr,
         voucher_type: 'Journal',
         description: `Final Settlement Charge: ${deduction.description}`,
@@ -267,6 +279,7 @@ export async function executeFinalSettlement(
   //    bucket in order, capping at its available balance). Excess stays in
   //    Tenant AR — deposit balances never go negative.
   let remainingDeductions = summary.totalDeductions;
+  const appliedByBucket = new Map<SettlementDepositLine, number>();
   for (const bucket of depositBuckets) {
     if (remainingDeductions <= 0) break;
     const applied = Math.min(bucket.amount, remainingDeductions);
@@ -282,7 +295,7 @@ export async function executeFinalSettlement(
       unitName: financeInput.unitName,
     });
 
-    const vchSettle = await postVoucher({
+    const vchSettle = queueVoucher({
       voucher_date: dateStr,
       voucher_type: 'Journal',
       description: `Final Settlement: Offset Dues against ${bucket.depositType} Deposit`,
@@ -308,6 +321,7 @@ export async function executeFinalSettlement(
       ],
     });
     vouchers.push(vchSettle);
+    appliedByBucket.set(bucket, applied);
     remainingDeductions -= applied;
   }
 
@@ -323,7 +337,7 @@ export async function executeFinalSettlement(
       unitName: financeInput.unitName,
     });
 
-    const vchCollect = await postVoucher({
+    const vchCollect = queueVoucher({
       voucher_date: dateStr,
       voucher_type: 'Receipt',
       description: `Final Settlement: Tenant Dues Paid Separately`,
@@ -362,7 +376,7 @@ export async function executeFinalSettlement(
         unitName: financeInput.unitName,
       });
 
-      const vchRefund = await postVoucher({
+      const vchRefund = queueVoucher({
         voucher_date: dateStr,
         voucher_type: paymentMethod === 'BANK' ? 'Payment' : 'Receipt',
         description: `Final Settlement: Refund Remaining Deposit to Tenant`,
@@ -398,7 +412,7 @@ export async function executeFinalSettlement(
         if (remainingRefund <= 0) break;
         // The bucket's net is its amount minus any deduction already applied
         // to it. Recompute by re-walking the deductions total allocated above.
-        const bucketApplied = Math.min(bucket.amount, summary.totalDeductions);
+        const bucketApplied = appliedByBucket.get(bucket) ?? 0;
         const bucketNet = Math.max(0, bucket.amount - bucketApplied);
         const refund = Math.min(bucketNet, remainingRefund);
         if (refund <= 0) continue;
@@ -414,7 +428,7 @@ export async function executeFinalSettlement(
           unitName: financeInput.unitName,
         });
 
-        const vchRefund = await postVoucher({
+        const vchRefund = queueVoucher({
           voucher_date: dateStr,
           voucher_type: paymentMethod === 'BANK' ? 'Payment' : 'Receipt',
           description: `Final Settlement: Refund ${bucket.depositType} Deposit to Tenant`,
@@ -448,7 +462,29 @@ export async function executeFinalSettlement(
     }
   }
 
+  if (queue.length > 0) {
+    const settlementKey = `${financeInput.leaseId}|${financeInput.referenceNo || dateStr}`;
+    const res: any = await apiRequest('/api/accounting/post-settlement', {
+      method: 'POST',
+      body: JSON.stringify({ lease_id: financeInput.leaseId, settlement_key: settlementKey, vouchers: queue }),
+    });
+    vouchers.length = 0;
+    for (const r of (res?.data || [])) {
+      vouchers.push({ event_id: r.event_id, voucher_id: r.voucher_id, voucher_number: r.voucher_number, receipt_id: '', receipt_number: '', status: 'POSTED' });
+    }
+  }
+
   return { summary, vouchers };
+}
+
+/** Posts the given vouchers for one lease in a single server transaction (see POST /api/accounting/post-settlement). */
+async function postLeaseVouchers(leaseId: string, key: string, vouchers: Array<{ voucher_date: string; voucher_type: string; reference_no?: string; description: string; lines: Array<{ account_code: string; debit: number; credit: number; description?: string }> }>): Promise<PostingResult> {
+  const res: any = await apiRequest('/api/accounting/post-settlement', {
+    method: 'POST',
+    body: JSON.stringify({ lease_id: leaseId, settlement_key: key, vouchers }),
+  });
+  const r = (res?.data || [])[0] || {};
+  return { event_id: r.event_id, voucher_id: r.voucher_id, voucher_number: r.voucher_number, receipt_id: '', receipt_number: '', status: 'POSTED' };
 }
 
 // ── Unclaimed Deposit Handling ────────────────────────────────────────────────
@@ -463,7 +499,7 @@ export async function markDepositUnclaimed(params: {
   tenantId: string;
   propertyId: string;
   unitId?: string;
-  leaseId?: string;
+  leaseId: string;
   unitName?: string;
 }) {
   const { debit, credit } = await resolveAccountingAccounts({
@@ -475,32 +511,16 @@ export async function markDepositUnclaimed(params: {
     leaseId: params.leaseId,
     unitName: params.unitName,
   });
-
-  return postVoucher({
-    voucher_date: new Date().toISOString().split('T')[0],
+  const date = new Date().toISOString().split('T')[0];
+  return postLeaseVouchers(params.leaseId, `UNCLAIMED|${params.leaseId}|${date}|${params.amount}`, [{
+    voucher_date: date,
     voucher_type: 'Journal',
     description: `Reclassify Unclaimed Deposit to Unclaimed Liability`,
-    tenant_id: params.tenantId,
-    property_id: params.propertyId,
-    unit_id: params.unitId,
-    lease_id: params.leaseId,
     lines: [
-      {
-        account_code: debit.slCode,
-        account_name: `${debit.glName} / ${debit.slName}`,
-        debit: params.amount,
-        credit: 0,
-        description: debit.slName,
-      },
-      {
-        account_code: credit.slCode,
-        account_name: `${credit.glName} / ${credit.slName}`,
-        debit: 0,
-        credit: params.amount,
-        description: credit.slName,
-      },
+      { account_code: debit.slCode, debit: params.amount, credit: 0, description: debit.slName },
+      { account_code: credit.slCode, debit: 0, credit: params.amount, description: credit.slName },
     ],
-  });
+  }]);
 }
 
 /**
@@ -513,7 +533,7 @@ export async function refundUnclaimedDeposit(params: {
   tenantId: string;
   propertyId: string;
   unitId?: string;
-  leaseId?: string;
+  leaseId: string;
   bankRef?: string;
 }) {
   const { debit, credit } = await resolveAccountingAccounts({
@@ -524,33 +544,17 @@ export async function refundUnclaimedDeposit(params: {
     tenantId: params.tenantId,
     leaseId: params.leaseId,
   });
-
-  return postVoucher({
-    voucher_date: new Date().toISOString().split('T')[0],
+  const date = new Date().toISOString().split('T')[0];
+  return postLeaseVouchers(params.leaseId, `UNCLAIMED-REFUND|${params.leaseId}|${params.bankRef || date}|${params.amount}`, [{
+    voucher_date: date,
     voucher_type: 'Payment',
     description: `Refund Claimed Unclaimed Deposit`,
     reference_no: params.bankRef,
-    tenant_id: params.tenantId,
-    property_id: params.propertyId,
-    unit_id: params.unitId,
-    lease_id: params.leaseId,
     lines: [
-      {
-        account_code: debit.slCode,
-        account_name: `${debit.glName} / ${debit.slName}`,
-        debit: params.amount,
-        credit: 0,
-        description: debit.slName,
-      },
-      {
-        account_code: credit.slCode,
-        account_name: `${credit.glName} / ${credit.slName}`,
-        debit: 0,
-        credit: params.amount,
-        description: credit.slName,
-      },
+      { account_code: debit.slCode, debit: params.amount, credit: 0, description: debit.slName },
+      { account_code: credit.slCode, debit: 0, credit: params.amount, description: credit.slName },
     ],
-  });
+  }]);
 }
 
 // ── Guarantee Cheque Return ───────────────────────────────────────────────────
@@ -565,6 +569,7 @@ export async function returnGuaranteeCheque(params: {
   tenantId: string;
   propertyId: string;
   unitId?: string;
+  leaseId: string;
   chequeNumber: string;
 }) {
   const { debit, credit } = await resolveAccountingAccounts({
@@ -573,33 +578,19 @@ export async function returnGuaranteeCheque(params: {
     propertyId: params.propertyId,
     unitId: params.unitId,
     tenantId: params.tenantId,
+    leaseId: params.leaseId,
   });
-
-  return postVoucher({
-    voucher_date: new Date().toISOString().split('T')[0],
+  const date = new Date().toISOString().split('T')[0];
+  return postLeaseVouchers(params.leaseId, `GUARANTEE-RETURN|${params.leaseId}|${params.chequeNumber}`, [{
+    voucher_date: date,
     voucher_type: 'Journal',
-    description: `Return Guarantee Cheque – ${params.chequeNumber}`,
+    description: `Return Guarantee Cheque - ${params.chequeNumber}`,
     reference_no: params.chequeNumber,
-    tenant_id: params.tenantId,
-    property_id: params.propertyId,
-    unit_id: params.unitId,
     lines: [
-      {
-        account_code: debit.slCode,
-        account_name: `${debit.glName} / ${debit.slName}`,
-        debit: params.amount,
-        credit: 0,
-        description: debit.slName,
-      },
-      {
-        account_code: credit.slCode,
-        account_name: `${credit.glName} / ${credit.slName}`,
-        debit: 0,
-        credit: params.amount,
-        description: credit.slName,
-      },
+      { account_code: debit.slCode, debit: params.amount, credit: 0, description: debit.slName },
+      { account_code: credit.slCode, debit: 0, credit: params.amount, description: credit.slName },
     ],
-  });
+  }]);
 }
 
 // ── Early Lease Termination & Future PDC Return Workflow ──────────────────────
@@ -704,80 +695,37 @@ export async function settleEarlyLeaseVacate(params: {
   const context = await resolveLeaseFinanceContext(params);
   const { leaseUuid, tenantId, propertyId, unitId } = context;
 
-  const { data: events, error } = await db
-    .from('fin_accounting_events')
-    .select('id, reference_number, posting_date, description, metadata')
-    .eq('lease_id', normalizeUuid(leaseUuid))
-    .eq('status', 'POSTED')
-    .order('posting_date', { ascending: true });
-  if (error) throw error;
+  // The reversal amounts are computed from the posted ledger on the server and all reversals post in one
+  // transaction; the browser only supplies the two resolved accounts.
+  const { debit: drAcct, credit: crAcct } = await resolveAccountingAccounts({
+    transactionType: 'RENT_INVOICE_REVERSAL',
+    propertyId,
+    unitId,
+    tenantId,
+    leaseId: leaseUuid,
+    unitName: params.unitName,
+  });
+  const reversal: any = await apiRequest('/api/accounting/early-vacate-reversals', {
+    method: 'POST',
+    body: JSON.stringify({
+      lease_id: leaseUuid,
+      vacate_date: params.vacateDate,
+      lease_end_date: params.leaseEndDate,
+      debit_code: drAcct.slCode,
+      credit_code: crAcct.slCode,
+    }),
+  });
+  const reversedInvoiceCount = Number(reversal?.data?.reversedInvoiceCount || 0);
+  const reversedRentAmount = Number(reversal?.data?.reversedRentAmount || 0);
 
-  const vacate = new Date(params.vacateDate);
-  let reversedInvoiceCount = 0;
-  let reversedRentAmount = 0;
-
-  for (const event of events ?? []) {
-    const metadata = (event.metadata || {}) as Record<string, unknown>;
-    const origin = String(metadata.accounting_origin || '');
-    const periodStart = typeof metadata.service_period_start === 'string' ? metadata.service_period_start : undefined;
-    const periodEnd = typeof metadata.service_period_end === 'string' ? metadata.service_period_end : undefined;
-
-    // Only rent-origin events are candidates. Legacy rent events without
-    // metadata are retained as a fallback using their posting date.
-    if (origin && origin !== 'RENT_INVOICE') continue;
-
-    const { data: lines, error: lineError } = await db
-      .from('fin_accounting_event_lines')
-      .select('account_code, debit, credit')
-      .eq('event_id', event.id);
-    if (lineError) throw lineError;
-
-    const rentAmount = (lines ?? [])
-      .filter((l: any) => l.account_code === '41100001')
-      .reduce((sum: any, l: any) => sum + Number(l.credit || 0), 0);
-    if (rentAmount <= 0) continue;
-
-    let reversalAmount = 0;
-    if (periodStart && periodEnd) {
-      const start = new Date(periodStart);
-      const end = new Date(periodEnd);
-      if (end <= vacate) continue;
-      if (start > vacate) {
-        reversalAmount = rentAmount;
-      } else {
-        const totalDays = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / 86400000));
-        const futureDays = Math.max(0, Math.ceil((end.getTime() - vacate.getTime()) / 86400000));
-        reversalAmount = rentAmount * Math.min(1, futureDays / totalDays);
-      }
-    } else {
-      if (new Date(event.posting_date).getTime() <= vacate.getTime()) continue;
-      reversalAmount = rentAmount;
-    }
-
-    reversalAmount = Number(reversalAmount.toFixed(2));
-    if (reversalAmount <= 0) continue;
-
-    await postRentInvoiceReversal({
-      amount: reversalAmount,
-      tenantId,
-      propertyId,
-      unitId,
-      leaseId: leaseUuid,
-      originalInvoiceNumber: event.reference_number || event.id,
-      reversalReason: `Early tenant vacate effective ${params.vacateDate}; contractual expiry was ${params.leaseEndDate}`,
-      unitCode: params.unitName,
-    });
-    reversedInvoiceCount += 1;
-    reversedRentAmount += reversalAmount;
-  }
-
-  const pdcResult = await returnFuturePdcsForLease(leaseUuid, params.vacateDate);
-
+  // Unpresented cheques are returned by cancelLeasePdcs (run first by the screen, which posts
+  // Dr 21400001 / Cr 12900001 and sets the status). Returning them again here could post a second entry,
+  // so this step only reports the reversals.
   return {
     reversedInvoiceCount,
     reversedRentAmount: Number(reversedRentAmount.toFixed(2)),
-    returnedPdcCount: pdcResult.returnedCount,
-    returnedPdcAmount: Number((pdcResult.pdcs ?? []).reduce((sum: number, p: any) => sum + Number(p.amount || 0), 0).toFixed(2)),
+    returnedPdcCount: 0,
+    returnedPdcAmount: 0,
   };
 }
 

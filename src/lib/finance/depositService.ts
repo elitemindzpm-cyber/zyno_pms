@@ -216,6 +216,7 @@ export async function settleDeposit(
   propertyId?: string,
   unitId?: string,
   unitName?: string,
+  options?: { bankGlCode?: string; paymentMethod?: 'BANK' | 'CASH'; referenceNo?: string },
 ) {
   const isNumeric =
     typeof depositId === 'number' ||
@@ -247,7 +248,7 @@ export async function settleDeposit(
     if (refreshed) Object.assign(deposit, refreshed);
   }
 
-  const total = deductions + refundAmount;
+  const total = Math.round((deductions + refundAmount) * 100) / 100;
   if (Math.abs(total - Number(deposit.amount)) > 0.001) {
     throw new Error('Deductions and Refund must equal Deposit Amount.');
   }
@@ -255,9 +256,10 @@ export async function settleDeposit(
   const today = new Date().toISOString().split('T')[0];
   const resolvedPropertyId = propertyId ?? deposit.property_id;
   const resolvedUnitId     = unitId     ?? deposit.unit_id;
-  const depositType = coaCodeToDepositType(deposit.coa_account_code);
+  const payMethod = options?.paymentMethod === 'CASH' ? 'CASH' : 'BANK';
+  const rawBankGl = options?.bankGlCode ? String(options.bankGlCode).trim().split(/\s+/)[0] : '';
 
-  // Resolve the deposit liability account from the deposit's own COA code
+  // Line 1 (Debit): Security Deposit liability account (full deposit released)
   const depositLiability = await resolveGlOnlyAccount(
     deposit.coa_account_code.replace(/[^0-9]/g, '').slice(0, 8) || deposit.coa_account_code,
   );
@@ -280,66 +282,74 @@ export async function settleDeposit(
       tenant_id:   deposit.tenant_id,
       property_id: deposit.property_id,
       unit_id:     deposit.unit_id,
-      description: 'Settle Refundable Deposit',
+      description: `Security Deposit Release (${deposit.deposit_type || 'SECURITY'})`,
     },
   ];
 
-  // Refund via bank
-  if (refundAmount > 0) {
-    const { debit: drRef, credit: crRef } = await resolveAccountingAccounts({
-      transactionType: 'DEPOSIT_REFUND',
-      paymentMethod:   'BANK',
-      depositType,
-      propertyId:      String(resolvedPropertyId),
-      unitId:          resolvedUnitId ? String(resolvedUnitId) : undefined,
-      tenantId:        deposit.tenant_id ? String(deposit.tenant_id) : undefined,
-      leaseId:         deposit.lease_id ? String(deposit.lease_id) : undefined,
-      unitName,
-    });
-
-    lines.push({
-      account_code: crRef.slCode,
-      account_name: `${crRef.groupName} / ${crRef.className} / ${crRef.glName} / ${crRef.slName}`,
-      debit:  0,
-      credit: refundAmount,
-      tenant_id:   deposit.tenant_id,
-      property_id: deposit.property_id,
-      unit_id:     deposit.unit_id,
-      description: 'Deposit Refund via Bank',
-    });
-    // Suppress unused variable warning — drRef is the debit side of DEPOSIT_REFUND
-    void drRef;
-  }
-
-  // Deductions offset against damage recovery
+  // Line 2 (Credit): Other Income / Damage Income for approved deductions (NEVER 12413 Tenant Receivable)
   if (deductions > 0) {
-    const { debit: drDed, credit: crDed } = await resolveAccountingAccounts({
-      transactionType: 'DEPOSIT_DEDUCTION_SETTLE',
-      depositType,
-      propertyId:      String(resolvedPropertyId),
-      unitId:          resolvedUnitId ? String(resolvedUnitId) : undefined,
-      tenantId:        deposit.tenant_id ? String(deposit.tenant_id) : undefined,
-      leaseId:         deposit.lease_id ? String(deposit.lease_id) : undefined,
-      unitName,
-    });
+    let damageIncome;
+    try {
+      damageIncome = await resolveGlOnlyAccount('41201003');
+    } catch {
+      damageIncome = await resolveGlOnlyAccount('41201001');
+    }
 
     lines.push({
-      account_code: crDed.slCode,
-      account_name: `${crDed.groupName} / ${crDed.className} / ${crDed.glName} / ${crDed.slName}`,
+      account_code: damageIncome.slCode,
+      account_name: `${damageIncome.groupName} / ${damageIncome.className} / ${damageIncome.glName} / ${damageIncome.slName}`,
       debit:  0,
       credit: deductions,
       tenant_id:   deposit.tenant_id,
       property_id: deposit.property_id,
       unit_id:     deposit.unit_id,
-      description: `Deposit Deduction Offset – ${crDed.slName}`,
+      description: `Damage / Deduction Recovery – ${damageIncome.slName}`,
     });
-    void drDed;
+  }
+
+  // Line 3 (Credit): Selected Bank / Cash account for net refund disbursed
+  if (refundAmount > 0) {
+    let creditBank;
+    if (rawBankGl) {
+      creditBank = await resolveGlOnlyAccount(rawBankGl);
+    } else {
+      const { credit } = await resolveAccountingAccounts({
+        transactionType: 'DEPOSIT_REFUND',
+        paymentMethod:   payMethod,
+        depositType:     coaCodeToDepositType(deposit.coa_account_code),
+        propertyId:      String(resolvedPropertyId),
+        unitId:          resolvedUnitId ? String(resolvedUnitId) : undefined,
+        tenantId:        deposit.tenant_id ? String(deposit.tenant_id) : undefined,
+        leaseId:         deposit.lease_id ? String(deposit.lease_id) : undefined,
+        unitName,
+      });
+      creditBank = credit;
+    }
+
+    lines.push({
+      account_code: creditBank.slCode,
+      account_name: `${creditBank.groupName} / ${creditBank.className} / ${creditBank.glName} / ${creditBank.slName}`,
+      debit:  0,
+      credit: refundAmount,
+      tenant_id:   deposit.tenant_id,
+      property_id: deposit.property_id,
+      unit_id:     deposit.unit_id,
+      description: `Deposit Refund via ${payMethod === 'CASH' ? 'Cash' : creditBank.slName}`,
+    });
   }
 
   await postVoucher({
-    voucher_date: today,
-    voucher_type: 'Journal',
-    description:  `Settle Deposit ID ${depositId}`,
+    voucher_date:    today,
+    voucher_type:    'Payment',
+    description:     `Deposit Settlement & Refund – ID ${depositId}`,
+    reference_no:    options?.referenceNo || `DEP-REF-${numId}`,
+    idempotency_key: `DEP_SETTLE|${numId}`,
+    source_type:     'FIN_DEPOSIT_SETTLEMENT',
+    source_id:       String(numId),
+    tenant_id:       deposit.tenant_id ? String(deposit.tenant_id) : undefined,
+    property_id:     resolvedPropertyId ? String(resolvedPropertyId) : undefined,
+    unit_id:         resolvedUnitId ? String(resolvedUnitId) : undefined,
+    lease_id:        deposit.lease_id ? String(deposit.lease_id) : undefined,
     lines,
   });
 

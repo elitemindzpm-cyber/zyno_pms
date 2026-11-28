@@ -15,13 +15,14 @@ import { toast } from "sonner";
 import {
   AlertTriangle, Activity, ArrowUpRight, BarChart3, Building2, CheckCircle2, ChevronRight,
   ClipboardList, Database, Info, Link2,
-  Package, PackageCheck, Plus, RefreshCw, ShoppingCart,
+  Package, PackageCheck, Plus, Printer, RefreshCw, ShoppingCart,
   Truck, Users, Wrench, AlertOctagon, TrendingUp, Shield, Inbox,
   CreditCard, Ship, DollarSign, Star, Pencil, Trash2, Send, CheckCheck, Search, FileText, Eye,
   ArrowRight, ShieldCheck, PieChart, Layers, Clock, Upload, Download, X, CheckCircle, XCircle
 } from "lucide-react";
 import { fetchProperties, fetchUnits, type Property, type Unit } from "@/lib/db";
 import { db } from "@/lib/db";
+import { request as apiRequest } from "@/lib/api-client";
 import { FinVendorsApi, type FinVendor } from "@/lib/db-finance";
 import { nextProcurementDocumentNumber } from "@/lib/procurement/numbering";
 import { ApInvoicesApi, type ProcApInvoice, type PaymentReceipt } from "@/lib/proc-invoices-api";
@@ -1505,9 +1506,36 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
         posting_status: "POSTED",
       }).eq("id", po.id);
 
-      // Auto-create AP Invoice draft
-      const invNum = `APINV-${grnNum.replace('GRN-', '')}`;
+      // Post GRN accounting entry immediately: Dr 12800001 Stock-Inventory / Cr 21000xxx Supplier Account
       const vendorObj = vendors.find(v => String(v.id) === String(po.vendor_id));
+      let grnPostInfo: { voucher_number?: string; vendor_ledger_code?: string; vendor_ledger_name?: string } = {};
+      if (totalAccVal > 0) {
+        try {
+          const postRes: any = await apiRequest("/api/accounting/grn-post", {
+            method: "POST",
+            body: JSON.stringify({
+              grn_id: grnData.id,
+              grn_number: grnNum,
+              grn_date: new Date().toISOString().slice(0, 10),
+              vendor_id: po.vendor_id,
+              vendor_name: vendorObj?.name || getVendorName(Number(po.vendor_id)),
+              po_number: po.doc_number,
+              total_amount: totalAccVal,
+              warehouse_name: receiveForm.warehouseName,
+              remarks: receiveForm.remarks,
+            }),
+          });
+          grnPostInfo = postRes?.data || {};
+          window.dispatchEvent(new Event("finance_vouchers_updated"));
+          window.dispatchEvent(new Event("fin_custom_coa_updated"));
+        } catch (glErr: any) {
+          console.error("[handleConfirmReceive] Immediate GRN GL posting failed:", glErr);
+          toast.error(`GRN ${grnNum} saved, but GL ledger posting failed: ${glErr?.message || "Unknown GL error"}`);
+        }
+      }
+
+      // Auto-create AP Invoice draft (unpaid payable tracked against the supplier ledger)
+      const invNum = `APINV-${grnNum.replace('GRN-', '')}`;
       await ApInvoicesApi.create({
         invoice_number: invNum,
         vendor_id: po.vendor_id,
@@ -1520,10 +1548,13 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
         payment_terms: vendorObj?.payment_terms || po.payment_terms || "Net 30 Days",
         settlement_mode: vendorObj?.settlement_mode || "Bank Wire / Electronic Transfer (QNB)",
         status: "DRAFT",
-        remarks: `Auto-generated AP invoice for GRN ${grnNum}`
+        remarks: `Auto-generated AP invoice for GRN ${grnNum}${grnPostInfo.vendor_ledger_code ? ` • Ledger ${grnPostInfo.vendor_ledger_code}` : ""}`
       });
 
-      toast.success(`GRN ${grnNum} created with ${receiveForm.lines.length} line(s). AP Invoice ${invNum} drafted.`);
+      window.dispatchEvent(new Event("ap_invoices_updated"));
+      toast.success(
+        `GRN ${grnNum} completed${grnPostInfo.vendor_ledger_code ? ` & posted to ${grnPostInfo.vendor_ledger_code} (${grnPostInfo.voucher_number})` : ""}. AP Invoice ${invNum} created.`
+      );
       setShowReceiveModal(false);
       await loadAll();
     } catch (e: any) {
@@ -2166,19 +2197,16 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                                   <CheckCheck className="h-3.5 w-3.5 text-emerald-500" /> Approve Order
                                 </Button>
                               )}
-                              {po.status === "APPROVED" && (
+                              {po.status === "APPROVED" && !grn && (
                                 <>
-                                  {sh ? (
-                                    !grn ? (
-                                      <Button
-                                        size="sm"
-                                        className="h-7 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-sm"
-                                        onClick={() => openReceiveModal(po)}
-                                      >
-                                        <PackageCheck className="h-3.5 w-3.5" /> Receive (GRN)
-                                      </Button>
-                                    ) : null
-                                  ) : (
+                                  <Button
+                                    size="sm"
+                                    className="h-7 text-xs gap-1 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold shadow-sm"
+                                    onClick={() => openReceiveModal(po)}
+                                  >
+                                    <PackageCheck className="h-3.5 w-3.5" /> Receive (GRN)
+                                  </Button>
+                                  {!sh && (
                                     <Button
                                       size="sm"
                                       variant="outline"
@@ -2192,7 +2220,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                                         setShowShipmentModal(true);
                                       }}
                                     >
-                                      <Ship className="h-3 w-3" /> Create Shipment
+                                      <Ship className="h-3 w-3" /> Add Shipment (Optional)
                                     </Button>
                                   )}
                                 </>
@@ -2348,6 +2376,9 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                             <div className="flex items-center justify-end gap-1.5 flex-wrap">
                               <Button size="sm" variant="outline" className="h-7 text-xs gap-1 text-primary border-primary/40 hover:bg-primary/10" onClick={() => setViewGrn(g)}>
                                 <Eye className="h-3 w-3" /> View
+                              </Button>
+                              <Button size="sm" variant="outline" className="h-7 text-xs gap-1" onClick={() => printGrn(g)}>
+                                <Printer className="h-3 w-3" /> Print
                               </Button>
                               <Button
                                 size="sm"
@@ -5144,7 +5175,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                 <Truck className="h-4 w-4 text-cyan-600" /> Carrier &amp; Freight Forwarding Details
               </h4>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                <Field label="Carrier / Freight Forwarder *">
+                <Field label="Carrier / Freight Forwarder (optional)">
                   <Input
                     className="h-9 text-xs"
                     value={shipmentForm.carrierName}
@@ -5173,7 +5204,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
                     </SelectContent>
                   </Select>
                 </Field>
-                <Field label="Estimated Arrival Date (ETA) *">
+                <Field label="Estimated Arrival Date (ETA) (optional)">
                   <Input
                     type="date"
                     className="h-9 text-xs"
@@ -5205,7 +5236,7 @@ export function ProcurementModule({ role }: { role: "admin" | "prop-mgr" | "fina
             <Button variant="outline" onClick={() => setShowShipmentModal(false)}>Cancel</Button>
             <Button
               onClick={handleSaveShipment}
-              disabled={saving || !shipmentForm.purchaseOrderId || !shipmentForm.carrierName}
+              disabled={saving || !shipmentForm.purchaseOrderId}
               className="gap-1.5 bg-cyan-600 hover:bg-cyan-700 text-white font-semibold"
             >
               <Ship className="h-4 w-4" /> {editShipment ? "Update Shipment" : "Save & Dispatch Shipment"}

@@ -69,6 +69,9 @@ export interface PdcContextHints {
   duplicateFinIds?: number[];
   pdcsId?: string;
   status?: string;
+  bankAccountId?: string;
+  bankAccountName?: string;
+  bankAccountCode?: string;
 }
 
 export interface ParsedPdcIdentifier {
@@ -1018,16 +1021,17 @@ export async function bouncePdc(
           `PDC Pre-Clearance Dishonour – ${ctx.cheque_number}` +
           `${reason ? ` (${reason})` : ''}`,
         reference_no: `RET-${ctx.cheque_number}`,
+        idempotency_key: `PDC_BOUNCE|${pdcId}|${ctx.cheque_number}`,
         tenant_id: ctx.tenant_id,
         property_id: ctx.property_id,
         unit_id: ctx.unit_id,
         lines: [
           // Entry 1 — Reverse the bank deposit (Dr PDC In Hand / Cr Bank)
           { account_code: pdcHandAcct.slCode, account_name: `${pdcHandAcct.glName} / ${pdcHandAcct.slName}`, debit: ctx.amount, credit: 0, description: `PDC In Hand – ${pdcHandAcct.slName}` },
-          { account_code: bankAcct.slCode, account_name: `${bankAcct.glName} / ${bankAcct.slName}`, debit: 0, credit: ctx.amount, description: `Bank Account – ${bankAcct.slName}` },
+          { account_code: options?.bankAccountCode || bankAcct.slCode, account_name: options?.bankAccountName || `${bankAcct.glName} / ${bankAcct.slName}`, debit: 0, credit: ctx.amount, description: `Bank Account – ${options?.bankAccountName || bankAcct.slName}` },
           // Entry 2 — Restore tenant receivable (Dr AR / Cr PDC Received)
-          { account_code: arAcct.slCode, account_name: `${arAcct.glName} / ${arAcct.slName}`, debit: ctx.amount, credit: 0, description: `Receivable - Unit Account – ${arAcct.slName}` },
-          { account_code: custPdcAcct.slCode, account_name: `${custPdcAcct.glName} / ${custPdcAcct.slName}`, debit: 0, credit: ctx.amount, description: `Customer(PDC) - Unit Account – ${custPdcAcct.slName}` },
+          { account_code: arAcct.slCode, account_name: `${arAcct.glName} / ${arAcct.slName}`, debit: ctx.amount, credit: 0, description: `Tenant Rent Receivable – ${arAcct.slName}` },
+          { account_code: custPdcAcct.slCode, account_name: `${custPdcAcct.glName} / ${custPdcAcct.slName}`, debit: 0, credit: ctx.amount, description: `Customer(PDC) Liability – ${custPdcAcct.slName}` },
         ],
       });
     } else {
@@ -1202,18 +1206,19 @@ export async function bankTransferInPlaceOfPdc(
     const bankGlCode = bankDetails?.glCode || '12000001';
     const bankGlName = bankDetails?.accountTitle || bankDetails?.glName || 'Commercial Bank of Qatar (CBQ)';
 
-    // Step 1: Direct Bank Receipt (Debit: Selected Bank / Credit: Receivable Unit Account)
+    // Step 1: Direct Bank Receipt (Debit: Selected Bank / Credit: Tenant Rent Receivable)
     await postVoucher({
       voucher_date: dateStr,
       voucher_type: 'Receipt',
-      description: `Bank transfer received for Unit AR in place of PDC ${ctx.cheque_number} into ${bankGlName}${bankDetails?.transferRef ? ` [Ref: ${bankDetails.transferRef}]` : ''}${notes ? ` – ${notes}` : ''}`,
+      description: `Bank transfer received for Tenant Receivable in place of PDC ${ctx.cheque_number} into ${bankGlName}${bankDetails?.transferRef ? ` [Ref: ${bankDetails.transferRef}]` : ''}${notes ? ` – ${notes}` : ''}`,
       reference_no: bankDetails?.transferRef || `TRF-REC-${ctx.cheque_number}`,
+      idempotency_key: `PDC_TRF|${pdcId}|${ctx.cheque_number}|${bankDetails?.transferRef || finalAmt}`,
       tenant_id: ctx.tenant_id,
       property_id: ctx.property_id,
       unit_id: ctx.unit_id,
       lines: [
         { account_code: bankGlCode, account_name: bankGlName, debit: finalAmt, credit: 0, description: `Bank Transfer Received – ${bankGlName}` },
-        { account_code: arAcct.slCode, account_name: `${arAcct.glName} / ${arAcct.slName}`, debit: 0, credit: finalAmt, description: `Receivable - Unit Account – ${arAcct.slName}` },
+        { account_code: arAcct.slCode, account_name: `${arAcct.glName} / ${arAcct.slName}`, debit: 0, credit: finalAmt, description: `Tenant Rent Receivable – ${arAcct.slName}` },
       ],
     });
 

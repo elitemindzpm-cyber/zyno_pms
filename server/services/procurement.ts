@@ -118,6 +118,34 @@ export async function approvePayableInvoice(invoiceId: string, approverUserId: s
     if (String(inv.status) !== 'MATCHED') {
       throw new HttpError(409, `Invoice must be matched before approval (status ${inv.status})`);
     }
+    // Same authority rule as purchase orders: the approver needs a configured limit that covers the invoice.
+    const approver = await tx.employees.findFirst({ where: { user_id: approverUserId } });
+    const limit = num(approver?.approval_limit);
+    if (!approver || limit <= 0) throw new HttpError(403, 'No approval authority is configured for this user');
+    const invoiceTotal = money(num(inv.total_amount));
+    if (invoiceTotal > limit) {
+      const level = APPROVAL_LEVELS.find((l) => invoiceTotal <= l.max) ?? APPROVAL_LEVELS[APPROVAL_LEVELS.length - 1];
+      throw new HttpError(403, `User approval limit (${limit}) exceeded. Required Level: ${level.role} (up to ${level.max})`);
+    }
+    // The GRN already posted Dr Stock-Inventory / Cr Supplier. Posting the invoice to expense and AP again
+    // would book the purchase twice, so an invoice whose GRN is posted is only approved, not re-posted.
+    if (inv.goods_receipt_id) {
+      const grnRows = await tx.$queryRaw<any[]>`SELECT id, grn_number FROM proc_goods_receipts WHERE id = ${inv.goods_receipt_id} LIMIT 1`;
+      if (grnRows.length) {
+        const g = grnRows[0];
+        const posted = await tx.$queryRaw<any[]>`
+          SELECT id FROM fin_accounting_events
+           WHERE status = 'POSTED' AND idempotency_key IN (${`PROC:GRN:${g.id}`}, ${`PROC:GRN:${g.grn_number}`}) LIMIT 1`;
+        if (posted.length) {
+          await tx.proc_payable_invoices.update({
+            where: { id: invoiceId },
+            data: { status: 'APPROVED', posting_status: 'POSTED', accounting_event_id: String(posted[0].id) },
+          });
+          void approverUserId;
+          return { invoice_id: invoiceId, status: 'APPROVED', amount: money(num(inv.total_amount)), voucher: null, posted_by_grn: true };
+        }
+      }
+    }
     const lines = await tx.proc_payable_invoice_lines.findMany({ where: { payable_invoice_id: invoiceId } });
     const byAccount = new Map<string, number>();
     for (const l of lines) {

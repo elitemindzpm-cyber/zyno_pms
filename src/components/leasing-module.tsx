@@ -894,14 +894,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     if (role === "admin") return true;
     if (currentPath.startsWith("/admin")) return true;
     if (currentAuthProfile?.role === "ADMIN" || currentAuthProfile?.role === "SUPER_ADMIN") return true;
-    if (typeof window !== "undefined") {
-      try {
-        const uRole = (kvStore.getItem("zyno_user_role") || kvStore.getItem("userRole") || "").toUpperCase();
-        if (uRole === "ADMIN" || uRole === "SUPER_ADMIN" || uRole === "SUPERADMIN") return true;
-        const demo = JSON.parse(kvStore.getItem("zyno_demo_session") || "{}");
-        if (demo.role && (demo.role.toUpperCase() === "ADMIN" || demo.role.toUpperCase() === "SUPER_ADMIN")) return true;
-      } catch { }
-    }
+    // Admin status comes only from the authenticated profile above. Role and demo-session keys in the
+    // browser store are no longer trusted (they could be edited by any signed-in user).
     return false;
   }, [role, currentPath, currentAuthProfile]);
 
@@ -15257,7 +15251,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                           "Customer ID": c.customer_code || c.customerId || c.tax_identification_no || c.id,
                           "Customer Name": c.name || c.tenantName || "",
                           "Customer Type": c.type || "individual",
-                          "National ID / QID": c.qid || c.nationalId || "",
+                          "National ID / QID": c.qatarId || c.qatar_id || c.qid || c.nationalId || "",
                           "Passport No": c.passport || "",
                           "CR Number": c.crNumber || "",
                           "Mobile Phone": c.mobile || c.phone || "",

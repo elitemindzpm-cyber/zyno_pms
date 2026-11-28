@@ -1,6 +1,6 @@
 import { kvStore } from "@/lib/kv-store";
 import { COMMON_GL_ACCOUNTS, BANK_GL_ACCOUNTS, useGlAccountOptions } from "@/lib/finance/gl-account-options";
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useSearch, useNavigate } from "@tanstack/react-router";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
@@ -26,7 +26,7 @@ import {
 import {
   db,
   fetchJournalEntries, fetchARLedgers, fetchGLAccounts,
-  createJournalEntry, createAREntry, settleAREntry, createGLAccount, createCoaAccount,
+  createJournalEntry, createAREntry, settleAREntry, createGLAccount, createCoaAccount, renameCoaAccount,
   fetchERPChartOfAccounts, fetchUnitCOAs, fetchCoaHierarchyTree, fetchPropertyCoaMappings, fetchCoaSLByGL,
   fetchPropertyOptions, savePropertyCoaMapping,
   type JournalEntry, type ARLedger, type GLAccount, type ERPChartOfAccount, type UnitCOA,
@@ -477,12 +477,21 @@ function RegionSubModule() {
 
 function VendorListSubModule() {
   const [data, setData] = useState<FinVendor[]>([]);
+  const [ledgerMap, setLedgerMap] = useState<Record<string, { ledger_code: string | null; ledger_balance: number }>>({});
 
   useEffect(() => { load(); }, []);
   async function load() {
     try {
-      const res = await FinVendorsApi.fetchAll();
+      const [res, ledgersRes] = await Promise.all([
+        FinVendorsApi.fetchAll(),
+        apiRequest<{ data: Array<{ vendor_id: number; vendor_name: string; ledger_code: string | null; ledger_balance: number }> }>("/api/accounting/vendors/ledgers").catch(() => ({ data: [] })),
+      ]);
       setData(res || []);
+      const map: Record<string, { ledger_code: string | null; ledger_balance: number }> = {};
+      (ledgersRes?.data || []).forEach((r) => {
+        map[String(r.vendor_id)] = { ledger_code: r.ledger_code, ledger_balance: r.ledger_balance };
+      });
+      setLedgerMap(map);
     } catch {
       setData([]);
     }
@@ -493,7 +502,7 @@ function VendorListSubModule() {
       <div className="flex justify-between items-center">
         <div>
           <h3 className="text-sm font-semibold">Vendor Master Register</h3>
-          <p className="text-xs text-muted-foreground">Supplier and service provider accounts linked to AP invoices (Read-Only).</p>
+          <p className="text-xs text-muted-foreground">Supplier and service provider accounts linked to AP sub-ledgers (21000101+).</p>
         </div>
         <div className="rounded-md border border-cyan-200 bg-cyan-50 dark:bg-cyan-950/20 dark:border-cyan-900 px-3 py-1.5 text-xs text-cyan-900 dark:text-cyan-300">
           Managed under <strong>Procurement → Vendors</strong>
@@ -502,18 +511,22 @@ function VendorListSubModule() {
 
       <div className="border rounded-lg overflow-hidden bg-card">
         <Table>
-          <TableHeader><TableRow className="bg-muted/50 text-xs"><TableHead className="font-bold">Code</TableHead><TableHead className="font-bold">Vendor Name</TableHead><TableHead className="font-bold">Contact Person</TableHead><TableHead className="font-bold">Phone / Email</TableHead><TableHead className="font-bold">Tax / CR No</TableHead><TableHead className="font-bold">Status</TableHead></TableRow></TableHeader>
+          <TableHeader><TableRow className="bg-muted/50 text-xs"><TableHead className="font-bold">Code</TableHead><TableHead className="font-bold">Ledger Code</TableHead><TableHead className="font-bold">Vendor Name</TableHead><TableHead className="font-bold">Contact Person</TableHead><TableHead className="font-bold">Phone / Email</TableHead><TableHead className="font-bold">Payable Balance</TableHead><TableHead className="font-bold">Status</TableHead></TableRow></TableHeader>
           <TableBody>
-            {data.map((row) => (
-              <TableRow key={row.id} className="hover:bg-muted/30 text-xs">
-                <TableCell className="font-mono text-xs font-bold text-primary">{row.code}</TableCell>
-                <TableCell className="font-semibold text-xs">{row.name}</TableCell>
-                <TableCell className="text-xs">{row.contact_person || "—"}</TableCell>
-                <TableCell className="text-xs">{[row.phone, row.email].filter(Boolean).join(" • ") || "—"}</TableCell>
-                <TableCell className="text-xs font-mono">{row.tax_number || "—"}</TableCell>
-                <TableCell className="text-xs"><Badge variant={row.status === "Active" ? "default" : "secondary"}>{row.status || "Active"}</Badge></TableCell>
-              </TableRow>
-            ))}
+            {data.map((row) => {
+              const info = ledgerMap[String(row.id)];
+              return (
+                <TableRow key={row.id} className="hover:bg-muted/30 text-xs">
+                  <TableCell className="font-mono text-xs font-bold text-primary">{row.code}</TableCell>
+                  <TableCell className="font-mono text-xs font-semibold text-amber-700">{info?.ledger_code || "Pending"}</TableCell>
+                  <TableCell className="font-semibold text-xs">{row.name}</TableCell>
+                  <TableCell className="text-xs">{row.contact_person || "—"}</TableCell>
+                  <TableCell className="text-xs">{[row.phone, row.email].filter(Boolean).join(" • ") || "—"}</TableCell>
+                  <TableCell className="text-xs font-mono font-semibold">QAR {Number(info?.ledger_balance || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</TableCell>
+                  <TableCell className="text-xs"><Badge variant={row.status === "Active" ? "default" : "secondary"}>{row.status || "Active"}</Badge></TableCell>
+                </TableRow>
+              );
+            })}
           </TableBody>
         </Table>
       </div>
@@ -1979,6 +1992,37 @@ function ChartOfAccountsSubModule() {
   const [open, setOpen] = useState(false);
   const [savingCoa, setSavingCoa] = useState(false);
   const [form, setForm] = useState(emptyCoaForm);
+  const [renameTarget, setRenameTarget] = useState<{ code: string; name: string; level: 'GL' | 'SL'; glCode?: string } | null>(null);
+  const [renameValue, setRenameValue] = useState("");
+  const [savingRename, setSavingRename] = useState(false);
+
+  async function handleRenameSubmit() {
+    if (!renameTarget) return;
+    const trimmed = renameValue.trim();
+    if (!trimmed) {
+      toast.error("Ledger name cannot be empty.");
+      return;
+    }
+    setSavingRename(true);
+    try {
+      await renameCoaAccount({ code: renameTarget.code, name: trimmed, level: renameTarget.level });
+      window.dispatchEvent(new Event("fin_custom_coa_updated"));
+      toast.success(`Renamed ${renameTarget.code} to "${trimmed}"`);
+      const refreshGl = renameTarget.glCode || (renameTarget.level === 'GL' ? renameTarget.code : undefined);
+      setRenameTarget(null);
+      await loadData();
+      if (refreshGl) {
+        try {
+          const freshSls = await fetchCoaSLByGL(refreshGl);
+          setGlSLs(prev => ({ ...prev, [refreshGl]: freshSls }));
+        } catch {}
+      }
+    } catch (e: any) {
+      toast.error(e.message || "Failed to rename ledger account");
+    } finally {
+      setSavingRename(false);
+    }
+  }
 
   const defaultCoaTypes = [
     { code: "1", name: "Assets" },
@@ -2488,6 +2532,20 @@ function ChartOfAccountsSubModule() {
                                                         Property Req
                                                       </Badge>
                                                     )}
+                                                    <Button
+                                                      type="button"
+                                                      size="sm"
+                                                      variant="ghost"
+                                                      className="h-6 w-6 p-0 text-muted-foreground hover:text-primary"
+                                                      title="Rename GL ledger"
+                                                      onClick={(e) => {
+                                                        e.stopPropagation();
+                                                        setRenameTarget({ code: gl.code, name: gl.name, level: 'GL' });
+                                                        setRenameValue(gl.name);
+                                                      }}
+                                                    >
+                                                      <Pencil className="h-3 w-3" />
+                                                    </Button>
                                                   </div>
                                                 </div>
 
@@ -2514,7 +2572,22 @@ function ChartOfAccountsSubModule() {
                                                                 <span className="font-mono font-bold text-blue-600">{sl.code}</span>
                                                                 <span className="text-foreground">{sl.name}</span>
                                                               </div>
-                                                              <span className="text-[10px] text-muted-foreground font-mono">GL: {sl.gl_code}</span>
+                                                              <div className="flex items-center gap-2">
+                                                                <span className="text-[10px] text-muted-foreground font-mono">GL: {sl.gl_code}</span>
+                                                                <Button
+                                                                  type="button"
+                                                                  size="sm"
+                                                                  variant="ghost"
+                                                                  className="h-6 w-6 p-0 text-muted-foreground hover:text-primary"
+                                                                  title="Rename sub-ledger"
+                                                                  onClick={() => {
+                                                                    setRenameTarget({ code: sl.code, name: sl.name, level: 'SL', glCode: sl.gl_code });
+                                                                    setRenameValue(sl.name);
+                                                                  }}
+                                                                >
+                                                                  <Pencil className="h-3 w-3" />
+                                                                </Button>
+                                                              </div>
                                                             </div>
                                                           ))}
                                                         </div>
@@ -2557,6 +2630,7 @@ function ChartOfAccountsSubModule() {
                 <TableHead className="font-bold whitespace-nowrap">GL NAME</TableHead>
                 <TableHead className="font-bold whitespace-nowrap">SL</TableHead>
                 <TableHead className="font-bold whitespace-nowrap">SL NAME</TableHead>
+                <TableHead className="font-bold whitespace-nowrap text-right">ACTIONS</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -2581,6 +2655,22 @@ function ChartOfAccountsSubModule() {
                   <TableCell className="font-medium">{acc.gl_name || '—'}</TableCell>
                   <TableCell className="font-mono font-bold text-primary">{acc.sl_code || acc.code}</TableCell>
                   <TableCell className="font-medium">{acc.sl_name || acc.name}</TableCell>
+                  <TableCell className="text-right">
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      className="h-7 px-2 text-xs gap-1 text-muted-foreground hover:text-primary"
+                      onClick={() => {
+                        const code = acc.sl_code || acc.code;
+                        const currentName = acc.sl_name || acc.name;
+                        setRenameTarget({ code, name: currentName, level: acc.sl_code ? 'SL' : 'GL', glCode: acc.gl_code || undefined });
+                        setRenameValue(currentName);
+                      }}
+                    >
+                      <Pencil className="h-3 w-3" /> Edit
+                    </Button>
+                  </TableCell>
                 </TableRow>
               ))}
             </TableBody>
@@ -3038,6 +3128,42 @@ function ChartOfAccountsSubModule() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!renameTarget} onOpenChange={(v) => { if (!v) { setRenameTarget(null); setSavingRename(false); } }}>
+        <DialogContent className="max-w-md bg-card">
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2 text-sm">
+              <Pencil className="h-4 w-4 text-primary" />
+              Rename Ledger Account
+            </DialogTitle>
+            <DialogDescription className="text-xs">
+              Update the ledger name for account <span className="font-mono font-semibold text-foreground">{renameTarget?.code}</span> ({renameTarget?.level}).
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-3 py-2 text-xs">
+            <div className="space-y-1">
+              <Label className="text-[11px] font-semibold">Account Code</Label>
+              <Input className="h-8 text-xs font-mono bg-muted" value={renameTarget?.code || ""} readOnly />
+            </div>
+            <div className="space-y-1">
+              <Label className="text-[11px] font-semibold">Ledger Name *</Label>
+              <Input
+                className="h-8 text-xs"
+                value={renameValue}
+                onChange={(e) => setRenameValue(e.target.value)}
+                placeholder="Enter updated ledger name"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setRenameTarget(null)} disabled={savingRename}>Cancel</Button>
+            <Button onClick={handleRenameSubmit} disabled={savingRename || !renameValue.trim()}>
+              {savingRename && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
+              Save Name
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
@@ -3140,7 +3266,7 @@ function JournalLedgerSubModule() {
         property_name: l.property,
         description: l.description || form.narration,
       })),
-    });
+    }, { skipDbPersist: true });
 
     const newJE = {
       id: form.je_no,
@@ -3404,12 +3530,13 @@ function JournalLedgerSubModule() {
                           </Select>
                         </td>
                         <td className="py-2 px-2">
-                          <Select value={line.account} onValueChange={v => setJeLines(lines => lines.map((l, i) => i === idx ? { ...l, account: v } : l))}>
-                            <SelectTrigger className="h-8 text-xs font-mono"><SelectValue /></SelectTrigger>
-                            <SelectContent>
-                              {COMMON_GL_ACCOUNTS.map(a => <SelectItem key={a.code} value={a.name} className="text-xs font-mono">{a.name}</SelectItem>)}
-                            </SelectContent>
-                          </Select>
+                          <SearchableSelect
+                            value={line.account}
+                            onValueChange={v => setJeLines(lines => lines.map((l, i) => i === idx ? { ...l, account: v } : l))}
+                            options={COMMON_GL_ACCOUNTS.map(a => ({ label: a.name, value: a.name }))}
+                            placeholder="Select GL Account..."
+                            emptyText="No matching GL account"
+                          />
                         </td>
                         <td className="py-2 px-2">
                           <Select value={line.property} onValueChange={v => setJeLines(lines => lines.map((l, i) => i === idx ? { ...l, property: v } : l))}>
@@ -3545,7 +3672,7 @@ function CreditDebitBuilderSubModule() {
         }
         return res;
       }),
-    });
+    }, { skipDbPersist: true });
 
     toast.success(`Journal voucher ${jeNo} (QAR ${totalDebit.toLocaleString()}) built & posted successfully!`);
     setLines([
@@ -3567,12 +3694,13 @@ function CreditDebitBuilderSubModule() {
         {lines.map((l, idx) => (
           <div key={idx} className="grid grid-cols-1 sm:grid-cols-12 gap-2 items-center text-xs">
             <div className="sm:col-span-4">
-              <Select value={l.account} onValueChange={v => { const next = [...lines]; next[idx].account = v; setLines(next); }}>
-                <SelectTrigger className="h-8 text-xs font-mono"><SelectValue placeholder="Select GL Account" /></SelectTrigger>
-                <SelectContent>
-                  {COMMON_GL_ACCOUNTS.map(a => <SelectItem key={a.code} value={a.name} className="text-xs font-mono">{a.name}</SelectItem>)}
-                </SelectContent>
-              </Select>
+              <SearchableSelect
+                value={l.account}
+                onValueChange={v => { const next = [...lines]; next[idx].account = v; setLines(next); }}
+                options={COMMON_GL_ACCOUNTS.map(a => ({ label: a.name, value: a.name }))}
+                placeholder="Select GL Account..."
+                emptyText="No matching GL account"
+              />
             </div>
             <div className="sm:col-span-3">
               <Select value={l.property} onValueChange={v => { const next = [...lines]; next[idx].property = v; setLines(next); }}>
@@ -4417,45 +4545,44 @@ function PayableInvoiceSubModule() {
     if (!payTarget) return;
     try {
       const isCash = payForm.paymentMethod.includes("Cash") || payForm.paymentMethod.includes("Petty");
-      const crCode = isCash ? "12100001" : "12000001";
-      const crName = isCash ? "Cash in Hand / Operating Cash" : "Bank Operating Account (QNB)";
+      const bankOpt = !isCash
+        ? BANK_GL_ACCOUNTS.find((b) => payForm.disbursingBank?.includes(b.code) || payForm.disbursingBank?.toLowerCase().includes("cbq") && b.name.toLowerCase().includes("cbq"))
+          || BANK_GL_ACCOUNTS[0]
+        : null;
+      const crCode = isCash ? "12100001" : (bankOpt?.code || "12000001");
 
-      // Update ApInvoicesApi with invoice ID or invoice_no
-      const targetId = payTarget.raw?.id || payTarget.id || payTarget.invoice_no;
-      await ApInvoicesApi.update(targetId, {
-        invoice_number: payTarget.invoice_no,
-        status: "PAID",
-        amount_paid: payTarget.amount,
-        posting_status: "POSTED",
-        payment_method: payForm.paymentMethod,
-        payment_reference: payForm.transactionReference,
+      const targetId = payTarget.raw?.id || payTarget.id || undefined;
+      const payRes: any = await apiRequest("/api/accounting/vendor-payment", {
+        method: "POST",
+        body: JSON.stringify({
+          vendor_id: payTarget.raw?.vendor_id || payTarget.vendor,
+          vendor_name: payTarget.vendor,
+          payment_date: payForm.paymentDate,
+          payment_method: isCash ? "Cash" : payForm.paymentMethod,
+          bank_gl_code: crCode,
+          reference_no: payForm.transactionReference,
+          property_name: payTarget.property || payTarget.raw?.property || undefined,
+          narration: `Vendor Settlement — ${payTarget.invoice_no} (${payTarget.vendor})`,
+          total_amount: payTarget.amount,
+          allocations: [
+            {
+              invoice_id: targetId && targetId !== payTarget.invoice_no ? String(targetId) : undefined,
+              invoice_number: payTarget.invoice_no,
+              grn_number: payTarget.raw?.grn_number || undefined,
+              amount: payTarget.amount,
+            },
+          ],
+        }),
       });
 
-      // Add Payment Voucher into Finance Store
-      const suffix = payTarget.invoice_no.replace('APINV-', '').replace('INV-AP-', '').replace('INV-', '');
-      const pvNo = `PV-${suffix}`;
-      addVoucher({
-        voucher_no: pvNo,
-        voucher_type: "Payment Voucher",
-        date: payForm.paymentDate,
-        name: `Vendor Settlement — ${payTarget.invoice_no} (${payTarget.vendor})`,
-        debit: "Trade Payables - Vendors (Sundry Creditors)",
-        debit_code: "21000",
-        credit: crName,
-        credit_code: crCode,
-        amount: payTarget.amount,
-        method: isCash ? "Cash" : "Bank Transfer",
-        property_name: payTarget.property || payTarget.raw?.property || "Al Ameen Real Estate Head Office",
-        unit_ref: payTarget.raw?.unit_ref || payTarget.po_number || "Corporate Head Office",
-        tenant_name: payTarget.vendor,
-      });
+      const pvNo = payRes?.data?.voucher_number || `PV-${payTarget.invoice_no}`;
 
-      // Trigger cross-module updates
+      // Trigger cross-module updates without duplicate voucher creation
       window.dispatchEvent(new Event("finance_vouchers_updated"));
       window.dispatchEvent(new Event("ap_invoices_updated"));
       window.dispatchEvent(new Event("pms_vendor_invoices_updated"));
 
-      toast.success(`Payment of QAR ${payTarget.amount.toLocaleString()} settled. Payment Voucher ${pvNo} posted to GL.`);
+      toast.success(`Payment of QAR ${payTarget.amount.toLocaleString()} settled. Payment Voucher ${pvNo} posted to ${payRes?.data?.vendor_gl_code || "Supplier Ledger"}.`);
       setPayTarget(null);
       await loadInvoices();
     } catch (e: any) {
@@ -5027,6 +5154,32 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
   const { vouchers: sharedVouchers, setVouchers: setSharedVouchers, leases, units } = useAppData();
   const { addVoucher: addFinanceStoreVoucher } = useFinanceStore();
   const [open, setOpen] = useState(false);
+  const submitLockRef = useRef(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [paymentMode, setPaymentMode] = useState<"supplier" | "manual">("supplier");
+  const [vendors, setVendors] = useState<FinVendor[]>([]);
+  const [selectedVendorKey, setSelectedVendorKey] = useState<string>("");
+  const [vendorLedgerInfo, setVendorLedgerInfo] = useState<{
+    vendor_gl_code: string | null;
+    vendor_gl_name: string;
+    ledger_balance: number;
+  }>({ vendor_gl_code: null, vendor_gl_name: "", ledger_balance: 0 });
+  const [openApItems, setOpenApItems] = useState<Array<{
+    id: string;
+    invoice_number: string;
+    grn_number: string | null;
+    po_number: string | null;
+    invoice_date: string | null;
+    total_amount: number;
+    paid_amount: number;
+    remaining_amount: number;
+    status: string;
+  }>>([]);
+  const [loadingVendorItems, setLoadingVendorItems] = useState(false);
+  const [selectedAllocs, setSelectedAllocs] = useState<Record<string, { checked: boolean; amount: string }>>({});
+  const [unallocatedPayAmount, setUnallocatedPayAmount] = useState<string>("");
+  const [paymentBankGl, setPaymentBankGl] = useState<string>("12000001 - Bank");
+
   const [form, setForm] = useState({
     voucher_no: `VCH-${type.slice(0, 3).toUpperCase()}-${Math.floor(1000 + Math.random() * 9000)}`,
     date: new Date().toISOString().split("T")[0],
@@ -5038,6 +5191,67 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
     amount: "",
     method: type === "Payment Voucher" ? "Bank Transfer" : type === "Receipt Voucher" ? "Bank Transfer" : "Batch",
   });
+
+  useEffect(() => {
+    if (type !== "Payment Voucher") return;
+    FinVendorsApi.fetchAll().then((list) => setVendors(list || [])).catch(() => setVendors([]));
+  }, [type]);
+
+  useEffect(() => {
+    if (type !== "Payment Voucher") return;
+    if (BANK_GL_ACCOUNTS.length > 0 && (!paymentBankGl || paymentBankGl === "12000001 - Bank")) {
+      setPaymentBankGl(BANK_GL_ACCOUNTS[0].name);
+    }
+  }, [type, BANK_GL_ACCOUNTS.length]);
+
+  const loadVendorOpenItems = useCallback(async (vendorKey: string) => {
+    if (!vendorKey) {
+      setOpenApItems([]);
+      setSelectedAllocs({});
+      setVendorLedgerInfo({ vendor_gl_code: null, vendor_gl_name: "", ledger_balance: 0 });
+      return;
+    }
+    const vendor = vendors.find((v) => String(v.id) === vendorKey || v.code === vendorKey || v.name === vendorKey);
+    setLoadingVendorItems(true);
+    try {
+      const qs = new URLSearchParams();
+      if (vendor?.id) qs.set("vendor_id", String(vendor.id));
+      if (vendor?.name || vendorKey) qs.set("vendor_name", vendor?.name || vendorKey);
+      const res = await apiRequest<{
+        data: {
+          vendor_gl_code: string | null;
+          vendor_gl_name: string;
+          ledger_balance: number;
+          items: any[];
+        };
+      }>(`/api/accounting/vendor-open-items?${qs.toString()}`);
+      const d = res?.data;
+      setVendorLedgerInfo({
+        vendor_gl_code: d?.vendor_gl_code ?? null,
+        vendor_gl_name: d?.vendor_gl_name || vendor?.name || vendorKey,
+        ledger_balance: Number(d?.ledger_balance || 0),
+      });
+      const openOnly = (d?.items || []).filter((it) => Number(it.remaining_amount || 0) > 0.005);
+      setOpenApItems(openOnly);
+      setSelectedAllocs({});
+    } catch {
+      setOpenApItems([]);
+    } finally {
+      setLoadingVendorItems(false);
+    }
+  }, [vendors]);
+
+  const selectedInvoicePayTotal = useMemo(() => {
+    return Object.entries(selectedAllocs).reduce((sum, [, entry]) => {
+      if (!entry.checked) return sum;
+      return sum + (parseFloat(entry.amount) || 0);
+    }, 0);
+  }, [selectedAllocs]);
+
+  const anyInvoiceChecked = useMemo(
+    () => Object.values(selectedAllocs).some((e) => e.checked),
+    [selectedAllocs],
+  );
 
   // Extract distinct properties
   const propertiesList = useMemo(() => {
@@ -5052,12 +5266,14 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
     ? leases.find(lease => lease.id === form.leaseId)
     : undefined;
   const debitAccountOptions = type === "Receipt Voucher"
-    ? [...BANK_GL_ACCOUNTS, { code: "12100001", name: "12100001 - Cash In Hand / Operating Cash" }]
+    ? [...BANK_GL_ACCOUNTS, { code: "12100001", name: "12100001 - Cash In Hand" }, { code: "12100002", name: "12100002 - Petty Cash" }]
     : COMMON_GL_ACCOUNTS;
   // Receipt Vouchers settle AR (12413001) or specific non-AR streams; block 41100 Rental Revenue double-counting.
   const creditAccountOptions = type === "Receipt Voucher"
     ? COMMON_GL_ACCOUNTS.filter(a => a.code !== "41100" && a.code !== "41100001")
-    : COMMON_GL_ACCOUNTS;
+    : type === "Payment Voucher"
+      ? [...BANK_GL_ACCOUNTS, { code: "12100001", name: "12100001 - Cash In Hand" }, { code: "12100002", name: "12100002 - Petty Cash" }, ...COMMON_GL_ACCOUNTS.filter(a => !a.code.startsWith("12000") && a.code !== "12100001" && a.code !== "12100002")]
+      : COMMON_GL_ACCOUNTS;
 
   // Multi-line state for Journal Voucher
   type JournalLine = {
@@ -5070,8 +5286,8 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
   };
 
   const [journalLines, setJournalLines] = useState<JournalLine[]>([
-    { id: "1", type: "DR", account: "51004001 - Repair and Maintenance Cost", property: propertiesList[0] || "All / Corporate", amount: "5000", description: "Repair expenses" },
-    { id: "2", type: "CR", account: "12100 - Cash In Hand (Office Vault)", property: propertiesList[0] || "All / Corporate", amount: "5000", description: "Cash disbursement" },
+    { id: "1", type: "DR", account: "", property: propertiesList[0] || "All / Corporate", amount: "0", description: "" },
+    { id: "2", type: "CR", account: "", property: propertiesList[0] || "All / Corporate", amount: "0", description: "" },
   ]);
 
   const totalDr = useMemo(() => {
@@ -5092,13 +5308,84 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
 
   const filtered = (sharedVouchers || []).filter(v => {
     if (type.includes("Journal")) return v.method === "Batch" || v.name.includes("Income") || v.name.includes("Doc") || v.name.includes("Journal") || (v as any).voucher_type === "Journal Voucher";
-    if (type.includes("Payment")) return v.name.includes("Payment") || v.name.includes("Refund") || v.debit.includes("Payable");
-    if (type.includes("Receipt")) return v.name.includes("Receipt") || v.name.includes("Direct Rent Collection") || v.method === "PDC" || v.method === "Cash" || v.credit.includes("Income") || v.credit.includes("Receivables");
+    if (type.includes("Payment")) return (v as any).voucher_type === "Payment Voucher" || v.name.includes("Payment") || v.name.includes("Refund") || v.debit.includes("Payable");
+    if (type.includes("Receipt")) return (v as any).voucher_type === "Receipt Voucher" || v.name.includes("Receipt") || v.name.includes("Direct Rent Collection") || v.method === "PDC" || v.method === "Cash" || v.credit.includes("Income") || v.credit.includes("Receivables");
     return true;
   });
 
   async function handleAdd() {
+    if (submitLockRef.current) return;
     const accountCode = (label: string) => label.trim().split(/\s+/)[0];
+
+    if (type === "Payment Voucher" && paymentMode === "supplier") {
+      if (!selectedVendorKey) {
+        toast.error("Please select a Supplier / Vendor.");
+        return;
+      }
+      const vendor = vendors.find((v) => String(v.id) === selectedVendorKey || v.code === selectedVendorKey || v.name === selectedVendorKey);
+      const allocations = Object.entries(selectedAllocs)
+        .filter(([, entry]) => entry.checked && (parseFloat(entry.amount) || 0) > 0)
+        .map(([invNo, entry]) => {
+          const item = openApItems.find((i) => i.invoice_number === invNo);
+          return {
+            invoice_id: item?.id,
+            invoice_number: invNo,
+            grn_number: item?.grn_number || undefined,
+            amount: parseFloat(entry.amount) || 0,
+          };
+        });
+
+      const payTotal = allocations.length > 0
+        ? Math.round(allocations.reduce((s, a) => s + a.amount, 0) * 100) / 100
+        : (parseFloat(unallocatedPayAmount) || 0);
+
+      if (payTotal <= 0) {
+        toast.error("Enter a positive payment amount or select at least one GRN / invoice to pay.");
+        return;
+      }
+
+      const bankGlCode = form.method === "Cash" && !paymentBankGl.startsWith("12100")
+        ? "12100001"
+        : accountCode(paymentBankGl || "12000001");
+
+      submitLockRef.current = true;
+      setSubmitting(true);
+      try {
+        const res = await apiRequest<{ data: { voucher_id: string | null; voucher_number: string; vendor_gl_code: string; vendor_gl_name: string; remaining_ledger_balance: number; closed_all: boolean } }>("/api/accounting/vendor-payment", {
+          method: "POST",
+          body: JSON.stringify({
+            vendor_id: vendor?.id ?? selectedVendorKey,
+            vendor_name: vendor?.name ?? vendorLedgerInfo.vendor_gl_name,
+            payment_date: form.date,
+            payment_method: form.method,
+            bank_gl_code: bankGlCode,
+            reference_no: form.voucher_no,
+            idempotency_key: form.voucher_no,
+            property_name: form.property && form.property !== "All / Corporate" ? form.property : undefined,
+            narration: form.name.trim() || undefined,
+            total_amount: payTotal,
+            allocations,
+          }),
+        });
+        const d = res.data;
+        window.dispatchEvent(new Event("finance_vouchers_updated"));
+        window.dispatchEvent(new Event("ap_invoices_updated"));
+        window.dispatchEvent(new Event("pms_vendor_invoices_updated"));
+        toast.success(
+          `Payment Voucher ${d.voucher_number} posted (Dr ${d.vendor_gl_code} / Cr ${bankGlCode}).${d.closed_all ? " Vendor balance settled to 0 — all open GRNs closed!" : ` Remaining payable: QAR ${d.remaining_ledger_balance.toLocaleString()}`}`
+        );
+        setOpen(false);
+        setSelectedAllocs({});
+        setUnallocatedPayAmount("");
+        void loadVendorOpenItems(selectedVendorKey);
+      } catch (error: any) {
+        toast.error(error?.message || "Failed to post Supplier Payment Voucher.");
+      } finally {
+        submitLockRef.current = false;
+        setSubmitting(false);
+      }
+      return;
+    }
 
     if (type === "Journal Voucher") {
       if (!isBalanced) {
@@ -5372,7 +5659,7 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
       </div>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className={type === "Journal Voucher" ? "sm:max-w-5xl w-[95vw] max-h-[90vh] overflow-y-auto" : "max-w-md"}>
+        <DialogContent className={type === "Journal Voucher" ? "sm:max-w-5xl w-[95vw] max-h-[90vh] overflow-y-auto" : type === "Payment Voucher" ? "sm:max-w-4xl w-[95vw] max-h-[90vh] overflow-y-auto" : "max-w-md"}>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2 text-base font-bold text-foreground">
               <FileText className="h-5 w-5 text-primary" />
@@ -5381,33 +5668,54 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
             <DialogDescription className="text-xs text-muted-foreground">
               {type === "Journal Voucher"
                 ? "Add multi-line debit and credit entries with individual line descriptions and property tagging."
-                : `Enter voucher details and post double-entry record.`}
+                : type === "Payment Voucher"
+                  ? "Pay one or multiple supplier GRNs / invoices (full or partial), post an on-account partial payment, or create a manual GL payment."
+                  : `Enter voucher details and post double-entry record.`}
             </DialogDescription>
           </DialogHeader>
 
           <div className="space-y-4 py-1 text-xs">
-            {/* Top Row: Date, Voucher #, Property */}
+            {type === "Payment Voucher" && (
+              <div className="flex items-center gap-2 p-1 rounded-md bg-muted w-fit">
+                <button
+                  type="button"
+                  onClick={() => setPaymentMode("supplier")}
+                  className={`px-3 py-1 rounded text-xs font-semibold transition-all ${paymentMode === "supplier" ? "bg-background shadow-xs text-foreground" : "text-muted-foreground"}`}
+                >
+                  Supplier / Multi-Invoice Payment
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setPaymentMode("manual")}
+                  className={`px-3 py-1 rounded text-xs font-semibold transition-all ${paymentMode === "manual" ? "bg-background shadow-xs text-foreground" : "text-muted-foreground"}`}
+                >
+                  Manual GL Payment
+                </button>
+              </div>
+            )}
+
+            {/* Top Row: Date, Voucher #, Property (Optional on Payment Voucher) */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
               <div>
                 <Label className="text-[11px] font-semibold">Entry Date *</Label>
                 <Input type="date" className="h-8 text-xs bg-background" value={form.date} onChange={e => setForm({ ...form, date: e.target.value })} />
               </div>
               <div>
-                <Label className="text-[11px] font-semibold">Voucher # *</Label>
+                <Label className="text-[11px] font-semibold">Voucher / Reference # *</Label>
                 <Input className="h-8 text-xs font-mono font-bold bg-background" value={form.voucher_no} onChange={e => setForm({ ...form, voucher_no: e.target.value })} />
               </div>
               <div>
                 <Label className="text-[11px] font-semibold flex items-center gap-1">
-                  <Building2 className="h-3.5 w-3.5 text-primary" /> Related Property / Vehicle Cost Center
+                  <Building2 className="h-3.5 w-3.5 text-primary" /> {type === "Payment Voucher" ? "Property (Optional)" : "Related Property / Vehicle Cost Center"}
                 </Label>
                 <Select
                   value={form.property}
                   onValueChange={v => setForm({ ...form, property: v })}
                   disabled={type === "Receipt Voucher" && !!selectedReceiptLease}
                 >
-                  <SelectTrigger className="h-8 text-xs bg-background"><SelectValue placeholder="Select Property or Vehicle Cost Center" /></SelectTrigger>
+                  <SelectTrigger className="h-8 text-xs bg-background"><SelectValue placeholder={type === "Payment Voucher" ? "Not property-specific (Optional)" : "Select Property or Vehicle Cost Center"} /></SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="All / Corporate">All / Corporate Office</SelectItem>
+                    <SelectItem value="All / Corporate">All / Not Property-Specific</SelectItem>
                     {COMPANY_VEHICLE_COST_CENTERS.map(veh => (
                       <SelectItem key={veh.code} value={veh.name}>
                         🚗 Vehicle No: {veh.vehicleNo} — {veh.vehicleName} ({veh.brandName}{veh.model && veh.model !== "—" ? ` ${veh.model}` : ""})
@@ -5527,23 +5835,15 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
                             </Select>
                           </td>
                           <td className="py-2 px-2">
-                            <Select
+                            <SearchableSelect
                               value={line.account}
                               onValueChange={(val) => {
                                 setJournalLines(lines => lines.map((l, i) => i === idx ? { ...l, account: val } : l));
                               }}
-                            >
-                              <SelectTrigger className="h-8 text-xs font-mono w-full">
-                                <SelectValue />
-                              </SelectTrigger>
-                              <SelectContent>
-                                {COMMON_GL_ACCOUNTS.map(a => (
-                                  <SelectItem key={a.code} value={a.name} className="text-xs font-mono">
-                                    {a.name}
-                                  </SelectItem>
-                                ))}
-                              </SelectContent>
-                            </Select>
+                              options={COMMON_GL_ACCOUNTS.map(a => ({ label: a.name, value: a.name }))}
+                              placeholder="Select GL Account..."
+                              emptyText="No matching GL account"
+                            />
                           </td>
                           <td className="py-2 px-2">
                             <Select
@@ -5653,27 +5953,206 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
                   </div>
                 )}
               </div>
-            ) : (
-              /* Single Debit & Credit for Payment / Receipt Voucher */
-              <>
-                <div className="grid grid-cols-2 gap-3">
+            ) : type === "Payment Voucher" && paymentMode === "supplier" ? (
+              /* Multi-Invoice / Multi-GRN & Partial Supplier Payment Mode */
+              <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                   <div>
-                    <Label className="text-[11px] font-semibold">Debit GL Account</Label>
-                    <Select value={form.debit} onValueChange={v => setForm({ ...form, debit: v })}>
-                      <SelectTrigger className="h-8 text-xs font-mono bg-background"><SelectValue /></SelectTrigger>
+                    <Label className="text-[11px] font-semibold">Supplier / Vendor *</Label>
+                    <SearchableSelect
+                      value={selectedVendorKey}
+                      placeholder="Select supplier..."
+                      emptyText="No vendors found"
+                      options={vendors.map(v => ({ label: `${v.name} (${v.code})`, value: String(v.id) }))}
+                      onValueChange={(val) => {
+                        setSelectedVendorKey(val);
+                        setUnallocatedPayAmount("");
+                        void loadVendorOpenItems(val);
+                      }}
+                    />
+                  </div>
+                  <div>
+                    <Label className="text-[11px] font-semibold">Payment Method</Label>
+                    <Select value={form.method} onValueChange={v => {
+                      setForm(current => ({ ...current, method: v }));
+                      if (v === "Cash") setPaymentBankGl("12100001 - Cash In Hand");
+                      else if (paymentBankGl.startsWith("12100") && BANK_GL_ACCOUNTS[0]) setPaymentBankGl(BANK_GL_ACCOUNTS[0].name);
+                    }}>
+                      <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
                       <SelectContent>
-                        {debitAccountOptions.map(a => <SelectItem key={a.code} value={a.name} className="text-xs font-mono">{a.name}</SelectItem>)}
+                        <SelectItem value="Bank Transfer">Bank Transfer</SelectItem>
+                        <SelectItem value="Cheque">Cheque</SelectItem>
+                        <SelectItem value="Cash">Cash</SelectItem>
                       </SelectContent>
                     </Select>
                   </div>
                   <div>
+                    <Label className="text-[11px] font-semibold">Disbursing Bank / Cash Account *</Label>
+                    <SearchableSelect
+                      value={paymentBankGl}
+                      placeholder="Select Bank / Cash GL..."
+                      emptyText="No matching bank/cash account"
+                      options={[
+                        ...BANK_GL_ACCOUNTS,
+                        { code: "12100001", name: "12100001 - Cash In Hand" },
+                        { code: "12100002", name: "12100002 - Petty Cash" },
+                      ].map(a => ({ label: a.name, value: a.name }))}
+                      onValueChange={setPaymentBankGl}
+                    />
+                  </div>
+                </div>
+
+                {selectedVendorKey && (
+                  <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
+                    <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+                      <div className="flex items-center gap-2">
+                        <span className="font-semibold text-foreground">{vendorLedgerInfo.vendor_gl_name}</span>
+                        <Badge variant="outline" className="font-mono text-[10px] text-amber-700 border-amber-300 bg-amber-50">
+                          Supplier GL: {vendorLedgerInfo.vendor_gl_code || "21000 (Auto-Assigned on Post)"}
+                        </Badge>
+                      </div>
+                      <span className="font-mono font-bold text-primary">
+                        Current Payable Balance: QAR {vendorLedgerInfo.ledger_balance.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                      </span>
+                    </div>
+
+                    {loadingVendorItems ? (
+                      <div className="py-4 text-center text-muted-foreground flex items-center justify-center gap-2">
+                        <Loader2 className="h-4 w-4 animate-spin" /> Loading open GRNs / invoices...
+                      </div>
+                    ) : openApItems.length === 0 ? (
+                      <div className="text-[11px] text-muted-foreground italic py-2">
+                        No open AP invoices found. You can still post a lump-sum / on-account supplier payment below.
+                      </div>
+                    ) : (
+                      <div className="border rounded bg-background overflow-x-auto max-h-56 overflow-y-auto">
+                        <table className="w-full text-xs">
+                          <thead className="bg-muted/60 text-muted-foreground border-b">
+                            <tr>
+                              <th className="py-1.5 px-2 w-8 text-center">Pay</th>
+                              <th className="py-1.5 px-2 text-left">Invoice #</th>
+                              <th className="py-1.5 px-2 text-left">GRN #</th>
+                              <th className="py-1.5 px-2 text-left">Date</th>
+                              <th className="py-1.5 px-2 text-right">Total (QAR)</th>
+                              <th className="py-1.5 px-2 text-right">Remaining</th>
+                              <th className="py-1.5 px-2 text-right w-32">Pay Amount (QAR)</th>
+                            </tr>
+                          </thead>
+                          <tbody className="divide-y">
+                            {openApItems.map((inv) => {
+                              const state = selectedAllocs[inv.invoice_number] || { checked: false, amount: String(inv.remaining_amount) };
+                              return (
+                                <tr key={inv.id} className={state.checked ? "bg-primary/5" : "hover:bg-muted/20"}>
+                                  <td className="py-1.5 px-2 text-center">
+                                    <input
+                                      type="checkbox"
+                                      checked={state.checked}
+                                      onChange={(e) => {
+                                        const checked = e.target.checked;
+                                        setSelectedAllocs(prev => ({
+                                          ...prev,
+                                          [inv.invoice_number]: {
+                                            checked,
+                                            amount: prev[inv.invoice_number]?.amount || String(inv.remaining_amount),
+                                          },
+                                        }));
+                                      }}
+                                    />
+                                  </td>
+                                  <td className="py-1.5 px-2 font-mono font-semibold">{inv.invoice_number}</td>
+                                  <td className="py-1.5 px-2 font-mono text-emerald-700">{inv.grn_number || "—"}</td>
+                                  <td className="py-1.5 px-2">{inv.invoice_date || "—"}</td>
+                                  <td className="py-1.5 px-2 text-right font-mono">{inv.total_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                  <td className="py-1.5 px-2 text-right font-mono font-bold text-amber-700">{inv.remaining_amount.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                                  <td className="py-1.5 px-2 text-right">
+                                    <Input
+                                      type="number"
+                                      step="0.01"
+                                      min="0"
+                                      max={inv.remaining_amount}
+                                      disabled={!state.checked}
+                                      className="h-7 text-xs font-mono text-right"
+                                      value={state.amount}
+                                      onChange={(e) => {
+                                        const val = e.target.value;
+                                        setSelectedAllocs(prev => ({
+                                          ...prev,
+                                          [inv.invoice_number]: { checked: true, amount: val },
+                                        }));
+                                      }}
+                                    />
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                    )}
+
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
+                      <div>
+                        <Label className="text-[11px] font-semibold">
+                          {anyInvoiceChecked ? "Total Selected Allocation (QAR)" : "Partial / On-Account Payment Amount (QAR)"}
+                        </Label>
+                        {anyInvoiceChecked ? (
+                          <Input
+                            readOnly
+                            className="h-8 text-xs font-mono font-bold bg-muted"
+                            value={selectedInvoicePayTotal.toFixed(2)}
+                          />
+                        ) : (
+                          <Input
+                            type="number"
+                            step="0.01"
+                            min="0"
+                            placeholder="Enter partial payment without selecting invoices..."
+                            className="h-8 text-xs font-mono font-bold bg-background"
+                            value={unallocatedPayAmount}
+                            onChange={(e) => setUnallocatedPayAmount(e.target.value)}
+                          />
+                        )}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground flex items-end pb-1">
+                        {anyInvoiceChecked
+                          ? "Selected invoices will be marked Settled or Partial; disputed items remain open."
+                          : "Unallocated partial payments reduce the supplier ledger; final zero-settlement closes all open GRNs."}
+                      </div>
+                    </div>
+
+                    {(anyInvoiceChecked ? selectedInvoicePayTotal : parseFloat(unallocatedPayAmount) || 0) > 0 && (
+                      <div className="rounded border border-emerald-500/30 bg-emerald-50/50 dark:bg-emerald-950/20 p-2 font-mono text-[11px] flex justify-between">
+                        <span>Dr. {vendorLedgerInfo.vendor_gl_code || "21000xxx"} - {vendorLedgerInfo.vendor_gl_name}</span>
+                        <span>Cr. {paymentBankGl}</span>
+                        <span className="font-bold">QAR {(anyInvoiceChecked ? selectedInvoicePayTotal : parseFloat(unallocatedPayAmount) || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            ) : (
+              /* Single Debit & Credit for Manual Payment / Receipt Voucher */
+              <>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <Label className="text-[11px] font-semibold">Debit GL Account</Label>
+                    <SearchableSelect
+                      value={form.debit}
+                      onValueChange={v => setForm({ ...form, debit: v })}
+                      options={debitAccountOptions.map(a => ({ label: a.name, value: a.name }))}
+                      placeholder="Select Debit GL Account..."
+                      emptyText="No matching GL account"
+                    />
+                  </div>
+                  <div>
                     <Label className="text-[11px] font-semibold">Credit GL Account</Label>
-                    <Select value={form.credit} onValueChange={v => setForm({ ...form, credit: v })}>
-                      <SelectTrigger className="h-8 text-xs font-mono bg-background"><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {creditAccountOptions.map(a => <SelectItem key={a.code} value={a.name} className="text-xs font-mono">{a.name}</SelectItem>)}
-                      </SelectContent>
-                    </Select>
+                    <SearchableSelect
+                      value={form.credit}
+                      onValueChange={v => setForm({ ...form, credit: v })}
+                      options={creditAccountOptions.map(a => ({ label: a.name, value: a.name }))}
+                      placeholder="Select Credit GL Account..."
+                      emptyText="No matching GL account"
+                    />
                   </div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -5730,12 +6209,13 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
             )}
           </div>
           <DialogFooter>
-            <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
+            <Button variant="outline" onClick={() => setOpen(false)} disabled={submitting}>Cancel</Button>
             <Button
               className="bg-primary text-primary-foreground"
-              disabled={type === "Journal Voucher" && !isBalanced}
+              disabled={submitting || (type === "Journal Voucher" && !isBalanced)}
               onClick={handleAdd}
             >
+              {submitting && <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />}
               Post {type}
             </Button>
           </DialogFooter>

@@ -6,6 +6,7 @@ import jwt from 'jsonwebtoken';
 import { readSessionToken } from './session';
 
 import { jwtSecret } from './config';
+const DEFAULT_TENANT_ID = process.env.DEFAULT_TENANT_ID || 'a0000000-0000-0000-0000-000000000001';
 // The webhook is called by the payment gateway, so it has no session. It verifies an HMAC signature instead.
 const PUBLIC_PATHS = new Set([
   '/api/auth/login',
@@ -35,7 +36,9 @@ export function requireSession(req: Request, res: Response, next: NextFunction) 
     const claims = jwt.verify(token, jwtSecret()) as any;
     (req as any).user = claims;
     // A tenant-bound user is always scoped to their own tenant, regardless of the header they send.
-    if (claims.tenant_id) req.headers['x-tenant-id'] = String(claims.tenant_id);
+    // A5: the tenant is decided by the server (session claim, else the single default tenant). A client
+    // supplied x-tenant-id header is never trusted.
+    req.headers['x-tenant-id'] = String(claims.tenant_id || DEFAULT_TENANT_ID);
     return next();
   } catch {
     return res.status(401).json({ error: 'Session expired, please sign in again' });

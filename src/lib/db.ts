@@ -2039,6 +2039,14 @@ export async function createCoaAccount(payload: CreateCoaAccountPayload) {
   return res.data;
 }
 
+export async function renameCoaAccount(payload: { code: string; name: string; level?: 'GL' | 'SL' }) {
+  const res = await request<{ data: { code: string; name: string; level: string } }>('/api/accounting/coa', {
+    method: 'PATCH',
+    body: JSON.stringify(payload),
+  });
+  return res.data;
+}
+
 export interface UnitLedgerContext {
   units: { id: string; property_id: string | null; unit_code: string; unit_name: string }[];
   properties: { id: string; property_code: string | null; title: string }[];

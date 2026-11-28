@@ -57,7 +57,7 @@ export async function refreshEventTotals(eventId: string): Promise<void> {
 // ───────────────────────────────────────────────────────────────────────────────
 const SL_PREFIX: Record<string, string> = {
   '12100': 'Cash - ',
-  '12413': 'Tenant Receivable - ',
+  '12413': 'Tenant Rent Receivable - ',
   '21400': 'PDC Received - ',
   '21500': 'Deposit - ',
 };
@@ -306,7 +306,7 @@ const PDC_TRANSITIONS: Record<string, string[]> = {
 
 type GlLine = { code: string; debit: number; credit: number };
 
-function pdcPostingPlan(target: string, amount: number): { eventType: string; lines: GlLine[] } | null {
+function pdcPostingPlan(target: string, amount: number, fromStatus?: string): { eventType: string; lines: GlLine[] } | null {
   if (target === 'Deposited') {
     return {
       eventType: 'PDC_DEPOSITED',
@@ -321,6 +321,26 @@ function pdcPostingPlan(target: string, amount: number): { eventType: string; li
       eventType: 'PDC_CLEARED',
       lines: [
         { code: PDC_GL.bank, debit: amount, credit: 0 },
+        { code: PDC_GL.pdcInHand, debit: 0, credit: amount },
+      ],
+    };
+  }
+  if (target === 'Returned') {
+    if (fromStatus === 'Deposited' || fromStatus === 'Cleared') {
+      return {
+        eventType: 'PDC_BOUNCED',
+        lines: [
+          { code: PDC_GL.pdcInHand, debit: amount, credit: 0 },
+          { code: PDC_GL.bank, debit: 0, credit: amount },
+          { code: PDC_GL.tenantAr, debit: amount, credit: 0 },
+          { code: '21400', debit: 0, credit: amount },
+        ],
+      };
+    }
+    return {
+      eventType: 'PDC_RETURNED',
+      lines: [
+        { code: '21400', debit: amount, credit: 0 },
         { code: PDC_GL.pdcInHand, debit: 0, credit: amount },
       ],
     };
@@ -395,7 +415,7 @@ export async function manualPdcStatusUpdate(args: {
     if (Number(updated) !== 1) throw new HttpError(409, 'PDC was changed by another user. Reload and try again.');
 
     const amount = money(String(pdc.amount));
-    const plan = pdcPostingPlan(target, amount);
+    const plan = pdcPostingPlan(target, amount, from);
     let eventId: string | null = null;
     if (plan && amount > 0) {
       eventId = randomUUID();
@@ -501,6 +521,10 @@ export interface ManualVoucherInput {
   property_id?: string | null;
   unit_id?: string | null;
   customer_id?: string | null;
+  tenant_id?: string | null;
+  lease_id?: string | null;
+  source_type?: string | null;
+  source_id?: string | null;
   created_by?: string | null;
   idempotency_key?: string | null;
 }
@@ -564,18 +588,19 @@ export async function postManualVoucher(input: ManualVoucherInput, externalTx?: 
 
     const eventId = randomUUID();
     await tx.$executeRaw`INSERT INTO fin_accounting_events
-      (id, event_type, status, event_date, posting_date, source_type, reference_number, description, idempotency_key,
-       property_id, unit_id, customer_id, total_debit, total_credit, created_by)
-      VALUES (${eventId}, 'MANUAL_JOURNAL', 'DRAFT', ${date}, ${date}, 'MANUAL_VOUCHER', ${reference}, ${input.description || null},
+      (id, event_type, status, event_date, posting_date, source_type, source_id, reference_number, description, idempotency_key,
+       property_id, unit_id, customer_id, tenant_id, lease_id, total_debit, total_credit, created_by)
+      VALUES (${eventId}, 'MANUAL_JOURNAL', 'DRAFT', ${date}, ${date}, ${input.source_type || 'MANUAL_VOUCHER'}, ${input.source_id || null}, ${reference}, ${input.description || null},
               ${idempotencyKey}, ${input.property_id || null}, ${input.unit_id || null}, ${input.customer_id || null},
-              ${totalDebit}, ${totalCredit}, ${input.created_by || null})`;
+              ${input.tenant_id || null}, ${input.lease_id || null}, ${totalDebit}, ${totalCredit}, ${input.created_by || null})`;
     let n = 0;
     for (const l of lines) {
       n += 1;
       await tx.$executeRaw`INSERT INTO fin_accounting_event_lines
-        (id, event_id, line_number, account_code, account_name, debit, credit, description, property_id, unit_id, customer_id)
+        (id, event_id, line_number, account_code, account_name, debit, credit, description, property_id, unit_id, customer_id, tenant_id, lease_id)
         VALUES (${randomUUID()}, ${eventId}, ${n}, ${l.account_code}, ${names.get(l.account_code) || null}, ${l.debit}, ${l.credit},
-                ${l.description}, ${input.property_id || null}, ${input.unit_id || null}, ${input.customer_id || null})`;
+                ${l.description}, ${input.property_id || null}, ${input.unit_id || null}, ${input.customer_id || null},
+                ${input.tenant_id || null}, ${input.lease_id || null})`;
     }
 
     return postAccountingEvent(eventId, tx);

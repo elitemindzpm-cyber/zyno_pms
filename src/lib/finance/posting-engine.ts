@@ -606,6 +606,7 @@ export type PostingLineInput = {
 
   source_type?: string;
   source_id?: string;
+  idempotency_key?: string;
 
   metadata?: Record<string, unknown>;
 };
@@ -618,6 +619,7 @@ export type PostVoucherInput = {
 
   source_type?: string;
   source_id?: string;
+  idempotency_key?: string;
 
   tenant_id?: string | number;
   lease_id?: string | number;
@@ -711,6 +713,7 @@ export async function postVoucher(
    * an accounting event first.
    */
   const idempotencyKey =
+    input.idempotency_key ||
     [
       'POST-VOUCHER',
       input.voucher_type || 'Journal',
@@ -857,23 +860,9 @@ export async function postVoucher(
         ),
     });
 
-  try {
-    return await postAccountingEvent(
-      event.id,
-    );
-  } catch (postErr: any) {
-    console.warn('[postVoucher] postAccountingEvent fallback:', postErr?.message);
-    const mockVchNum = `VCH-${Date.now().toString().slice(-6)}`;
-    const mockRecNum = `REC-${Date.now().toString().slice(-6)}`;
-    return {
-      event_id: event.id || '00000000-0000-0000-0000-000000000001',
-      voucher_id: '00000000-0000-0000-0000-000000000002',
-      voucher_number: mockVchNum,
-      receipt_id: '00000000-0000-0000-0000-000000000003',
-      receipt_number: mockRecNum,
-      status: 'POSTED',
-    };
-  }
+  return await postAccountingEvent(
+    event.id,
+  );
 }
 
 export async function postLeaseDepositReceipt(

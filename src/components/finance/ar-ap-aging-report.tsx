@@ -627,7 +627,7 @@ export function ArApAgingReportSubModule() {
   };
 
   const activeRows = useMemo(
-    () => buildPartyRows(serverAgeingItems !== null && serverAgeingItems.length > 0 ? serverAgeingItems : activeTab === "ar" ? arAgingItems : apAgingItems),
+    () => buildPartyRows(serverAgeingItems !== null ? serverAgeingItems : activeTab === "ar" ? arAgingItems : apAgingItems),
     [serverAgeingItems, activeTab, arAgingItems, apAgingItems, propertyFilter, bucketFilter, searchQuery]
   );
 

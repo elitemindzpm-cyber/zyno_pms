@@ -23,7 +23,7 @@ export function loadGlAccountOptions(force = false): Promise<void> {
   loadPromise = (async () => {
     const { data, error } = await db
       .from("fin_coa_accounts")
-      .select("id, account_code, account_name, parent_id, is_active")
+      .select("id, account_code, account_name, parent_id, parent_account_id, is_active")
       .order("account_code")
       .limit(10000);
     if (error) {
@@ -32,17 +32,28 @@ export function loadGlAccountOptions(force = false): Promise<void> {
       return;
     }
     const rows = ((data as any[]) || []).filter((r) => r.is_active !== false && r.is_active !== 0);
-    const parents = new Set(rows.map((r) => r.parent_id).filter(Boolean));
+    if (rows.length === 0) {
+      loadPromise = null; // allow retry once authenticated / seeded
+      return;
+    }
+    const parents = new Set(rows.flatMap((r) => [r.parent_id, r.parent_account_id]).filter(Boolean));
     const leaves = rows.filter((r) => !parents.has(r.id));
+    const effectiveList = leaves.length > 0 ? leaves : rows;
     const toOption = (r: any): GlAccountOption => ({
       code: String(r.account_code),
       name: `${r.account_code} - ${r.account_name}`,
     });
-    replace(COMMON_GL_ACCOUNTS, leaves.map(toOption));
-    replace(BANK_GL_ACCOUNTS, leaves.filter((r) => String(r.account_code).startsWith("12000")).map(toOption));
+    replace(COMMON_GL_ACCOUNTS, effectiveList.map(toOption));
+    replace(BANK_GL_ACCOUNTS, effectiveList.filter((r) => String(r.account_code).startsWith("12000")).map(toOption));
     listeners.forEach((fn) => fn());
   })();
   return loadPromise;
+}
+
+if (typeof window !== "undefined") {
+  window.addEventListener("fin_custom_coa_updated", () => {
+    void loadGlAccountOptions(true);
+  });
 }
 
 /** Call at the top of any component that reads the lists above; it re-renders once they load. */
@@ -51,7 +62,7 @@ export function useGlAccountOptions() {
   useEffect(() => {
     const fn = () => bump((n) => n + 1);
     listeners.add(fn);
-    void loadGlAccountOptions();
+    void loadGlAccountOptions(COMMON_GL_ACCOUNTS.length === 0);
     return () => { listeners.delete(fn); };
   }, []);
   return { common: COMMON_GL_ACCOUNTS, bank: BANK_GL_ACCOUNTS };

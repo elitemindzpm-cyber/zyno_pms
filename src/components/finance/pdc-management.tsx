@@ -110,7 +110,7 @@ function getActionConfig(action: "deposit" | "clear" | "return" | "cancel", cheq
         { type: "Debit",  account: "Commercial Bank of Qatar (CBQ)", code: "12000001", description: "Cash received into bank (Dr Bank)" },
         { type: "Credit", account: "Rent PDC In Hand",               code: "12900001", description: "PDC deposited to bank (Cr PDC In Hand)" },
         { type: "Debit",  account: "Customer(PDC) - Unit Account", code: "21400001", description: "Customer PDC Liability settled (Dr 21400)" },
-        { type: "Credit", account: "Receivable - Unit Account",    code: "12413001", description: "Tenant dues offset upon bank deposit (Cr 12413)" },
+        { type: "Credit", account: "Tenant Rent Receivable",       code: "12413001", description: "Tenant dues offset upon bank deposit (Cr 12413)" },
       ],
     };
   }
@@ -125,7 +125,7 @@ function getActionConfig(action: "deposit" | "clear" | "return" | "cancel", cheq
       newSharedStatus: "cleared",
       impacts: [
         { type: "Debit",  account: "Customer(PDC) - Unit Account", code: "21400", description: "Customer PDC Liability settled" },
-        { type: "Credit", account: "Receivable - Unit Account",    code: "12413", description: "Tenant Receivable offset" },
+        { type: "Credit", account: "Tenant Rent Receivable",       code: "12413", description: "Tenant Receivable offset" },
       ],
     };
   }
@@ -156,7 +156,7 @@ function getActionConfig(action: "deposit" | "clear" | "return" | "cancel", cheq
     impacts: [
       { type: "Debit",  account: "PDC In Hand",                  code: "12900", description: "Cheque physically returned to hand (Dr 12900)" },
       { type: "Credit", account: "Bank Account",                 code: "12000", description: "Bank Account clawback on dishonour (Cr 12000)" },
-      { type: "Debit",  account: "Receivable - Unit Account",    code: "12413", description: "Tenant dues restored in Unit Account (Dr 12413)" },
+      { type: "Debit",  account: "Tenant Rent Receivable",       code: "12413", description: "Tenant dues restored (Dr 12413)" },
       { type: "Credit", account: "Customer(PDC) - Unit Account", code: "21400", description: "Customer(PDC) liability reversed (Cr 21400)" },
     ],
   };
@@ -1336,7 +1336,13 @@ export function PdcManagement() {
       } else {
         const wasDepositedOrCleared = (pdc.status || "").toLowerCase() === "deposited" || (pdc.status || "").toLowerCase() === "cleared";
         if (wasDepositedOrCleared) {
-          await bouncePdc(id, String(chqNo), cancelReason || "Cheque Dishonoured / Bounced by Bank", hints);
+          const bankInfo = resolvePdcBankGl(existingBankLabel || chosenBank?.glCode);
+          await bouncePdc(id, String(chqNo), cancelReason || "Cheque Dishonoured / Bounced by Bank", {
+            ...hints,
+            bankAccountId: chosenBank?.id,
+            bankAccountName: chosenBank?.accountTitle || existingBankLabel || bankInfo.glName,
+            bankAccountCode: chosenBank?.glCode || bankInfo.glCode,
+          });
         } else {
           await returnPdc(id, String(chqNo), hints);
         }
@@ -1363,9 +1369,9 @@ export function PdcManagement() {
           property_name: prop,
           unit_ref: unit,
           tenant_name: tenant,
-        });
+        }, { skipDbPersist: true });
 
-        // Leg 2: Offsetting Customer PDC Liability against Tenant Receivables upon Bank Deposit
+        // Leg 2: Offsetting Customer PDC Liability against Tenant Rent Receivable upon Bank Deposit
         addVoucher({
           voucher_no: depositSlipNo ? `VCH-DEP-CLR-${depositSlipNo}` : `VCH-DEP-CLR-${id}`,
           voucher_type: "Journal Voucher",
@@ -1373,14 +1379,14 @@ export function PdcManagement() {
           name: `Customer PDC Liability & Tenant Receivables Settled on Bank Deposit – ${chqNo} (${tenant} - ${unit})`,
           debit: "Customer PDC Liability",
           debit_code: "21400001",
-          credit: "Tenant Receivables",
+          credit: "Tenant Rent Receivable",
           credit_code: "12413001",
           amount: amt,
           method: "Cheque Deposit Settlement",
           property_name: prop,
           unit_ref: unit,
           tenant_name: tenant,
-        });
+        }, { skipDbPersist: true });
       } else if (action === "clear") {
         // If the cheque was still "In Hand", clearPdc auto-runs deposit first.
         // Mirror both GL legs in FinanceStore so reports update immediately.
@@ -1401,7 +1407,7 @@ export function PdcManagement() {
             property_name: prop,
             unit_ref: unit,
             tenant_name: tenant,
-          });
+          }, { skipDbPersist: true });
         }
         addVoucher({
           voucher_no: `VCH-CLR-${chqNo}`,
@@ -1410,14 +1416,14 @@ export function PdcManagement() {
           name: `PDC Cleared – ${chqNo} (${tenant} - ${unit})`,
           debit: "Customer PDC Liability",
           debit_code: "21400001",
-          credit: "Tenant Receivables",
+          credit: "Tenant Rent Receivable",
           credit_code: "12413001",
           amount: amt,
           method: "Cheque Clearance",
           property_name: prop,
           unit_ref: unit,
           tenant_name: tenant,
-        });
+        }, { skipDbPersist: true });
       } else if (action === "return") {
         const bankInfo = resolvePdcBankGl(existingBankLabel || chosenBank?.glCode);
         addVoucher({
@@ -1434,13 +1440,13 @@ export function PdcManagement() {
           property_name: prop,
           unit_ref: unit,
           tenant_name: tenant,
-        });
+        }, { skipDbPersist: true });
         addVoucher({
           voucher_no: `VCH-RET-AR-${chqNo}`,
           voucher_type: "Journal Voucher",
           date: todayStr,
           name: `Tenant Dues Restored on Dishonour – ${chqNo} (${tenant} - ${unit})`,
-          debit: "Tenant Receivables",
+          debit: "Tenant Rent Receivable",
           debit_code: "12413001",
           credit: "Customer PDC Liability",
           credit_code: "21400001",
@@ -1449,7 +1455,7 @@ export function PdcManagement() {
           property_name: prop,
           unit_ref: unit,
           tenant_name: tenant,
-        });
+        }, { skipDbPersist: true });
       } else if (action === "cancel") {
         addVoucher({
           voucher_no: `VCH-CNL-${chqNo}`,
@@ -1465,7 +1471,7 @@ export function PdcManagement() {
           property_name: prop,
           unit_ref: unit,
           tenant_name: tenant,
-        });
+        }, { skipDbPersist: true });
       }
 
       syncLocalRenewalPdcStatus(
@@ -1602,7 +1608,7 @@ export function PdcManagement() {
         amount: confirmedAmt,
       });
 
-      // Update Finance vouchers so General Ledger reflects cash receipt and PDC return immediately
+      // Update Finance vouchers in store (DB already posted via cashDepositInPlaceOfPdc)
       addVoucher({
         voucher_no: `VCH-CSH-${chqNo}`,
         voucher_type: "Receipt Voucher",
@@ -1610,14 +1616,14 @@ export function PdcManagement() {
         name: `Cash Collected in Place of PDC – ${chqNo} (${pdc.tenant_name || "Tenant"} - ${pdc.unit_ref || "Unit"})`,
         debit: "Cash In Hand",
         debit_code: "12100001",
-        credit: "Tenant Receivables — Unit SL",
+        credit: "Tenant Rent Receivable",
         credit_code: "12413001",
         amount: confirmedAmt,
         method: "Cash",
         property_name: pdc.property_name || "Property",
         unit_ref: pdc.unit_ref || "Unit",
         tenant_name: pdc.tenant_name || "Tenant",
-      });
+      }, { skipDbPersist: true });
 
       addVoucher({
         voucher_no: `VCH-CSH-RET-${chqNo}`,
@@ -1633,7 +1639,7 @@ export function PdcManagement() {
         property_name: pdc.property_name || "Property",
         unit_ref: pdc.unit_ref || "Unit",
         tenant_name: pdc.tenant_name || "Tenant",
-      });
+      }, { skipDbPersist: true });
 
       // NOTE: Per accounting policy, cash received in replacement of a cancelled cheque
       // stays in Cash In Hand (GL 12100001) and is NOT automatically debited to CBQ Bank.
@@ -1864,7 +1870,7 @@ export function PdcManagement() {
       ));
 
       // 3. Post double-entry vouchers to General Ledger (useFinanceStore)
-      // Leg 1: Receipt Voucher (Debit: Receiving Bank Account / Credit: Tenant Receivables)
+      // Leg 1: Receipt Voucher (Debit: Receiving Bank Account / Credit: Tenant Rent Receivable)
       addVoucher({
         voucher_no: `VCH-TRF-${chqNo}`,
         voucher_type: "Receipt Voucher",
@@ -1872,14 +1878,14 @@ export function PdcManagement() {
         name: `Bank Transfer Received in Place of PDC – ${chqNo} (${pdc.tenant_name || "Tenant"} - ${pdc.unit_ref || "Unit"}) [Ref: ${bankTransferRef || 'Direct Wire'}]`,
         debit: chosenBank.accountTitle,
         debit_code: chosenBank.glCode,
-        credit: "Tenant Receivables — Unit SL",
+        credit: "Tenant Rent Receivable",
         credit_code: "12413001",
         amount: confirmedAmt,
         method: "Bank Transfer",
         property_name: pdc.property_name || "Property",
         unit_ref: pdc.unit_ref || "Unit",
         tenant_name: pdc.tenant_name || "Tenant",
-      });
+      }, { skipDbPersist: true });
 
       // Leg 2: Journal Voucher (Debit: Customer PDC Liability / Credit: PDC In Hand)
       addVoucher({
@@ -1896,7 +1902,7 @@ export function PdcManagement() {
         property_name: pdc.property_name || "Property",
         unit_ref: pdc.unit_ref || "Unit",
         tenant_name: pdc.tenant_name || "Tenant",
-      });
+      }, { skipDbPersist: true });
 
       // 4. Generate Official Bank Transfer Receipt
       const existingHistory = receiptHistory[String(chqNo)] || [];
@@ -2024,14 +2030,14 @@ export function PdcManagement() {
         const isKahramaaDep = collectionType === "Direct Kahramaa Deposit Transfer";
 
         const targetBank = bankAccounts.find(b => b.accountNumber === directBankTransferAccount) || bankAccounts[0] || {
-          accountTitle: "Al Ameen (Oryx) - Dukhan Bank",
-          glCode: "12000006",
-          bankName: "Dukhan Bank",
-          accountNumber: "100001011781",
+          accountTitle: "Bank Operating Account",
+          glCode: "12000001",
+          bankName: "Bank",
+          accountNumber: "",
         };
 
         const debitAcc = isDirectTransfer ? targetBank.accountTitle : "Cash in Hand / Cashier Desk";
-        const debitCode = isDirectTransfer ? (targetBank.glCode || "12000006") : "12100001";
+        const debitCode = isDirectTransfer ? (targetBank.glCode || "12000001") : "12100001";
         const creditAcc = isSecurityDep
           ? "Tenant Security Deposits Held"
           : isKahramaaDep
@@ -2254,7 +2260,7 @@ export function PdcManagement() {
           console.warn("[receivePdc] Notice during receive:", e?.message);
         }
 
-        // Add to Finance store vouchers for immediate GL reflection
+        // Add to Finance store vouchers for local mirror (DB already posted via receivePdc)
         addVoucher({
           voucher_no: `VCH-PDC-REC-${row.chequeNo}`,
           voucher_type: "Journal Voucher",
@@ -2269,7 +2275,7 @@ export function PdcManagement() {
           property_name: prop,
           unit_ref: unit,
           tenant_name: tenant,
-        });
+        }, { skipDbPersist: true });
 
         receiptPdcs.push({
           chequeNo: row.chequeNo,

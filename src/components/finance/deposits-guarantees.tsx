@@ -1,4 +1,6 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
+import { useGlAccountOptions } from "@/lib/finance/gl-account-options";
+import { postVoucher } from "@/lib/finance/posting-engine";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
@@ -75,22 +77,55 @@ const DEFAULT_GL21100_DEPOSITS: DepositRecord[] = [];
 
 // ── Settle & Refund Modal (Compact 2-Column Layout) ───────────────────────────
 function SettleRefundModal({
-  open, deposit, deductions, onDeductionsChange, onConfirm, onCancel, loading,
+  open, deposit, deductions, onDeductionsChange, paymentMethod, onPaymentMethodChange, bankGlCode, onBankGlCodeChange, onConfirm, onCancel, loading,
 }: {
-  open: boolean; deposit: DepositRecord | null; deductions: string;
-  onDeductionsChange: (v: string) => void; onConfirm: () => void; onCancel: () => void; loading: boolean;
+  open: boolean;
+  deposit: DepositRecord | null;
+  deductions: string;
+  onDeductionsChange: (v: string) => void;
+  paymentMethod: "BANK" | "CASH";
+  onPaymentMethodChange: (v: "BANK" | "CASH") => void;
+  bankGlCode: string;
+  onBankGlCodeChange: (v: string) => void;
+  onConfirm: () => void;
+  onCancel: () => void;
+  loading: boolean;
 }) {
+  const { bank: bankOptions } = useGlAccountOptions();
+  const [kahramaaGate, setKahramaaGate] = useState<"verified" | "deduct" | "pending">("pending");
+  const [kahramaaCertNo, setKahramaaCertNo] = useState<string>("");
+
+  const disbursingOptions = useMemo(() => {
+    if (paymentMethod === "CASH") {
+      return [
+        { code: "12100001", name: "12100001 - Cash In Hand" },
+        { code: "12100002", name: "12100002 - Petty Cash" },
+      ];
+    }
+    return bankOptions.length > 0
+      ? bankOptions
+      : [
+          { code: "12000001", name: "12000001 - Bank" },
+          { code: "12000002", name: "12000002 - CBQ Bank" },
+        ];
+  }, [paymentMethod, bankOptions]);
+
+  useEffect(() => {
+    if (!disbursingOptions.some((o) => o.code === bankGlCode) && disbursingOptions[0]) {
+      onBankGlCodeChange(disbursingOptions[0].code);
+    }
+  }, [disbursingOptions, bankGlCode, onBankGlCodeChange]);
+
   if (!deposit) return null;
   const grossDeposit = Number(deposit.amount) || 0;
   const deductionAmt = parseFloat(deductions) || 0;
   const refund = Math.max(0, grossDeposit - deductionAmt);
   const isOverDeduction = deductionAmt > grossDeposit;
-  const [kahramaaGate, setKahramaaGate] = useState<"verified" | "deduct" | "pending">("pending");
-  const [kahramaaCertNo, setKahramaaCertNo] = useState<string>("");
+  const selectedBankLabel = disbursingOptions.find((o) => o.code === bankGlCode)?.name || bankGlCode || "12000001 - Bank";
 
   return (
     <Dialog open={open} onOpenChange={(v) => { if (!v) onCancel(); }}>
-      <DialogContent className="max-w-2xl p-5 gap-3.5">
+      <DialogContent className="max-w-2xl p-5 gap-3.5 max-h-[90vh] overflow-y-auto">
         <DialogHeader className="space-y-1 pb-1.5 border-b">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-2.5">
@@ -98,8 +133,8 @@ function SettleRefundModal({
                 <Banknote className="h-4 w-4" />
               </div>
               <div>
-                <DialogTitle className="text-base font-bold leading-tight">Settle &amp; Refund Deposit (GL 21100)</DialogTitle>
-                <p className="text-[11px] text-muted-foreground mt-0.5">{deposit.deposit_type} &bull; Default Refundable Liability</p>
+                <DialogTitle className="text-base font-bold leading-tight">Settle &amp; Refund Deposit (3-Line Entry)</DialogTitle>
+                <p className="text-[11px] text-muted-foreground mt-0.5">{deposit.deposit_type} &bull; Security Deposit Liability</p>
               </div>
             </div>
             <Badge variant="outline" className="text-[11px] font-mono text-emerald-700 bg-emerald-50 border-emerald-300 font-bold px-2 py-0.5">
@@ -110,7 +145,7 @@ function SettleRefundModal({
 
         {/* 2-Column Balanced Compact Layout */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
-          {/* Left Column: Premise Context & Deductions Input */}
+          {/* Left Column: Premise Context, Deductions & Disbursing Account */}
           <div className="space-y-3">
             <div className="rounded-lg border bg-muted/30 p-2.5 space-y-1.5 text-xs">
               <div className="flex justify-between items-center">
@@ -122,7 +157,7 @@ function SettleRefundModal({
                 <span className="font-semibold text-foreground truncate max-w-[170px]">{deposit.unit_ref || "—"} ({deposit.property_name || "—"})</span>
               </div>
               <div className="flex justify-between items-center">
-                <span className="text-muted-foreground flex items-center gap-1"><Hash className="h-3 w-3" /> GL Account:</span>
+                <span className="text-muted-foreground flex items-center gap-1"><Hash className="h-3 w-3" /> Deposit GL:</span>
                 <span className="font-mono text-[10px] text-muted-foreground truncate max-w-[170px]" title={deposit.coa_account_code}>
                   {deposit.coa_account_code}
                 </span>
@@ -132,7 +167,7 @@ function SettleRefundModal({
             <div className="space-y-1.5">
               <div className="flex items-center justify-between">
                 <Label htmlFor="deduction-amount" className="text-xs font-semibold">
-                  Approved Deductions (QAR)
+                  Approved Deductions (Damage / Other Income)
                 </Label>
                 <span className="text-[10px] text-muted-foreground">0 for 100% refund</span>
               </div>
@@ -153,9 +188,35 @@ function SettleRefundModal({
                 </p>
               ) : (
                 <p className="text-[10px] text-muted-foreground">
-                  Deductions post to Damage Recovery (GL 41201001)
+                  Deductions credit Other Income - Damages (GL 41201003)
                 </p>
               )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-2">
+              <div className="space-y-1">
+                <Label className="text-[11px] font-semibold">Refund Method</Label>
+                <Select value={paymentMethod} onValueChange={(v: "BANK" | "CASH") => onPaymentMethodChange(v)}>
+                  <SelectTrigger className="h-8 text-xs bg-background"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="BANK">Bank Transfer / Cheque</SelectItem>
+                    <SelectItem value="CASH">Cash Payout</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              <div className="space-y-1">
+                <Label className="text-[11px] font-semibold">Refund From Account</Label>
+                <Select value={bankGlCode} onValueChange={onBankGlCodeChange}>
+                  <SelectTrigger className="h-8 text-xs font-mono bg-background"><SelectValue /></SelectTrigger>
+                  <SelectContent>
+                    {disbursingOptions.map((opt) => (
+                      <SelectItem key={opt.code} value={opt.code} className="text-xs font-mono">
+                        {opt.name}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
             </div>
           </div>
 
@@ -184,21 +245,21 @@ function SettleRefundModal({
               </div>
             </div>
 
-            <div className="rounded-lg bg-blue-50/70 dark:bg-blue-950/20 border border-blue-200/70 dark:border-blue-900/40 p-2 text-[11px] space-y-0.5">
-              <p className="font-semibold text-blue-800 dark:text-blue-300 text-[10px] uppercase tracking-wider">GL Accounting Postings</p>
-              {refund > 0 && (
-                <p className="text-blue-700 dark:text-blue-300 font-mono text-[10px]">
-                  DR 21100 / CR 12000 &rarr; QAR {refund.toLocaleString()}
-                </p>
-              )}
-              {deductionAmt > 0 && (
-                <p className="text-blue-700 dark:text-blue-300 font-mono text-[10px]">
-                  DR 21100 / CR 41201001 &rarr; QAR {deductionAmt.toLocaleString()}
-                </p>
-              )}
-              <p className="text-[10px] text-blue-600 dark:text-blue-400">
-                Official refund voucher &amp; receipt auto-generated.
+            <div className="rounded-lg bg-blue-50/70 dark:bg-blue-950/20 border border-blue-200/70 dark:border-blue-900/40 p-2.5 text-[11px] space-y-1">
+              <p className="font-semibold text-blue-800 dark:text-blue-300 text-[10px] uppercase tracking-wider">Double-Entry GL Output (Single Atomic Voucher)</p>
+              <p className="text-blue-700 dark:text-blue-300 font-mono text-[10px]">
+                DR {deposit.coa_account_code || "21500001"} Security Deposit &rarr; QAR {grossDeposit.toLocaleString()}
               </p>
+              {deductionAmt > 0 && (
+                <p className="text-amber-700 dark:text-amber-300 font-mono text-[10px]">
+                  CR 41201003 Other Income - Damages &rarr; QAR {deductionAmt.toLocaleString()}
+                </p>
+              )}
+              {refund > 0 && (
+                <p className="text-emerald-700 dark:text-emerald-300 font-mono text-[10px]">
+                  CR {selectedBankLabel} &rarr; QAR {refund.toLocaleString()}
+                </p>
+              )}
             </div>
           </div>
         </div>
@@ -312,7 +373,10 @@ export function DepositsGuarantees() {
 
   const [settleTarget, setSettleTarget] = useState<DepositRecord | null>(null);
   const [settleDeductions, setSettleDeductions] = useState("0");
+  const [settlePaymentMethod, setSettlePaymentMethod] = useState<"BANK" | "CASH">("BANK");
+  const [settleBankGlCode, setSettleBankGlCode] = useState("12000001");
   const [settleLoading, setSettleLoading] = useState(false);
+  const settleInFlightRef = useRef(false);
 
   // ── Collect Security Deposit modal state ─────────────────────────────────
   const [collectOpen, setCollectOpen] = useState(false);
@@ -513,12 +577,13 @@ export function DepositsGuarantees() {
   }
 
   async function confirmSettle() {
-    if (!settleTarget) return;
+    if (!settleTarget || settleInFlightRef.current) return;
     const { id } = settleTarget;
     const amount = Number(settleTarget.amount);
     const deductions = parseFloat(settleDeductions) || 0;
     const refund = Math.max(0, amount - deductions);
 
+    settleInFlightRef.current = true;
     setSettleLoading(true);
     try {
       const targetDep = settleTarget;
@@ -529,6 +594,42 @@ export function DepositsGuarantees() {
 
       const isStringId = typeof id === "string" && (id.startsWith("v") || id.startsWith("ctx-") || id.startsWith("dep-") || isNaN(Number(id)));
       if (isStringId) {
+        const depositCode = String(targetDep.coa_account_code || "21500001").trim().split(/\s+/)[0];
+        const lines: Array<{ account_code: string; debit: number; credit: number; description: string }> = [
+          {
+            account_code: depositCode,
+            debit: amount,
+            credit: 0,
+            description: `Security Deposit Release – ${targetTenant} (${targetUnit})`,
+          },
+        ];
+        if (deductions > 0) {
+          lines.push({
+            account_code: "41201003",
+            debit: 0,
+            credit: deductions,
+            description: `Damage / Deduction Recovery – ${targetTenant} (${targetUnit})`,
+          });
+        }
+        if (refund > 0) {
+          lines.push({
+            account_code: settleBankGlCode || (settlePaymentMethod === "CASH" ? "12100001" : "12000001"),
+            debit: 0,
+            credit: refund,
+            description: `Deposit Refund via ${settlePaymentMethod === "CASH" ? "Cash" : "Bank"} – ${targetTenant}`,
+          });
+        }
+        await postVoucher({
+          voucher_date: todayStr,
+          voucher_type: "Payment",
+          description: `Deposit Settlement & Refund – ${targetTenant} (${targetUnit})`,
+          reference_no: `DEP-REF-${String(id).slice(-8)}`,
+          idempotency_key: `DEP_SETTLE|${id}`,
+          source_type: "FIN_DEPOSIT_SETTLEMENT",
+          source_id: String(id),
+          property_id: targetProp !== "—" ? targetProp : undefined,
+          lines,
+        });
         setSharedVouchers(prev => prev.map(v => v.id === id ? {
           ...v,
           status: "settled" as any,
@@ -544,58 +645,13 @@ export function DepositsGuarantees() {
           settled_at: todayStr,
         } : d));
       } else {
-        await settleDeposit(Number(id), deductions, refund);
-      }
-
-      // 1. Post Refund Voucher (Debit 21100 Refundable Deposit / Credit 12000 Bank Operating Account)
-      if (refund > 0) {
-        addFinanceStoreVoucher({
-          voucher_no: `VCH-REF-${String(id).slice(-4)}`,
-          voucher_type: "Payment Voucher",
-          date: todayStr,
-          name: `Deposit Refund (${targetDep.deposit_type}) – ${targetTenant} (${targetUnit})`,
-          debit: "Refundable Security Deposit",
-          debit_code: "21100",
-          credit: "Bank Operating Account",
-          credit_code: "12000",
-          amount: refund,
-          method: "Bank Transfer",
-          property_name: targetProp,
-          unit_ref: targetUnit,
-          tenant_name: targetTenant,
+        await settleDeposit(Number(id), deductions, refund, undefined, undefined, targetUnit !== "—" ? targetUnit : undefined, {
+          bankGlCode: settleBankGlCode,
+          paymentMethod: settlePaymentMethod,
         });
       }
 
-      // 2. If deductions exist, post Damage/Utility Recovery Invoice & Settlement Offset Voucher
-      if (deductions > 0) {
-        addReceivableInvoice({
-          invoice_no: `INV-DED-${String(id).slice(-4)}`,
-          date: todayStr,
-          due_date: todayStr,
-          tenant: targetTenant,
-          property: targetProp,
-          unit: targetUnit,
-          stream: `Deposit Deduction / Damage Recovery (${targetDep.deposit_type})`,
-          amount: deductions,
-          account_code: "41201",
-        });
-
-        addFinanceStoreVoucher({
-          voucher_no: `VCH-DED-${String(id).slice(-4)}`,
-          voucher_type: "Journal Voucher",
-          date: todayStr,
-          name: `Deposit Deduction Offset – ${targetDep.deposit_type} (${targetTenant} - ${targetUnit})`,
-          debit: "Refundable Security Deposit",
-          debit_code: "21100",
-          credit: "Damage & Utility Recovery",
-          credit_code: "41201",
-          amount: deductions,
-          method: "Deposit Offset",
-          property_name: targetProp,
-          unit_ref: targetUnit,
-          tenant_name: targetTenant,
-        });
-      }
+      window.dispatchEvent(new Event("finance_vouchers_updated"));
 
       const refReceipt: TenantReceiptDetails = {
         receiptNo: `REC-REF-${String(id).slice(-4)}`,
@@ -651,6 +707,7 @@ export function DepositsGuarantees() {
     } catch (e: any) {
       toast.error(e.message);
     } finally {
+      settleInFlightRef.current = false;
       setSettleLoading(false);
     }
   }
@@ -694,7 +751,7 @@ export function DepositsGuarantees() {
         property_name: lease.property,
         unit_ref:      lease.unit,
         tenant_name:   lease.tenantName,
-      });
+      }, { skipDbPersist: true });
 
       const receipt: TenantReceiptDetails = {
         receiptNo:        `REC-DEP-${Date.now().toString().slice(-6)}`,
@@ -1422,6 +1479,10 @@ export function DepositsGuarantees() {
         deposit={settleTarget}
         deductions={settleDeductions}
         onDeductionsChange={setSettleDeductions}
+        paymentMethod={settlePaymentMethod}
+        onPaymentMethodChange={setSettlePaymentMethod}
+        bankGlCode={settleBankGlCode}
+        onBankGlCodeChange={setSettleBankGlCode}
         onConfirm={confirmSettle}
         onCancel={() => setSettleTarget(null)}
         loading={settleLoading}

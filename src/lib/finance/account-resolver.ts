@@ -502,7 +502,7 @@ async function buildResolvedAccount(
   const effectiveGl = glRow || {
     id: '00000000-0000-0000-0000-000000000001',
     account_code: glCode,
-    account_name: glCode === '12000' ? 'Bank Operating Account' : glCode === '12900' ? 'PDC In Hand' : glCode === '21400' ? 'Customer PDC Liability' : glCode === '21500' ? 'Security Deposit Liability' : glCode === '12413' ? 'Tenant Receivables' : 'General Ledger Account',
+    account_name: glCode === '12000' ? 'Bank Operating Account' : glCode === '12900' ? 'PDC In Hand' : glCode === '21400' ? 'Customer PDC Liability' : glCode === '21500' ? 'Security Deposit Liability' : glCode === '12413' ? 'Tenant Rent Receivable' : 'General Ledger Account',
     group_name: glCode.startsWith('1') ? 'Assets' : glCode.startsWith('2') ? 'Liabilities' : glCode.startsWith('4') ? 'Revenue' : 'Expenses',
     class_name: 'Operational Accounts',
   };
@@ -510,7 +510,7 @@ async function buildResolvedAccount(
   const effectiveSl = slRow || {
     id: effectiveGl.id,
     account_code: slCode,
-    account_name: slCode.length > 5 ? `${effectiveGl.account_name} - ${ctx.unitName || 'Unit'}` : effectiveGl.account_name,
+    account_name: slCode.length > 5 ? `${effectiveGl.account_name} (${ctx.unitName || slCode})` : effectiveGl.account_name,
     group_name: effectiveGl.group_name,
     class_name: effectiveGl.class_name,
   };

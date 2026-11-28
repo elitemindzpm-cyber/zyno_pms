@@ -1,4 +1,5 @@
 import { db } from '../../db';
+import { request as apiRequest } from '../../api-client';
 import { 
   type EntityImportAdapter, 
   type ColumnDefinition, 
@@ -324,10 +325,21 @@ export const vendorAdapter: EntityImportAdapter = {
         const { data: created, error } = await db.from('fin_vendors').insert(payload).select().single();
         if (error) throw error;
 
+        let assignedLedger = '';
+        try {
+          const ledgerRes: any = await apiRequest('/api/accounting/vendors/ensure-ledger', {
+            method: 'POST',
+            body: JSON.stringify({ vendor_id: created.id, vendor_name: payload.name }),
+          });
+          if (ledgerRes?.data?.code) assignedLedger = ` [GL ${ledgerRes.data.code}]`;
+        } catch (ledgerErr) {
+          console.warn('[vendor-adapter] ledger auto-assign notice:', ledgerErr);
+        }
+
         return {
           success: true,
           createdId: created.id,
-          resultText: `Vendor "${vendorCode} - ${data.name}" created.`,
+          resultText: `Vendor "${vendorCode} - ${data.name}"${assignedLedger} created.`,
         };
       }
 

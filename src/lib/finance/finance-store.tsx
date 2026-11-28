@@ -572,7 +572,7 @@ const INITIAL_CASH_BOOK: CashBookEntry[] = [];
 
 export interface FinanceStoreContextType {
   journalEntries: JournalLedgerEntry[];
-  addJournalEntry: (entry: Omit<JournalLedgerEntry, "id" | "status">) => void;
+  addJournalEntry: (entry: Omit<JournalLedgerEntry, "id" | "status">, options?: { skipDbPersist?: boolean }) => void;
 
   grnMappings: GrnCostMapping[];
   addGrnMapping: (mapping: Omit<GrnCostMapping, "id">) => void;
@@ -2227,10 +2227,14 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  function addJournalEntry(entry: Omit<JournalLedgerEntry, "id" | "status">) {
+  function addJournalEntry(entry: Omit<JournalLedgerEntry, "id" | "status">, options?: { skipDbPersist?: boolean }) {
     const periodCheck = isPostingPeriodClosed(entry.posting_date);
     if (periodCheck.closed) {
       toast.error(`Posting rejected: Accounting period ${periodCheck.periodName} is CLOSED.`);
+      return;
+    }
+    if (options?.skipDbPersist) {
+      window.dispatchEvent(new Event("finance_vouchers_updated"));
       return;
     }
     const lines = entry.lines && entry.lines.length
@@ -2339,28 +2343,30 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
     });
     toast.success(`${newVch.voucher_type} ${newVch.voucher_no} posted successfully!`);
 
-    // Persist to DB fin_vouchers (best-effort, fire-and-forget).
-    const typeCode = newVch.voucher_type === "Payment Voucher" ? "PV" : newVch.voucher_type === "Receipt Voucher" ? "RV" : "JV";
-    void Promise.resolve(
-      insertVoucherOnce({
-        voucher_number: newVch.voucher_no,
-        voucher_date: newVch.date,
-        voucher_type: typeCode,
-        reference_no: newVch.debit_code || null,
-        description: newVch.name,
-        total_amount: newVch.amount,
-        status: "posted",
-        posted_at: new Date().toISOString(),
-      })
-    ).then(({ error, data }: any) => {
-      if (error) {
-        console.warn("[FinanceStore] fin_vouchers persist warn:", error.message);
-        return;
-      }
-      // Mark the newly inserted row as seen so realtime won't toast it again.
-      const insertedId = Array.isArray(data) ? data[0]?.id : (data as any)?.id;
-      if (insertedId) seenVoucherIds.current.add(String(insertedId));
-    });
+    // Persist to DB fin_vouchers only when not already posted server-side.
+    if (!options?.skipDbPersist) {
+      const typeCode = newVch.voucher_type === "Payment Voucher" ? "PV" : newVch.voucher_type === "Receipt Voucher" ? "RV" : "JV";
+      void Promise.resolve(
+        insertVoucherOnce({
+          voucher_number: newVch.voucher_no,
+          voucher_date: newVch.date,
+          voucher_type: typeCode,
+          reference_no: newVch.debit_code || null,
+          description: newVch.name,
+          total_amount: newVch.amount,
+          status: "posted",
+          posted_at: new Date().toISOString(),
+        })
+      ).then(({ error, data }: any) => {
+        if (error) {
+          console.warn("[FinanceStore] fin_vouchers persist warn:", error.message);
+          return;
+        }
+        // Mark the newly inserted row as seen so realtime won't toast it again.
+        const insertedId = Array.isArray(data) ? data[0]?.id : (data as any)?.id;
+        if (insertedId) seenVoucherIds.current.add(String(insertedId));
+      });
+    }
   }
 
   function addReceivableInvoice(inv: Omit<ReceivableInvoice, "id" | "status">) {

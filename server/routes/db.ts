@@ -9,6 +9,7 @@ import { coerceForModel, coerceWhere, buildIncludeFromSelect } from '../lib/coer
 import { postManualVoucher, postAccountingEvent, resolveUnitSl, refreshEventTotals, validateEventBalance, manualPdcStatusUpdate, nextCustomerCode } from '../lib/finance-rpc';
 import { HttpError, sendDbError } from '../lib/errors';
 import { dbAllowed, ruleFor, rpcAllowed, type Op } from '../lib/db-policy';
+import { scrubSecrets } from '../lib/redact';
 import { createLease, terminateLease, insertPdc, isTerminatedLease } from '../services/leases';
 import { createUnit, createCustomer, createReservation, assertPropertyDeletable } from '../services/property';
 
@@ -75,7 +76,7 @@ async function recordMaterialUsage(usage: any) {
         reference_no: `MI-${String((created as any).id).slice(0, 18)}`,
         description: `Material issue — part ${usage.part_id ?? ''} x ${usage.quantity}${usage.ticket_id ? ' (ticket ' + usage.ticket_id + ')' : ''}`,
         lines: [
-          { account_code: '51004001', debit: cost, credit: 0 },   // Repair and Maintenance Cost
+          { account_code: '51004006', debit: cost, credit: 0 },   // Cost of CMEP Materials
           { account_code: '12800001', debit: 0, credit: cost },   // Stock-Inventory
         ],
       });
@@ -127,6 +128,14 @@ export async function nextSequenceNumber(docType: string, fiscalYear: number, pr
 }
 
 const router = Router();
+
+// A2: no response from the generic proxy may carry credential material (password hashes live in
+// users.raw_user_meta_data), including rows reached through relation includes.
+router.use((_req: Request, res: Response, next: NextFunction) => {
+  const original = res.json.bind(res);
+  res.json = ((body?: any) => original(scrubSecrets(body))) as typeof res.json;
+  next();
+});
 
 // Permission check for every /api/db request, before any handler runs. Deny by default.
 const OP_FOR_ROUTE: Record<string, Op> = { query: 'read', insert: 'write', upsert: 'write', update: 'write', delete: 'delete' };

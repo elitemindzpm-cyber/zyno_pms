@@ -2,11 +2,17 @@
 // Finance / GL / Accounting Events endpoints
 import { Router, Request, Response } from 'express';
 import { randomUUID } from 'crypto';
+import { Prisma } from '@prisma/client';
 import prisma, { txn } from '../lib/prisma';
 import { tenantMiddleware, parsePagination, paginatedResponse } from '../lib/middleware';
 import { dbAllowed } from '../lib/db-policy';
 import { postManualVoucher } from '../lib/finance-rpc';
 import { money as money2 } from '../lib/money';
+import {
+  ensureStockInventoryAccountTx,
+  ensureVendorLedgerTx,
+  buildVendorAllocationPlan,
+} from '../lib/vendor-ledger';
 
 const router = Router();
 router.use(tenantMiddleware);
@@ -302,6 +308,79 @@ router.post('/coa', async (req: Request, res: Response) => {
   } catch (e: any) {
     const status = e?.status || 500;
     res.status(status).json({ error: e.message || 'Failed to create Chart of Account' });
+  }
+});
+
+// Rename a GL or SL ledger account across COA hierarchy, ERP COA master, and fin_coa_accounts.
+router.patch('/coa', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'coa_sl', 'write')) {
+      return res.status(403).json({ error: 'Not authorized to update Chart of Accounts' });
+    }
+    const code = String(req.body?.code || '').trim();
+    const name = String(req.body?.name || '').trim();
+    const level = req.body?.level === 'GL' ? 'GL' : req.body?.level === 'SL' ? 'SL' : undefined;
+    if (!code || !name) {
+      return res.status(400).json({ error: 'Account code and new ledger name are required' });
+    }
+    if (name.length > 200) {
+      return res.status(400).json({ error: 'Account name must be 200 characters or fewer' });
+    }
+
+    const updated = await txn(async (tx) => {
+      let matched = false;
+
+      if (level !== 'SL') {
+        const glRow = await tx.coa_gl.findUnique({ where: { code } });
+        if (glRow) {
+          matched = true;
+          await tx.coa_gl.update({ where: { code }, data: { name } });
+          await tx.erp_chart_of_accounts.updateMany({ where: { gl_code: code }, data: { gl_name: name } });
+        }
+      }
+
+      if (level !== 'GL') {
+        const slRow = await tx.coa_sl.findUnique({ where: { code } });
+        if (slRow) {
+          matched = true;
+          await tx.coa_sl.update({ where: { code }, data: { name } });
+          await tx.fin_unit_sl_accounts.updateMany({ where: { sl_code: code }, data: { sl_name: name } });
+          await tx.unit_coa_mapping.updateMany({ where: { pdc_sl_code: code }, data: { pdc_sl_name: name } });
+          await tx.unit_coa_mapping.updateMany({ where: { deposit_sl_code: code }, data: { deposit_sl_name: name } });
+          await tx.unit_coa_mapping.updateMany({ where: { receivable_sl_code: code }, data: { receivable_sl_name: name } });
+        }
+      }
+
+      const erpRow = await tx.erp_chart_of_accounts.findUnique({ where: { code } });
+      if (erpRow) {
+        matched = true;
+        await tx.erp_chart_of_accounts.update({
+          where: { code },
+          data: {
+            name,
+            ...(erpRow.sl_code === code ? { sl_name: name } : {}),
+            ...(erpRow.gl_code === code ? { gl_name: name } : {}),
+          },
+        });
+      }
+
+      const finRow = await tx.fin_coa_accounts.findUnique({ where: { account_code: code } });
+      if (finRow) {
+        matched = true;
+        await tx.fin_coa_accounts.update({ where: { account_code: code }, data: { account_name: name } });
+      }
+
+      if (!matched) {
+        throw Object.assign(new Error(`Account code ${code} not found in Chart of Accounts`), { status: 404 });
+      }
+      return { code, name, level: level || (finRow?.account_level === 'GL' ? 'GL' : 'SL') };
+    });
+
+    res.json({ data: updated });
+  } catch (e: any) {
+    const status = e?.status || 500;
+    res.status(status).json({ error: e.message || 'Failed to rename Chart of Account' });
   }
 });
 
@@ -683,6 +762,154 @@ router.post('/post-voucher', async (req: Request, res: Response) => {
   }
 });
 
+// Final settlement: every voucher of one settlement posts in ONE transaction (all or nothing), against the
+// lease's own tenant/property/unit as stored in the database. The client only supplies the resolved account
+// lines; it can no longer post against placeholder or mismatched dimensions.
+router.post('/post-settlement', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'write')) return res.status(403).json({ error: 'Not authorized to post a settlement' });
+    const b = req.body || {};
+    const leaseId = String(b.lease_id || '').trim();
+    const key = String(b.settlement_key || '').trim();
+    const vouchers: any[] = Array.isArray(b.vouchers) ? b.vouchers : [];
+    if (!leaseId || key.length < 3) return res.status(400).json({ error: 'lease_id and settlement_key are required' });
+    if (!vouchers.length || vouchers.length > 40) return res.status(400).json({ error: 'A settlement needs between 1 and 40 vouchers' });
+    const leaseRows = await prisma.$queryRaw<any[]>`SELECT id, customer_id, property_id, unit_id FROM leases WHERE id = ${leaseId} LIMIT 1`;
+    if (!leaseRows.length) return res.status(404).json({ error: 'Lease not found. A settlement cannot be posted without a real lease.' });
+    const lease = leaseRows[0];
+    if (!lease.customer_id || !lease.property_id || !lease.unit_id) {
+      return res.status(409).json({ error: 'The lease has no tenant, property or unit recorded, so the settlement cannot be dimensioned.' });
+    }
+    const userId = (req as any).user?.id ?? null;
+    const results = await txn(async (tx) => {
+      const out: any[] = [];
+      for (let i = 0; i < vouchers.length; i += 1) {
+        const v = vouchers[i] || {};
+        const posted = await postManualVoucher({
+          voucher_date: v.voucher_date,
+          voucher_type: v.voucher_type,
+          reference_no: v.reference_no || null,
+          description: v.description || null,
+          lines: Array.isArray(v.lines) ? v.lines : [],
+          property_id: lease.property_id,
+          unit_id: lease.unit_id,
+          customer_id: lease.customer_id,
+          tenant_id: lease.customer_id,
+          lease_id: lease.id,
+          source_type: 'FINAL_SETTLEMENT',
+          source_id: lease.id,
+          created_by: userId,
+          idempotency_key: `SETTLE|${key}|${i + 1}`,
+        }, tx);
+        out.push(...posted);
+      }
+      return out;
+    });
+    res.status(201).json({ data: results });
+  } catch (e: any) {
+    if (e?.status) return res.status(e.status).json({ error: e.message });
+    console.error('[post-settlement]', e?.message);
+    res.status(500).json({ error: 'Failed to post the settlement' });
+  }
+});
+
+// Early vacate: reverses the unearned part of rent invoices already recognised, in ONE transaction, with the
+// amounts computed here from the posted ledger (not by the browser). A repeat call posts nothing twice.
+// The client supplies only the two resolved account codes for the reversal entry.
+router.post('/early-vacate-reversals', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'write')) return res.status(403).json({ error: 'Not authorized to post reversals' });
+    const b = req.body || {};
+    const leaseId = String(b.lease_id || '').trim();
+    const vacate = ymd(b.vacate_date);
+    const leaseEnd = ymd(b.lease_end_date);
+    const debitCode = String(b.debit_code || '').trim();
+    const creditCode = String(b.credit_code || '').trim();
+    if (!leaseId || !vacate || !leaseEnd || !debitCode || !creditCode) {
+      return res.status(400).json({ error: 'lease_id, vacate_date, lease_end_date, debit_code and credit_code are required' });
+    }
+    if (new Date(vacate).getTime() >= new Date(leaseEnd).getTime()) {
+      return res.json({ data: { reversedInvoiceCount: 0, reversedRentAmount: 0 } });
+    }
+    const leaseRows = await prisma.$queryRaw<any[]>`SELECT id, customer_id, property_id, unit_id FROM leases WHERE id = ${leaseId} LIMIT 1`;
+    if (!leaseRows.length) return res.status(404).json({ error: 'Lease not found' });
+    const lease = leaseRows[0];
+    if (!lease.customer_id || !lease.property_id || !lease.unit_id) {
+      return res.status(409).json({ error: 'The lease has no tenant, property or unit recorded, so the reversal cannot be dimensioned.' });
+    }
+    const userId = (req as any).user?.id ?? null;
+    const result = await txn(async (tx) => {
+      const events = await tx.$queryRaw<any[]>`
+        SELECT id, reference_number, posting_date, metadata FROM fin_accounting_events
+         WHERE lease_id = ${lease.id} AND status = 'POSTED' ORDER BY posting_date ASC`;
+      const vacateMs = new Date(vacate).getTime();
+      let count = 0;
+      let total = 0;
+      for (const ev of events) {
+        let meta: any = {};
+        try { meta = typeof ev.metadata === 'string' ? JSON.parse(ev.metadata || '{}') : (ev.metadata || {}); } catch { meta = {}; }
+        const origin = String(meta.accounting_origin || '');
+        if (origin && origin !== 'RENT_INVOICE') continue;
+        const ref = String(ev.reference_number || ev.id);
+        // Already reversed by an earlier run (any vacate date).
+        const done = await tx.$queryRaw<any[]>`SELECT id FROM fin_accounting_events WHERE reference_number = ${`REV-${ref}`} AND status = 'POSTED' LIMIT 1`;
+        if (done.length) continue;
+        const lines = await tx.$queryRaw<any[]>`SELECT credit FROM fin_accounting_event_lines WHERE event_id = ${ev.id} AND account_code = '41100001'`;
+        const rent = money2(lines.reduce((s, l) => s + Number(l.credit || 0), 0));
+        if (rent <= 0) continue;
+        let amount = 0;
+        const ps = typeof meta.service_period_start === 'string' ? meta.service_period_start : null;
+        const pe = typeof meta.service_period_end === 'string' ? meta.service_period_end : null;
+        if (ps && pe) {
+          const start = new Date(ps).getTime();
+          const end = new Date(pe).getTime();
+          if (!(end > vacateMs)) continue;
+          if (start > vacateMs) amount = rent;
+          else {
+            const totalDays = Math.max(1, Math.ceil((end - start) / 86400000));
+            const futureDays = Math.max(0, Math.ceil((end - vacateMs) / 86400000));
+            amount = rent * Math.min(1, futureDays / totalDays);
+          }
+        } else {
+          if (new Date(ev.posting_date).getTime() <= vacateMs) continue;
+          amount = rent;
+        }
+        amount = money2(amount);
+        if (amount <= 0) continue;
+        await postManualVoucher({
+          voucher_date: new Date().toISOString().slice(0, 10),
+          voucher_type: 'Journal',
+          reference_no: `REV-${ref}`,
+          description: `Rent Invoice Reversal - ${ref} (Early tenant vacate effective ${vacate}; contractual expiry was ${leaseEnd})`,
+          lines: [
+            { account_code: debitCode, debit: amount, credit: 0, description: 'Unearned rent reversal' },
+            { account_code: creditCode, debit: 0, credit: amount, description: 'Unearned rent reversal' },
+          ],
+          property_id: lease.property_id,
+          unit_id: lease.unit_id,
+          customer_id: lease.customer_id,
+          tenant_id: lease.customer_id,
+          lease_id: lease.id,
+          source_type: 'EARLY_VACATE_REVERSAL',
+          source_id: lease.id,
+          created_by: userId,
+          idempotency_key: `EVACATE|${lease.id}|${ev.id}`,
+        }, tx);
+        count += 1;
+        total = money2(total + amount);
+      }
+      return { reversedInvoiceCount: count, reversedRentAmount: total };
+    });
+    res.status(201).json({ data: result });
+  } catch (e: any) {
+    if (e?.status) return res.status(e.status).json({ error: e.message });
+    console.error('[early-vacate-reversals]', e?.message);
+    res.status(500).json({ error: 'Failed to post the early-vacate reversals' });
+  }
+});
+
 // Journal ledger: posted journal vouchers, shaped for the Journal Ledger page.
 router.get('/journals', async (req: Request, res: Response) => {
   try {
@@ -996,39 +1223,6 @@ router.get('/ar-invoices', async (req: Request, res: Response) => {
     const sliced = truncated ? rows.slice(0, 5000) : rows;
     res.json({ data: sliced.map(arRow), truncated, limit: 5000 });
   } catch (e: any) { console.error('[ar-invoices]', e?.message); res.status(500).json({ error: 'Failed to load receivable invoices' }); }
-});
-
-// D8: single server-side receivables ageing. Buckets by days past DUE date against an as-of date
-// (current = not yet due), matching the AR/AP ageing report, so every screen can show the same numbers.
-router.get('/ar-ageing', async (req: Request, res: Response) => {
-  try {
-    const role = (req as any).user?.role as string | undefined;
-    if (!dbAllowed(role, 'fin_vouchers', 'read')) return res.status(403).json({ error: 'Not authorized to view receivable ageing' });
-    const asOf = ymd(req.query.as_of) ?? new Date().toISOString().slice(0, 10);
-    const rows = await prisma.$queryRaw<any[]>`
-      SELECT COALESCE(NULLIF(customer_id, ''), tenant) AS party_key, MAX(tenant) AS tenant,
-        SUM(CASE WHEN DATEDIFF(${asOf}, due_date) <= 0 THEN amount - COALESCE(paid_amount, 0) ELSE 0 END) AS current_amt,
-        SUM(CASE WHEN DATEDIFF(${asOf}, due_date) BETWEEN 1 AND 30 THEN amount - COALESCE(paid_amount, 0) ELSE 0 END) AS d1_30,
-        SUM(CASE WHEN DATEDIFF(${asOf}, due_date) BETWEEN 31 AND 60 THEN amount - COALESCE(paid_amount, 0) ELSE 0 END) AS d31_60,
-        SUM(CASE WHEN DATEDIFF(${asOf}, due_date) BETWEEN 61 AND 90 THEN amount - COALESCE(paid_amount, 0) ELSE 0 END) AS d61_90,
-        SUM(CASE WHEN DATEDIFF(${asOf}, due_date) > 90 THEN amount - COALESCE(paid_amount, 0) ELSE 0 END) AS d90_plus,
-        SUM(amount - COALESCE(paid_amount, 0)) AS total
-      FROM fin_ar_invoices
-      WHERE invoice_date <= ${asOf} AND LOWER(COALESCE(status, '')) NOT IN ('cancelled', 'void', 'paid')
-        AND (amount - COALESCE(paid_amount, 0)) > 0
-      GROUP BY COALESCE(NULLIF(customer_id, ''), tenant)
-      ORDER BY total DESC LIMIT 5000`;
-    const n = (v: unknown) => Math.round(Number(v ?? 0) * 100) / 100;
-    const data = rows.map((r) => ({
-      party_key: r.party_key, tenant: r.tenant, current: n(r.current_amt), d1_30: n(r.d1_30),
-      d31_60: n(r.d31_60), d61_90: n(r.d61_90), d90_plus: n(r.d90_plus), total: n(r.total),
-    }));
-    const totals = data.reduce((t, r) => ({
-      current: n(t.current + r.current), d1_30: n(t.d1_30 + r.d1_30), d31_60: n(t.d31_60 + r.d31_60),
-      d61_90: n(t.d61_90 + r.d61_90), d90_plus: n(t.d90_plus + r.d90_plus), total: n(t.total + r.total),
-    }), { current: 0, d1_30: 0, d31_60: 0, d61_90: 0, d90_plus: 0, total: 0 });
-    res.json({ as_of: asOf, data, totals });
-  } catch (e: any) { console.error('[ar-ageing]', e?.message); res.status(500).json({ error: 'Failed to load receivable ageing' }); }
 });
 
 // Create one or more AR invoices. A unit already invoiced for the billing period is skipped (reported back).
@@ -1591,6 +1785,411 @@ router.get('/compliance', async (_req: Request, res: Response) => {
     const data = await prisma.$queryRaw`SELECT * FROM v_posting_engine_compliance LIMIT 100`;
     res.json({ data });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// ── Vendor Ledgers (21000101+), Direct GRN GL Posting, and Multi-Invoice Supplier Payments ──
+
+router.get('/vendors/ledgers', async (req: Request, res: Response) => {
+  try {
+    if (!readGuard(req, res, 'vendor ledgers')) return;
+    const [vendors, slRows, balanceRows] = await Promise.all([
+      prisma.fin_vendors.findMany({ orderBy: { id: 'asc' } }),
+      prisma.fin_coa_accounts.findMany({
+        where: { account_code: { startsWith: '210001' }, is_active: true },
+        orderBy: { account_code: 'asc' },
+      }),
+      prisma.$queryRaw<Array<{ account_code: string; net_credit: any }>>`
+        SELECT l.account_code, COALESCE(SUM(l.credit - l.debit), 0) AS net_credit
+        FROM fin_voucher_lines l
+        INNER JOIN fin_vouchers v ON v.id = l.voucher_id
+        WHERE LOWER(v.status) = 'posted' AND l.account_code LIKE '21000%'
+        GROUP BY l.account_code`,
+    ]);
+    const slByName = new Map(slRows.map((s) => [String(s.account_name || '').trim().toLowerCase(), s]));
+    const balByCode = new Map(balanceRows.map((b) => [String(b.account_code), money2(b.net_credit)]));
+
+    const data = vendors.map((v) => {
+      const matched = slByName.get(String(v.name || '').trim().toLowerCase());
+      const ledgerCode = matched?.account_code ?? null;
+      return {
+        vendor_id: v.id,
+        vendor_code: v.code,
+        vendor_name: v.name,
+        ledger_code: ledgerCode,
+        ledger_name: matched?.account_name ?? v.name,
+        ledger_balance: ledgerCode ? (balByCode.get(ledgerCode) ?? 0) : 0,
+      };
+    });
+    res.json({ data });
+  } catch (e: any) { fail(res, 'vendors:ledgers', e, 'Failed to load vendor ledgers'); }
+});
+
+router.post('/vendors/ensure-ledger', async (req: Request, res: Response) => {
+  try {
+    if (!writeGuard(req, res, 'create vendor ledger')) return;
+    const vendorId = req.body?.vendor_id ?? null;
+    const vendorName = String(req.body?.vendor_name || '').trim();
+    if (!vendorId && !vendorName) {
+      return res.status(400).json({ error: 'vendor_id or vendor_name is required' });
+    }
+    const data = await txn((tx) => ensureVendorLedgerTx(tx, { vendorId, vendorName }));
+    res.status(201).json({ data });
+  } catch (e: any) { fail(res, 'vendors:ensure-ledger', e, 'Failed to assign vendor ledger code'); }
+});
+
+// Post GRN double entry immediately on completion:
+// Dr 12800001 Inventory / Stock in Hand, Cr 21000xxx Supplier Payable Account.
+router.post('/grn-post', async (req: Request, res: Response) => {
+  try {
+    if (!writeGuard(req, res, 'post goods receipt to ledger')) return;
+    const b = req.body || {};
+    const grnNumber = String(b.grn_number || '').trim();
+    const grnId = b.grn_id ? String(b.grn_id).trim() : null;
+    const totalAmount = money2(b.total_amount);
+    const grnDate = ymd(b.grn_date || b.date) || new Date().toISOString().slice(0, 10);
+    if (!grnNumber || totalAmount <= 0) {
+      return res.status(400).json({ error: 'grn_number and total_amount above zero are required' });
+    }
+
+    const result = await txn(async (tx) => {
+      const stockCode = await ensureStockInventoryAccountTx(tx);
+      const vendorLedger = await ensureVendorLedgerTx(tx, {
+        vendorId: b.vendor_id ?? null,
+        vendorName: b.vendor_name ?? null,
+      });
+      const poRef = b.po_number ? ` (PO: ${b.po_number})` : '';
+      const posted = await postManualVoucher({
+        voucher_date: grnDate,
+        voucher_type: 'Journal',
+        reference_no: grnNumber,
+        idempotency_key: `PROC:GRN:${grnId || grnNumber}`,
+        source_type: 'PROC_GRN',
+        source_id: grnId,
+        property_id: b.property_name ? String(b.property_name) : null,
+        description: `GRN ${grnNumber} — ${vendorLedger.name}${poRef}`,
+        lines: [
+          {
+            account_code: stockCode,
+            debit: totalAmount,
+            credit: 0,
+            description: `Inventory / Stock in Hand — ${grnNumber}${poRef}`,
+          },
+          {
+            account_code: vendorLedger.code,
+            debit: 0,
+            credit: totalAmount,
+            description: `Supplier Payable — ${vendorLedger.name} (${grnNumber})`,
+          },
+        ],
+        created_by: (req as any).user?.id ?? null,
+      }, tx);
+
+      const postInfo = posted?.[0] || null;
+      return {
+        voucher_id: postInfo?.voucher_id ?? null,
+        voucher_number: postInfo?.voucher_number ?? grnNumber,
+        vendor_ledger_code: vendorLedger.code,
+        vendor_ledger_name: vendorLedger.name,
+        stock_account_code: stockCode,
+      };
+    });
+
+    res.status(201).json({ data: result });
+  } catch (e: any) { fail(res, 'grn:post', e, 'Failed to post GRN accounting entry'); }
+});
+
+// List outstanding AP invoices / GRNs + current payable balance for a supplier.
+router.get('/vendor-open-items', async (req: Request, res: Response) => {
+  try {
+    if (!readGuard(req, res, 'vendor open invoices')) return;
+    const vendorIdParam = String(req.query.vendor_id || '').trim();
+    const vendorNameParam = String(req.query.vendor_name || '').trim();
+    if (!vendorIdParam && !vendorNameParam) {
+      return res.status(400).json({ error: 'vendor_id or vendor_name is required' });
+    }
+
+    let vendor: any = null;
+    if (vendorIdParam && /^\d+$/.test(vendorIdParam)) {
+      vendor = await prisma.fin_vendors.findUnique({ where: { id: Number(vendorIdParam) } });
+    }
+    if (!vendor && vendorIdParam) {
+      vendor = await prisma.fin_vendors.findFirst({ where: { code: vendorIdParam } });
+    }
+    if (!vendor && vendorNameParam) {
+      vendor = await prisma.fin_vendors.findFirst({ where: { name: vendorNameParam } });
+    }
+
+    const vIdKeys = Array.from(new Set([
+      vendor ? String(vendor.id) : '',
+      vendor?.code || '',
+      vendor?.name || '',
+      vendorIdParam,
+      vendorNameParam,
+    ].filter(Boolean)));
+
+    const vName = vendor?.name || vendorNameParam;
+    const slRows = await prisma.fin_coa_accounts.findMany({
+      where: { account_code: { startsWith: '210001' }, is_active: true },
+      orderBy: { account_code: 'asc' },
+    });
+    const matchedSl = slRows.find(
+      (s) => String(s.account_name || '').trim().toLowerCase() === String(vName || '').trim().toLowerCase(),
+    );
+
+    const ledgerCode = matchedSl?.account_code || '21000';
+    const [invoices, receipts, balRows] = await Promise.all([
+      prisma.proc_ap_invoices.findMany({
+        where: { vendor_id: { in: vIdKeys } },
+        orderBy: [{ invoice_date: 'asc' }, { created_at: 'asc' }],
+      }),
+      prisma.fin_payment_receipts.findMany({
+        where: {
+          OR: [
+            { vendor_id: { in: vIdKeys } },
+            ...(vName ? [{ vendor_name: vName }] : []),
+          ],
+        },
+      }),
+      prisma.$queryRaw<Array<{ net_credit: any }>>`
+        SELECT COALESCE(SUM(l.credit - l.debit), 0) AS net_credit
+        FROM fin_voucher_lines l
+        INNER JOIN fin_vouchers v ON v.id = l.voucher_id
+        WHERE LOWER(v.status) = 'posted' AND l.account_code = ${ledgerCode}`,
+    ]);
+
+    const paidByInvoice = new Map<string, number>();
+    let unallocatedPaid = 0;
+    for (const r of receipts) {
+      if (String(r.invoice_number) === 'UNALLOCATED') {
+        unallocatedPaid = money2(unallocatedPaid + Number(r.amount_paid || 0));
+      } else {
+        const key = String(r.invoice_number);
+        paidByInvoice.set(key, money2((paidByInvoice.get(key) || 0) + Number(r.amount_paid || 0)));
+      }
+    }
+
+    const items = invoices.map((inv) => {
+      const invNo = String(inv.invoice_number || inv.id);
+      const totalAmt = money2(inv.total_amount ?? inv.amount ?? 0);
+      const paidAmt = inv.status === 'PAID'
+        ? totalAmt
+        : Math.min(totalAmt, paidByInvoice.get(invNo) || 0);
+      const remainingAmt = Math.max(0, money2(totalAmt - paidAmt));
+      return {
+        id: inv.id,
+        invoice_number: invNo,
+        grn_number: inv.grn_number || null,
+        po_number: inv.po_number || null,
+        invoice_date: inv.invoice_date ? dateOnly(inv.invoice_date) : null,
+        due_date: inv.due_date ? dateOnly(inv.due_date) : null,
+        total_amount: totalAmt,
+        paid_amount: paidAmt,
+        remaining_amount: remainingAmt,
+        status: remainingAmt <= 0.005 ? 'PAID' : paidAmt > 0 ? 'PARTIAL' : String(inv.status || 'OPEN'),
+      };
+    });
+
+    const ledgerBalance = matchedSl ? money2(balRows[0]?.net_credit ?? 0) : money2(items.reduce((s, i) => s + i.remaining_amount, 0) - unallocatedPaid);
+
+    res.json({
+      data: {
+        vendor_id: vendor?.id ?? null,
+        vendor_name: vName,
+        vendor_gl_code: matchedSl?.account_code ?? null,
+        vendor_gl_name: matchedSl?.account_name ?? vName,
+        ledger_balance: Math.max(0, ledgerBalance),
+        unallocated_paid: unallocatedPaid,
+        items,
+      },
+    });
+  } catch (e: any) { fail(res, 'vendor-open-items', e, 'Failed to load supplier outstanding invoices'); }
+});
+
+// Multi-GRN / Multi-Invoice OR unallocated partial Supplier Payment Voucher.
+router.post('/vendor-payment', async (req: Request, res: Response) => {
+  try {
+    if (!writeGuard(req, res, 'post supplier payment voucher')) return;
+    const b = req.body || {};
+    const vendorId = b.vendor_id ?? null;
+    const vendorName = String(b.vendor_name || '').trim();
+    const paymentDate = ymd(b.payment_date || b.date) || new Date().toISOString().slice(0, 10);
+    const bankGlCode = String(b.bank_gl_code || DEFAULT_BANK_CODE).trim();
+    const paymentMethod = String(b.payment_method || 'Bank Transfer').trim();
+    const referenceNo = b.reference_no ? String(b.reference_no).trim() : null;
+    const propertyName = b.property_name ? String(b.property_name).trim() : null;
+    const narration = b.narration ? String(b.narration).trim() : '';
+    const rawAllocations: any[] = Array.isArray(b.allocations) ? b.allocations : [];
+    const reqTotal = money2(b.total_amount ?? b.amount);
+
+    if (!vendorId && !vendorName) {
+      return res.status(400).json({ error: 'Supplier vendor_id or vendor_name is required' });
+    }
+
+    const result = await txn(async (tx) => {
+      const vendorLedger = await ensureVendorLedgerTx(tx, { vendorId, vendorName });
+      const vKeys = Array.from(new Set([
+        vendorLedger.vendorId !== null ? String(vendorLedger.vendorId) : '',
+        vendorId ? String(vendorId) : '',
+        vendorLedger.name,
+        vendorName,
+      ].filter(Boolean)));
+
+      // Load current invoice balances inside the locked transaction
+      const allocInputs = [];
+      for (const raw of rawAllocations) {
+        const payAmt = money2(raw?.amount);
+        if (payAmt <= 0) continue;
+        const invNo = String(raw?.invoice_number || '').trim();
+        const invId = raw?.invoice_id ? String(raw.invoice_id).trim() : null;
+        if (!invNo && !invId) continue;
+
+        const invRows = await tx.$queryRaw<any[]>`
+          SELECT id, invoice_number, grn_number, po_number, total_amount, amount, status
+          FROM proc_ap_invoices
+          WHERE ${invId ? Prisma.sql`id = ${invId}` : Prisma.sql`invoice_number = ${invNo}`}
+          LIMIT 1 FOR UPDATE`;
+        if (!invRows.length) {
+          throw Object.assign(new Error(`Invoice ${invNo || invId} not found`), { status: 404 });
+        }
+        const inv = invRows[0];
+        const totalAmt = money2(inv.total_amount ?? inv.amount ?? 0);
+        const priorRows = await tx.$queryRaw<Array<{ paid: any }>>`
+          SELECT COALESCE(SUM(amount_paid), 0) AS paid
+          FROM fin_payment_receipts
+          WHERE invoice_number = ${String(inv.invoice_number)}`;
+        const alreadyPaid = inv.status === 'PAID' ? totalAmt : money2(priorRows[0]?.paid ?? 0);
+        const remaining = Math.max(0, money2(totalAmt - alreadyPaid));
+        allocInputs.push({
+          invoice_id: String(inv.id),
+          invoice_number: String(inv.invoice_number),
+          grn_number: inv.grn_number ? String(inv.grn_number) : null,
+          po_number: inv.po_number ? String(inv.po_number) : null,
+          remaining,
+          amount: payAmt,
+        });
+      }
+
+      const plan = buildVendorAllocationPlan({
+        totalAmount: reqTotal,
+        allocations: allocInputs,
+      });
+
+      const refLabel = plan.allocations.length > 0
+        ? plan.allocations.map((a) => a.grn_number || a.invoice_number).join(', ')
+        : 'Partial / On-Account';
+      const desc = narration || `Supplier Payment — ${vendorLedger.name} (${refLabel})`;
+
+      const posted = await postManualVoucher({
+        voucher_date: paymentDate,
+        voucher_type: 'Payment',
+        reference_no: referenceNo,
+        idempotency_key: b.idempotency_key ? String(b.idempotency_key) : undefined,
+        source_type: 'VENDOR_PAYMENT',
+        property_id: propertyName || null,
+        description: desc,
+        lines: [
+          {
+            account_code: vendorLedger.code,
+            debit: plan.totalAmount,
+            credit: 0,
+            description: `Supplier Payable Settlement — ${vendorLedger.name}`,
+          },
+          {
+            account_code: bankGlCode,
+            debit: 0,
+            credit: plan.totalAmount,
+            description: `${paymentMethod} Payment — ${vendorLedger.name}`,
+          },
+        ],
+        created_by: (req as any).user?.id ?? null,
+      }, tx);
+
+      const postInfo = posted?.[0];
+      const voucherNumber = postInfo?.voucher_number || referenceNo || `PV-${Date.now()}`;
+
+      if (plan.allocations.length > 0) {
+        for (let idx = 0; idx < plan.allocations.length; idx++) {
+          const alloc = plan.allocations[idx];
+          const rcptNo = `VPR-${voucherNumber}-${idx + 1}`;
+          await tx.fin_payment_receipts.create({
+            data: {
+              receipt_number: rcptNo,
+              voucher_number: voucherNumber,
+              invoice_number: alloc.invoice_number,
+              po_number: alloc.po_number,
+              grn_number: alloc.grn_number,
+              vendor_id: vendorLedger.vendorId !== null ? String(vendorLedger.vendorId) : (vendorId ? String(vendorId) : null),
+              vendor_name: vendorLedger.name,
+              amount_paid: alloc.amount,
+              payment_date: new Date(`${paymentDate}T00:00:00.000Z`),
+              payment_method: paymentMethod,
+              reference_no: referenceNo,
+              bank_account: bankGlCode,
+              status: alloc.new_status === 'PAID' ? 'Settled' : 'Partial',
+              remarks: desc,
+            },
+          });
+          if (alloc.invoice_id) {
+            await tx.proc_ap_invoices.update({
+              where: { id: alloc.invoice_id },
+              data: { status: alloc.new_status },
+            });
+          }
+        }
+      } else {
+        await tx.fin_payment_receipts.create({
+          data: {
+            receipt_number: `VPR-${voucherNumber}`,
+            voucher_number: voucherNumber,
+            invoice_number: 'UNALLOCATED',
+            po_number: null,
+            grn_number: null,
+            vendor_id: vendorLedger.vendorId !== null ? String(vendorLedger.vendorId) : (vendorId ? String(vendorId) : null),
+            vendor_name: vendorLedger.name,
+            amount_paid: plan.totalAmount,
+            payment_date: new Date(`${paymentDate}T00:00:00.000Z`),
+            payment_method: paymentMethod,
+            reference_no: referenceNo,
+            bank_account: bankGlCode,
+            status: 'Partial',
+            remarks: desc,
+          },
+        });
+      }
+
+      // If supplier's net payable balance is now settled to 0 (or below 0.01), close all open invoices/GRNs for this supplier.
+      const balRows = await tx.$queryRaw<Array<{ net_credit: any }>>`
+        SELECT COALESCE(SUM(l.credit - l.debit), 0) AS net_credit
+        FROM fin_voucher_lines l
+        INNER JOIN fin_vouchers v ON v.id = l.voucher_id
+        WHERE LOWER(v.status) = 'posted' AND l.account_code = ${vendorLedger.code}`;
+      const remainingLedgerBalance = money2(balRows[0]?.net_credit ?? 0);
+      let closedAll = false;
+      if (remainingLedgerBalance <= 0.01 && vKeys.length > 0) {
+        await tx.proc_ap_invoices.updateMany({
+          where: {
+            vendor_id: { in: vKeys },
+            status: { not: 'PAID' },
+          },
+          data: { status: 'PAID' },
+        });
+        closedAll = true;
+      }
+
+      return {
+        voucher_id: postInfo?.voucher_id ?? null,
+        voucher_number: voucherNumber,
+        vendor_gl_code: vendorLedger.code,
+        vendor_gl_name: vendorLedger.name,
+        total_amount: plan.totalAmount,
+        remaining_ledger_balance: Math.max(0, remainingLedgerBalance),
+        closed_all: closedAll,
+        allocations: plan.allocations,
+      };
+    });
+
+    res.status(201).json({ data: result });
+  } catch (e: any) { fail(res, 'vendor-payment', e, 'Failed to post supplier payment voucher'); }
 });
 
 export default router;

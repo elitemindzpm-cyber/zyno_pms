@@ -195,10 +195,10 @@ export function VendorStatementSubModule() {
         });
       });
 
-    // 4. Vendor Debit Notes / Journal adjustments on Trade Payables (22100xxx)
+    // 4. Vendor Debit Notes / Journal adjustments on Trade Payables (21000xxx / legacy 22100xxx)
     allLedgerTransactions.forEach((tx) => {
       if (tx.source === "Payable Invoice" || tx.source === "GRN Cost Mapping" || tx.source === "Payment Voucher") return;
-      if (!tx.account_code.startsWith("221")) return;
+      if (!tx.account_code.startsWith("21000") && !tx.account_code.startsWith("221")) return;
       const vName = (tx.tenant_name || "").trim();
       if (selectedVendor !== "ALL" && norm(vName) !== norm(selectedVendor)) return;
       const prop = (tx.property_name || "All / Corporate").trim();

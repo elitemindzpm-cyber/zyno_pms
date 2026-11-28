@@ -8,6 +8,8 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter } from "@/components/ui/dialog";
 import type { ERPVoucher } from "@/lib/db";
 import { postVoucher } from "@/lib/finance/posting-engine";
+import { useGlAccountOptions } from "@/lib/finance/gl-account-options";
+import { SearchableSelect } from "@/components/ui/searchable-select";
 import { useAppData } from "@/lib/app-data-context";
 import { Loader2, Plus, ArrowDownLeft, ArrowUpRight, Receipt, Banknote, RotateCcw } from "lucide-react";
 import { toast } from "sonner";
@@ -33,6 +35,7 @@ function toVoucherType(name: string): ERPVoucher["voucher_type"] {
 }
 
 function TransactionsPage() {
+  const { common: glAccountOptions } = useGlAccountOptions();
   const { vouchers: sharedVouchers, setVouchers, syncing } = useAppData();
   const [activeType, setActiveType] = useState("all");
   const [showNew, setShowNew] = useState(false);
@@ -304,8 +307,14 @@ function TransactionsPage() {
                   <tbody>
                     {lines.map((line, index) => (
                       <tr key={index} className="border-t border-border">
-                        <td className="px-2 py-1">
-                          <Input value={line.account_name} onChange={(e) => setLines((items) => items.map((item, i) => i === index ? { ...item, account_name: e.target.value } : item))} className="h-8 text-sm" placeholder="e.g. PDC In Hand" />
+                        <td className="px-2 py-1 min-w-[220px]">
+                          <SearchableSelect
+                            value={line.account_name}
+                            onValueChange={(val) => setLines((items) => items.map((item, i) => i === index ? { ...item, account_name: val } : item))}
+                            options={glAccountOptions.map((a) => ({ label: a.name, value: a.name }))}
+                            placeholder="Select GL Account..."
+                            emptyText="No matching GL account"
+                          />
                         </td>
                         <td className="px-2 py-1 text-right">
                           <Input type="number" value={line.debit || ""} onChange={(e) => setLines((items) => items.map((item, i) => i === index ? { ...item, debit: Number(e.target.value) } : item))} className="h-8 text-sm text-right w-28" />

@@ -292,6 +292,17 @@ export function VendorModule({ role }: { role: "admin" | "prop-mgr" }) {
         const { data: createdVendor, error } = await db.from("fin_vendors").insert(payload).select().single();
         if (error) throw error;
         const vId = createdVendor.id;
+        let assignedLedgerCode = "";
+        try {
+          const ledgerRes: any = await (await import("@/lib/api-client")).request("/api/accounting/vendors/ensure-ledger", {
+            method: "POST",
+            body: JSON.stringify({ vendor_id: vId, vendor_name: vendorForm.name }),
+          });
+          assignedLedgerCode = ledgerRes?.data?.code || "";
+          window.dispatchEvent(new Event("fin_custom_coa_updated"));
+        } catch (ledgerErr) {
+          console.warn("[VendorModule] auto-assign vendor ledger notice:", ledgerErr);
+        }
 
         // Auto-insert Step 2 Contact if provided
         if (vendorForm.contact_name.trim()) {
@@ -336,7 +347,7 @@ export function VendorModule({ role }: { role: "admin" | "prop-mgr" }) {
           } catch {}
         }
 
-        toast.success(`${vendorForm.name} fully onboarded with all details.`);
+        toast.success(`${vendorForm.name} onboarded${assignedLedgerCode ? ` (Ledger ${assignedLedgerCode})` : ""}.`);
       }
       setShowVendorModal(false);
       await loadAll();
