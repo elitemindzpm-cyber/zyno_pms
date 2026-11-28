@@ -1,4 +1,5 @@
-import React, { useState, useMemo } from "react";
+import React, { useState, useMemo, useEffect } from "react";
+import { request as apiRequest } from "@/lib/api-client";
 import {
   Dialog,
   DialogContent,
@@ -46,11 +47,6 @@ import {
   WpsEmployeeRecord,
   DEFAULT_AL_AMEEN_WPS_CONFIG,
   QATAR_BANKS_SWIFT,
-  validateWpsPayroll,
-  generateQatarWpsSif,
-  generateQatarWpsCsv,
-  normalizeQatarIban,
-  normalizeQatarId,
 } from "@/lib/qatar-wps-sif";
 import type { HrmsPayslip } from "@/lib/hrmsService";
 
@@ -74,7 +70,7 @@ export function QatarWpsSifDialog({
   cycleMonthYear,
   cycleName,
 }: QatarWpsSifDialogProps) {
-  const [config, setConfig] = useState<WpsEmployerConfig>(DEFAULT_AL_AMEEN_WPS_CONFIG);
+  const [config, setConfig] = useState<WpsEmployerConfig>({ ...DEFAULT_AL_AMEEN_WPS_CONFIG, payerIban: "" });
   const [showRawPreview, setShowRawPreview] = useState(false);
   const [copied, setCopied] = useState(false);
   const [autoNormalized, setAutoNormalized] = useState(false);
@@ -100,13 +96,12 @@ export function QatarWpsSifDialog({
       const rawQid = emp.qid || emp.national_id || emp.qatar_id || emp.id_number || "";
       const rawIban = emp.iban || emp.bank_account_number || "";
 
-      const employeeQid = autoNormalized
-        ? normalizeQatarId(rawQid, idx + 101)
-        : rawQid || normalizeQatarId("", idx + 101);
-
+      // Formatting only. A missing or malformed QID/IBAN is reported by the server validation and blocks
+      // the file; nothing is invented here.
+      const employeeQid = autoNormalized ? String(rawQid || "").replace(/\D/g, "") : String(rawQid || "");
       const employeeIban = autoNormalized
-        ? normalizeQatarIban(rawIban, swift)
-        : rawIban || normalizeQatarIban("", swift);
+        ? String(rawIban || "").replace(/[^a-zA-Z0-9]/g, "").toUpperCase()
+        : String(rawIban || "");
 
       return {
         employeeIdCode: emp.employee_id_code || `EMP-${String(idx + 1).padStart(3, "0")}`,
@@ -127,23 +122,43 @@ export function QatarWpsSifDialog({
     });
   }, [payslips, employees, autoNormalized, cycleMonthYear]);
 
-  // Validation
-  const validation = useMemo(() => {
-    return validateWpsPayroll(config, wpsRecords);
-  }, [config, wpsRecords]);
+  // Validation and SIF/CSV generation are done by the server (POST /api/hrms/wps/build).
+  type WpsBuild = {
+    validation: {
+      isValid: boolean; totalEmployees: number; totalNetSalary: number; errorsCount: number; warningsCount: number;
+      issues: { employeeCode: string; employeeName: string; field: string; severity: "error" | "warning"; message: string }[];
+    };
+    sif: { sifContent: string; fileName: string; totalNet: number; totalCount: number } | null;
+    csv: { csvContent: string; fileName: string } | null;
+  };
+  const [build, setBuild] = useState<WpsBuild | null>(null);
+  const [buildError, setBuildError] = useState<string | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    let cancelled = false;
+    const timer = setTimeout(async () => {
+      try {
+        const res = await apiRequest("/api/hrms/wps/build", {
+          method: "POST",
+          body: JSON.stringify({ config, salaryYearMonth: cycleMonthYear, records: wpsRecords }),
+        } as any) as WpsBuild;
+        if (!cancelled) { setBuild(res); setBuildError(null); }
+      } catch (e: any) {
+        if (!cancelled) setBuildError(e?.message || "Could not validate the WPS file on the server");
+      }
+    }, 300);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [open, config, cycleMonthYear, wpsRecords]);
 
-  // SIF Output
-  const sifResult = useMemo(() => {
-    return generateQatarWpsSif(config, cycleMonthYear, wpsRecords);
-  }, [config, cycleMonthYear, wpsRecords]);
-
-  // CSV Output
-  const csvResult = useMemo(() => {
-    return generateQatarWpsCsv(config, cycleMonthYear, wpsRecords);
-  }, [config, cycleMonthYear, wpsRecords]);
+  const validation = build?.validation ?? {
+    isValid: false, totalEmployees: wpsRecords.length, totalNetSalary: 0, errorsCount: 0, warningsCount: 0,
+    issues: buildError ? [{ employeeCode: "SERVER", employeeName: "", field: "build", severity: "error" as const, message: buildError }] : [],
+  };
+  const sifResult = build?.sif ?? { sifContent: "", fileName: "", totalNet: 0, totalCount: 0 };
+  const csvResult = build?.csv ?? { csvContent: "", fileName: "" };
 
   const handleDownloadSif = () => {
-    if (validation.errorsCount > 0) {
+    if (!build?.sif || validation.errorsCount > 0) {
       toast.error(`Fix ${validation.errorsCount} fatal WPS error(s) (missing IBAN, QID or bank details) before downloading the SIF file.`);
       return;
     }
@@ -162,6 +177,10 @@ export function QatarWpsSifDialog({
   };
 
   const handleDownloadCsv = () => {
+    if (!build?.csv) {
+      toast.error("Fix the WPS validation errors before downloading the CSV.");
+      return;
+    }
     const blob = new Blob([csvResult.csvContent], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");

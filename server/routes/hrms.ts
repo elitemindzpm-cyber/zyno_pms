@@ -3,6 +3,8 @@ import { Router, Request, Response } from 'express';
 import prisma from '../lib/prisma';
 import { parsePagination, paginatedResponse } from '../lib/middleware';
 import { money, num } from '../lib/money';
+import { dbAllowed } from '../lib/db-policy';
+import { validateWpsPayroll, generateQatarWpsSif, generateQatarWpsCsv } from '../lib/qatar-wps';
 
 const router = Router();
 
@@ -83,6 +85,27 @@ router.get('/employees/:id/gratuity-preview', async (req: Request, res: Response
       },
     });
   } catch (e: any) { res.status(500).json({ error: e.message }); }
+});
+
+// Server-authoritative WPS: validation plus SIF/CSV generation. Files are only produced when valid,
+// and no QID or IBAN is ever invented.
+router.post('/wps/build', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'hrms_payroll_cycles', 'write')) return res.status(403).json({ error: 'Not authorized to build WPS files' });
+    const config = req.body?.config; const records = req.body?.records;
+    const month = String(req.body?.salaryYearMonth || '');
+    if (!config || !Array.isArray(records) || !/^\d{4}-\d{2}$/.test(month)) {
+      return res.status(400).json({ error: 'config, records[] and salaryYearMonth (YYYY-MM) are required' });
+    }
+    if (records.length > 5000) return res.status(400).json({ error: 'Too many records in one WPS file' });
+    const validation = validateWpsPayroll(config, records);
+    res.json({
+      validation,
+      sif: validation.isValid ? generateQatarWpsSif(config, month, records) : null,
+      csv: validation.isValid ? generateQatarWpsCsv(config, month, records) : null,
+    });
+  } catch (e: any) { console.error('[wps/build]', e?.message); res.status(500).json({ error: 'Failed to build the WPS file' }); }
 });
 
 export default router;
