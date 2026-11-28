@@ -1,11 +1,11 @@
 ﻿import { createFileRoute } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 import { FileText, Download, PenLine, Search, Filter } from "lucide-react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { documents, type DocumentItem } from "@/lib/mock-data";
+import { fetchPortalSummary, type PortalDocumentItem as DocumentItem } from "@/lib/portal-api";
 
 export const Route = createFileRoute("/portal/documents")({
   head: () => ({ meta: [{ title: "Documents — ZYNO Tenant Portal" }] }),
@@ -31,8 +31,15 @@ const catColor: Record<DocumentItem["category"], string> = {
 const categories = ["All", "Legal", "Finance", "Inspection", "Policy", "NOC & Letters"] as const;
 
 function DocsPage() {
+  const [documents, setDocuments] = useState<DocumentItem[]>([]);
   const [activeCategory, setActiveCategory] = useState<string>("All");
   const [search, setSearch] = useState("");
+
+  useEffect(() => {
+    fetchPortalSummary()
+      .then((s) => setDocuments(s?.documents ?? []))
+      .catch(() => setDocuments([]));
+  }, []);
 
   const filtered = documents.filter(d => {
     const matchCat = activeCategory === "All" || d.category === activeCategory;

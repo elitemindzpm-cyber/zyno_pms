@@ -38,7 +38,16 @@ export async function runPayrollCycle(cycleId: string, opts: { employeeIds?: str
   let totalNet = 0;
   let totalLoans = 0;
 
+  let voucher: string | null = null;
+
   await txn(async (tx) => {
+    const locked = await tx.$queryRaw<{ id: string; status: string }[]>`
+      SELECT id, status FROM hrms_payroll_cycles WHERE id = ${cycleId} FOR UPDATE`;
+    if (!locked.length) throw new HttpError(404, 'Payroll cycle not found');
+    if (String(locked[0].status || '').toLowerCase() !== 'draft') {
+      throw new HttpError(409, `Payroll cycle is already ${locked[0].status}`);
+    }
+
     for (const emp of employees) {
       const gross = money(num(emp.basic_salary) + num(emp.hra) + num(emp.tra) + num(emp.other_allowances));
       if (!(gross > 0)) continue;
@@ -102,21 +111,22 @@ export async function runPayrollCycle(cycleId: string, opts: { employeeIds?: str
         total_employees: payslips.length,
       },
     });
-  });
 
-  let voucher: string | null = null;
-  if (totalEarnings > 0) {
-    const lines = [
-      { code: SALARY_EXPENSE, debit: totalEarnings, credit: 0 },
-      { code: SALARY_PAYABLE, debit: 0, credit: money(totalNet) },
-    ];
-    if (totalLoans > 0) lines.push({ code: STAFF_RECEIVABLE, debit: 0, credit: totalLoans });
-    const posted = await postGlEvent({
-      eventType: 'MANUAL_JOURNAL', sourceType: 'PAYROLL', sourceId: cycle.id,
-      idempotencyKey: `payroll:${cycle.id}`, description: `Salary journal - ${cycle.name}`, lines,
-    });
-    voucher = posted.voucherNumber;
-  }
+    // D3: Post payroll GL journal inside the same transaction so payslips and GL never diverge.
+    if (totalEarnings > 0) {
+      const lines = [
+        { code: SALARY_EXPENSE, debit: totalEarnings, credit: 0 },
+        { code: SALARY_PAYABLE, debit: 0, credit: money(totalNet) },
+      ];
+      if (totalLoans > 0) lines.push({ code: STAFF_RECEIVABLE, debit: 0, credit: totalLoans });
+      const posted = await postGlEvent({
+        eventType: 'MANUAL_JOURNAL', sourceType: 'PAYROLL', sourceId: cycle.id,
+        idempotencyKey: `payroll:${cycle.id}`, description: `Salary journal - ${cycle.name}`, lines,
+        tx,
+      });
+      voucher = posted.voucherNumber;
+    }
+  });
 
   return {
     cycle_id: cycleId,

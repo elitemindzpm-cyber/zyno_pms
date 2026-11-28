@@ -969,7 +969,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
 
       // 1. Fetch from pdcs table with full pagination (all 1,809 PDCs with property, unit, tenant)
       const pdcsTableData = await fetchAllRows((from, to) =>
-        db.from("pdcs").select("*").order("cheque_date", { ascending: false }).range(from, to)
+        db.from("pdcs").select("*").order("maturity_date", { ascending: false }).range(from, to)
       );
 
       // fin_pdc_register stores only lease_id (its unit/property/tenant columns are numeric), so fill the
@@ -1258,8 +1258,6 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         deposit_date: null,
         cleared_date: null,
         returned_date: null,
-        property_id: editPdcForm.propertyCode.trim(),
-        unit_id: editPdcForm.unitName.trim(),
       };
 
       if (editPdcForm.pdcId) {
@@ -1395,9 +1393,9 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         // Fetch from customers table, units table, pdc tables, and leases in parallel
         const [customersRes, finPdcRes, pdcRes, leasesRes, unitsRes] = await Promise.all([
           db.from("customers").select("*"),
-          db.from("fin_pdc_register").select("id, tenant_name, drawer_name").limit(1000),
-          db.from("pdcs").select("id, tenant_name, drawer_name").limit(1000),
-          db.from("leases").select("id, tenant_name, customers:customer_id(full_name, name)"),
+          db.from("fin_pdc_register").select("id, lease_id").limit(1000),
+          db.from("pdcs").select("id, tenant_name").limit(1000),
+          db.from("leases").select("id, customers:customer_id(full_name, display_name)"),
           db.from("units").select("id, current_tenant").limit(1000),
         ]);
 
@@ -1750,20 +1748,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       const rawStatus = String(l.status || (l as any).lease_status || "").toLowerCase();
       if (rawStatus === "renewed") return true;
 
-      // Check persistent kvStore overrides
-      try {
-        const stored = JSON.parse(kvStore.getItem("pms_custom_lease_overrides") || "{}");
-        const ov = stored[l.id] || stored[l.contractNumber || ""] || stored[(l as any).lease_number || ""];
-        if (ov?.lease_status?.toUpperCase() === "RENEWED" || ov?.status?.toLowerCase() === "renewed") return true;
-      } catch {}
-
-      // Check renewed leases register
-      try {
-        const renList = JSON.parse(kvStore.getItem("pms_renewed_leases_v1") || "[]");
-        if (renList.some((r: any) => r.oldLeaseId === l.id || r.oldLeaseNumber === l.contractNumber || r.unit_name === l.unit || r.unit === l.unit)) {
-          return true;
-        }
-      } catch {}
+      // Renewal status is persisted directly on the lease row in DB.
 
       // Check if another active lease exists for the same unit with overlapping/subsequent period
       const hasSuccessor = (leases || []).some(other =>
@@ -2166,11 +2151,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         });
       });
       setPdcs(prev => [...newItems, ...prev]);
-      try {
-        const existingStored = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
-        kvStore.setItem("pms_renewal_pdcs", JSON.stringify([...newItems, ...existingStored]));
-        window.dispatchEvent(new Event("pdcs_updated"));
-      } catch { /* ignore */ }
+      window.dispatchEvent(new Event("pdcs_updated"));
       toast.success(`Successfully imported ${newItems.length} PDC cheques!`);
       setBulkPdcOpen(false);
       setBulkPdcCsv("");
@@ -3240,16 +3221,16 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                 voucher_id: vData.id,
                 account_code: "21400001",
                 account_name: `Customer PDC Liability - ${lease.unit}`,
-                debit: totalCancelledAmount,
-                credit: 0,
+                debit_amount: totalCancelledAmount,
+                credit_amount: 0,
                 description: `PDC Cancelled — ${lease.tenantName}`,
               },
               {
                 voucher_id: vData.id,
                 account_code: "12900001",
                 account_name: "Rent PDC In Hand",
-                debit: 0,
-                credit: totalCancelledAmount,
+                debit_amount: 0,
+                credit_amount: totalCancelledAmount,
                 description: `PDC Cancelled — ${lease.tenantName}`,
               },
             ]);
@@ -4069,7 +4050,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       setLeases(prev => prev.map(l => l.id === targetLease.id ? { ...l, status: "active" as LeaseStatus } : l));
       setUnits(prev => prev.map(u => (u.unit === targetLease.unit || (u as any).unit_number === targetLease.unit) ? { ...u, status: "Occupied" } : u));
       try {
-        void db.from("leases").update({ status: "active" }).eq("id", targetLease.id);
+        void db.from("leases").update({ lease_status: "active" }).eq("id", targetLease.id);
         void db.from("units").update({ status: "Occupied" }).eq("unit_number", targetLease.unit);
       } catch (e) {
         console.warn("Lease approval DB sync:", e);
@@ -4155,25 +4136,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     };
     setLeases((items) => {
       const next = [lease, ...items];
-      try {
-        const storedLeases = JSON.parse(kvStore.getItem("pms_leasing_v2_leases") || "[]");
-        kvStore.setItem("pms_leasing_v2_leases", JSON.stringify([lease, ...storedLeases.filter((x: any) => x.id !== lease.id)]));
-        const overrides = JSON.parse(kvStore.getItem("pms_custom_lease_overrides") || "{}");
-        if (lease.unit) {
-          overrides[lease.unit.toUpperCase().trim()] = {
-            tenantName: lease.tenantName,
-            property: lease.property,
-            unit: lease.unit,
-            startDate: lease.startDate,
-            endDate: lease.endDate,
-            monthlyRent: lease.monthlyRent,
-            securityDeposit: lease.securityDeposit,
-            contractNumber: lease.contractNumber || lease.id,
-            status: "active",
-          };
-          kvStore.setItem("pms_custom_lease_overrides", JSON.stringify(overrides));
-        }
-      } catch { /* ignore */ }
+      // Lease record is persisted in DB above; no KV override cache needed.
       return next;
     });
     setUnits((items) => items.map((u) => (u.unit === lease.unit || (u as any).unit_number === lease.unit) ? { ...u, status: "Occupied", tenant: lease.tenantName, rent: lease.monthlyRent } : u));
@@ -4750,11 +4713,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     // Publish the PDCs to shared state, kvStore, and DB pdcs / fin_pdc_register so PDC Register & Customer SOA always reflect them
     if (nextPdcs.length > 0) {
       setPdcs((items) => [...nextPdcs, ...items]);
-      try {
-        const existingStored = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
-        kvStore.setItem("pms_renewal_pdcs", JSON.stringify([...nextPdcs, ...existingStored]));
-        window.dispatchEvent(new Event("pdcs_updated"));
-      } catch { /* ignore */ }
+      window.dispatchEvent(new Event("pdcs_updated"));
       void (async () => {
         // The lease row already has its PDC schedule slots (created with the lease). Each cheque is sent with
         // lease_id so the server fills its slot rather than adding a second row. fin_pdc_register is written
@@ -5132,8 +5091,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     }).then(({ data: vData, error: vErr }) => {
       if (!vErr && vData?.id) {
         void db.from("fin_voucher_lines").insert([
-          { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: numAmount, credit: 0, description: `Security Deposit — ${tenantLabel}` },
-          { voucher_id: vData.id, account_code: "21500001", account_name: "Security Deposit Liability", debit: 0, credit: numAmount, description: `Security Deposit — ${tenantLabel}` },
+          { voucher_id: vData.id, account_code: drCode, account_name: drName, debit_amount: numAmount, credit_amount: 0, description: `Security Deposit — ${tenantLabel}` },
+          { voucher_id: vData.id, account_code: "21500001", account_name: "Security Deposit Liability", debit_amount: 0, credit_amount: numAmount, description: `Security Deposit — ${tenantLabel}` },
         ]);
       }
     }, (err: any) => console.warn("[addSecurityDeposit] GL posting note:", err));
@@ -5397,65 +5356,6 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       ...items.map((item) => (item.id === oldLease.id ? { ...item, status: "renewed" as LeaseStatus } : item)),
     ]);
 
-    // Persist renewal to kvStore (both pms_renewed_leases_v1 and pms_custom_lease_overrides)
-    try {
-      if (typeof window !== "undefined") {
-        const rawRen = kvStore.getItem("pms_renewed_leases_v1");
-        const renList: any[] = rawRen ? JSON.parse(rawRen) : [];
-        const renItem = {
-          id: renewed.id,
-          lease_number: contractNo,
-          property: oldLease.property,
-          unit: oldLease.unit,
-          tenantName: oldLease.tenantName,
-          startDate: newStartDate,
-          endDate: newEndDate,
-          monthlyRent: agreedRent,
-          rental_amount: agreedRent * 12,
-          securityDeposit: newSecurityDeposit,
-          pdcCount: data.pdcs.length,
-          paymentFrequency: data.paymentFrequency || "monthly",
-          status: "active",
-          renewalOf: oldLease.id,
-        };
-        const filtered = renList.filter((r) => r.id !== renItem.id && r.lease_number !== renItem.lease_number);
-        filtered.unshift(renItem);
-        kvStore.setItem("pms_renewed_leases_v1", JSON.stringify(filtered));
-
-        const storedOverrides = JSON.parse(kvStore.getItem("pms_custom_lease_overrides") || "{}");
-        storedOverrides[renewed.id] = {
-          commencement_date: newStartDate,
-          expiry_date: newEndDate,
-          monthlyRent: agreedRent,
-          rental_amount: agreedRent * 12,
-          lease_status: "ACTIVE",
-          tenant_name: oldLease.tenantName,
-          pdc_count: data.pdcs.length,
-          updated_at: new Date().toISOString(),
-        };
-        storedOverrides[contractNo] = storedOverrides[renewed.id];
-
-        // Mark previous lease as RENEWED
-        if (oldLease.id) {
-          storedOverrides[oldLease.id] = {
-            ...(storedOverrides[oldLease.id] || {}),
-            lease_status: "RENEWED",
-            updated_at: new Date().toISOString(),
-          };
-        }
-        if (oldLease.contractNumber) {
-          storedOverrides[oldLease.contractNumber] = {
-            ...(storedOverrides[oldLease.contractNumber] || {}),
-            lease_status: "RENEWED",
-            updated_at: new Date().toISOString(),
-          };
-        }
-        kvStore.setItem("pms_custom_lease_overrides", JSON.stringify(storedOverrides));
-      }
-    } catch (e) {
-      console.warn("Could not save renewal to kvStore:", e);
-    }
-
     // Persist renewed lease and update previous lease in PostgreSQL via DB REST API
     void (async () => {
       try {
@@ -5534,11 +5434,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       status: "received" as PdcStatus,
     } as any));
     setPdcs((items) => [...renewalPdcs, ...items.filter((item) => item.leaseId !== renewed.id)]);
-    try {
-      const existingStored = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
-      kvStore.setItem("pms_renewal_pdcs", JSON.stringify([...renewalPdcs, ...existingStored]));
-      window.dispatchEvent(new Event("pdcs_updated"));
-    } catch { /* ignore */ }
+    window.dispatchEvent(new Event("pdcs_updated"));
 
     // Process Security Deposit Top-Up / Payment Voucher
     const newVouchers: Voucher[] = [];
@@ -5595,8 +5491,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       }).then(({ data: vData, error: vErr }) => {
         if (!vErr && vData?.id) {
           void db.from("fin_voucher_lines").insert([
-            { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: depositTopUp, credit: 0, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
-            { voucher_id: vData.id, account_code: "21500001", account_name: "Security Deposit Liability", debit: 0, credit: depositTopUp, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
+            { voucher_id: vData.id, account_code: drCode, account_name: drName, debit_amount: depositTopUp, credit_amount: 0, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
+            { voucher_id: vData.id, account_code: "21500001", account_name: "Security Deposit Liability", debit_amount: 0, credit_amount: depositTopUp, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
           ]);
         }
       }, (err: any) => console.warn("[renewLease] SD GL posting note:", err));
@@ -5747,64 +5643,6 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       };
       setLeases((items) => [renewed!, ...items.map((item) => (item.id === oldLease.id ? { ...item, status: "renewed" as LeaseStatus } : item))]);
 
-      // Persist to local storage
-      try {
-        if (typeof window !== "undefined") {
-          const rawRen = kvStore.getItem("pms_renewed_leases_v1");
-          const renList: any[] = rawRen ? JSON.parse(rawRen) : [];
-          const renItem = {
-            id: renewed.id,
-            lease_number: contractNo,
-            property: oldLease.property,
-            unit: oldLease.unit,
-            tenantName: oldLease.tenantName,
-            startDate: newStartDate,
-            endDate: newEndDate,
-            monthlyRent: agreedRent,
-            rental_amount: agreedRent * 12,
-            securityDeposit: newSecurityDeposit,
-            pdcCount: pdcCount,
-            paymentFrequency: renewalResponseForm.paymentFrequency || oldLease.paymentFrequency || "monthly",
-            status: "active",
-            renewalOf: oldLease.id,
-          };
-          const filtered = renList.filter((r) => r.id !== renItem.id && r.lease_number !== renItem.lease_number);
-          filtered.unshift(renItem);
-          kvStore.setItem("pms_renewed_leases_v1", JSON.stringify(filtered));
-
-          const storedOverrides = JSON.parse(kvStore.getItem("pms_custom_lease_overrides") || "{}");
-          storedOverrides[renewed.id] = {
-            commencement_date: newStartDate,
-            expiry_date: newEndDate,
-            monthlyRent: agreedRent,
-            rental_amount: agreedRent * 12,
-            lease_status: "ACTIVE",
-            tenant_name: oldLease.tenantName,
-            pdc_count: pdcCount,
-            updated_at: new Date().toISOString(),
-          };
-          storedOverrides[contractNo] = storedOverrides[renewed.id];
-
-          if (oldLease.id) {
-            storedOverrides[oldLease.id] = {
-              ...(storedOverrides[oldLease.id] || {}),
-              lease_status: "RENEWED",
-              updated_at: new Date().toISOString(),
-            };
-          }
-          if (oldLease.contractNumber) {
-            storedOverrides[oldLease.contractNumber] = {
-              ...(storedOverrides[oldLease.contractNumber] || {}),
-              lease_status: "RENEWED",
-              updated_at: new Date().toISOString(),
-            };
-          }
-          kvStore.setItem("pms_custom_lease_overrides", JSON.stringify(storedOverrides));
-        }
-      } catch (e) {
-        console.warn("Could not save renewal to kvStore:", e);
-      }
-
       // Persist to DB asynchronously
       void (async () => {
         try {
@@ -5918,11 +5756,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         } as any);
       }
       setPdcs((items) => [...renewalPdcs, ...items.filter((item) => item.leaseId !== (renewed ? renewed.id : oldLease.id))]);
-      try {
-        const existingStored = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
-        kvStore.setItem("pms_renewal_pdcs", JSON.stringify([...renewalPdcs, ...existingStored]));
-        window.dispatchEvent(new Event("pdcs_updated"));
-      } catch { /* ignore */ }
+      window.dispatchEvent(new Event("pdcs_updated"));
     }
 
     // Process Increased Rent Payment (Optional)
@@ -5962,8 +5796,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       }).then(({ data: vData, error: vErr }) => {
         if (!vErr && vData?.id) {
           void db.from("fin_voucher_lines").insert([
-            { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: rentAmt, credit: 0, description: `Rent Differential — ${oldLease.tenantName}` },
-            { voucher_id: vData.id, account_code: "41100001", account_name: "Rental Revenue", debit: 0, credit: rentAmt, description: `Rent Differential — ${oldLease.tenantName}` },
+            { voucher_id: vData.id, account_code: drCode, account_name: drName, debit_amount: rentAmt, credit_amount: 0, description: `Rent Differential — ${oldLease.tenantName}` },
+            { voucher_id: vData.id, account_code: "41100001", account_name: "Rental Revenue", debit_amount: 0, credit_amount: rentAmt, description: `Rent Differential — ${oldLease.tenantName}` },
           ]);
         }
       }, (err: any) => console.warn("[renewLease] Rent GL posting note:", err));
@@ -6022,8 +5856,8 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       }).then(({ data: vData, error: vErr }) => {
         if (!vErr && vData?.id) {
           void db.from("fin_voucher_lines").insert([
-            { voucher_id: vData.id, account_code: drCode, account_name: drName, debit: depositTopUp, credit: 0, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
-            { voucher_id: vData.id, account_code: "21500001", account_name: "Security Deposit Liability", debit: 0, credit: depositTopUp, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
+            { voucher_id: vData.id, account_code: drCode, account_name: drName, debit_amount: depositTopUp, credit_amount: 0, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
+            { voucher_id: vData.id, account_code: "21500001", account_name: "Security Deposit Liability", debit_amount: 0, credit_amount: depositTopUp, description: `Security Deposit Top-Up — ${oldLease.tenantName}` },
           ]);
         }
       }, (err: any) => console.warn("[renewLease] SD GL posting note:", err));

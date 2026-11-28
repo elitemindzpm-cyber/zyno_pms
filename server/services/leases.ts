@@ -4,8 +4,11 @@
 import prisma from '../lib/prisma';
 import { txn } from '../lib/prisma';
 import { HttpError } from '../lib/errors';
-import { nextIntSequence } from '../lib/finance-rpc';
 import { postGlEvent } from './posting';
+import { num, money } from '../lib/money';
+import { computeDepositSettlement } from '../lib/settlement';
+
+export { num, money, computeDepositSettlement };
 
 export const ACTIVE_LEASE_STATUSES = ['ACTIVE', 'Active', 'active', 'PENDING', 'Pending', 'pending'];
 /** A cheque that has not been deposited, so it can still be voided when a lease ends. */
@@ -15,8 +18,6 @@ export const SCHEDULED_SLOT = 'SCHEDULED';
 
 export const isActiveLease = (s: unknown) => ACTIVE_LEASE_STATUSES.includes(String(s ?? ''));
 export const isTerminatedLease = (s: unknown) => String(s ?? '').toUpperCase() === 'TERMINATED';
-export const num = (v: unknown) => Number(String(v ?? 0)) || 0;
-export const money = (n: number) => Math.round(n * 100) / 100;
 
 function addMonths(d: Date, months: number): Date {
   const x = new Date(d);
@@ -39,31 +40,27 @@ const toDate = (v: unknown) => {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? new Date(`${s}T00:00:00.000Z`) : new Date(s);
 };
 
-/** Next register id. fin_pdc_register.id has no auto-increment, so it comes from the shared sequence table. */
-export async function nextPdcId(): Promise<bigint> {
-  return BigInt(await nextIntSequence('fin_pdc_register_id'));
-}
-
 const numericOrNull = (v: unknown) => (v !== undefined && v !== null && /^\d+$/.test(String(v)) ? BigInt(String(v)) : null);
+const strOrNull = (v: unknown) => (v !== undefined && v !== null && String(v).trim() !== '' ? String(v).trim() : null);
 
 /** Maps a PDC as the UI or API describes it onto fin_pdc_register columns. */
-function registerData(row: Record<string, any>, leaseId: string | null, id: bigint) {
+function registerData(row: Record<string, any>, leaseId: string | null, id?: bigint | null) {
   const chequeNumber = row.cheque_number !== undefined && row.cheque_number !== null ? String(row.cheque_number).trim() : '';
   if (!chequeNumber) throw new HttpError(422, 'cheque_number is required for a PDC');
   const maturity = row.cheque_date ?? row.maturity_date;
   if (!maturity) throw new HttpError(422, 'maturity_date is required for a PDC');
   const data: Record<string, any> = {
-    id,
     lease_id: leaseId,
     cheque_number: chequeNumber,
     cheque_date: toDate(maturity),
     amount: money(num(row.amount)),
     status: row.status || 'In Hand',
   };
+  if (id !== undefined && id !== null) data.id = id;
   if (row.deposit_date) data.deposit_date = toDate(row.deposit_date);
-  const tenant = numericOrNull(row.tenant_id);
-  const property = numericOrNull(row.property_id);
-  const unit = numericOrNull(row.unit_id);
+  const tenant = strOrNull(row.tenant_id);
+  const property = strOrNull(row.property_id);
+  const unit = strOrNull(row.unit_id);
   const bank = numericOrNull(row.bank_id);
   if (tenant !== null) data.tenant_id = tenant;
   if (property !== null) data.property_id = property;
@@ -91,8 +88,8 @@ export async function insertPdc(row: Record<string, any>) {
       return prisma.fin_pdc_register.update({ where: { id: slot.id }, data: data as any });
     }
   }
-  const id = numericOrNull(row.id) ?? (await nextPdcId());
-  return prisma.fin_pdc_register.create({ data: registerData(row, leaseId, id) as any });
+  const explicitId = numericOrNull(row.id);
+  return prisma.fin_pdc_register.create({ data: registerData(row, leaseId, explicitId) as any });
 }
 
 /** Creates a lease, its PDCs and its unit status in one transaction, then records the deposit. */
@@ -124,9 +121,6 @@ export async function createLease(input: Record<string, any>) {
       }));
     }
   }
-  const ids: bigint[] = [];
-  for (let i = 0; i < cheques.length; i++) ids.push(await nextPdcId());
-
   const lease = await txn(async (tx) => {
     if (body.customer_id) {
       const customer = await tx.customers.findUnique({ where: { id: body.customer_id } });
@@ -165,8 +159,16 @@ export async function createLease(input: Record<string, any>) {
       await tx.leases.updateMany({ where: { id: created.previous_lease_id }, data: { lease_status: 'RENEWED' } });
     }
 
-    for (const [i, row] of cheques.entries()) {
-      const data = registerData(row, created.id, ids[i]);
+    for (const row of cheques) {
+      const data = registerData(
+        {
+          ...row,
+          tenant_id: row.tenant_id ?? created.customer_id,
+          property_id: row.property_id ?? created.property_id,
+          unit_id: row.unit_id ?? created.unit_id,
+        },
+        created.id,
+      );
       const dup = await tx.fin_pdc_register.findFirst({ where: { lease_id: created.id, cheque_number: data.cheque_number } });
       if (!dup) await tx.fin_pdc_register.create({ data: data as any });
     }
@@ -189,6 +191,42 @@ export async function createLease(input: Record<string, any>) {
   return lease;
 }
 
+/** E5: Server-side lease termination settlement preview without mutating DB state. */
+export async function previewLeaseSettlement(id: string, input: Record<string, any> = {}) {
+  const lease = await prisma.leases.findUnique({ where: { id } });
+  if (!lease) throw new HttpError(404, 'Lease not found');
+  const settlement = computeDepositSettlement(num(lease.security_deposit), num(input.damage_charges), num(input.early_termination_penalty));
+  const unmaturedPdcs = await prisma.fin_pdc_register.findMany({
+    where: { lease_id: id, status: { in: UNMATURED_PDC_STATUSES }, cheque_date: { gt: new Date() } },
+    select: { amount: true },
+  });
+  const unmaturedAmount = money(unmaturedPdcs.reduce((s, p) => s + num(p.amount), 0));
+  return {
+    lease_id: id,
+    lease_number: lease.lease_number,
+    ...settlement,
+    unmatured_pdc_count: unmaturedPdcs.length,
+    unmatured_pdc_amount: unmaturedAmount,
+  };
+}
+
+/** E5: Server-side late-fee calculation using lease grace_period_days and penalty terms. */
+export async function calculateLateFee(leaseId: string, input: { due_date?: string; as_of?: string; overdue_amount?: unknown }) {
+  const lease = await prisma.leases.findUnique({ where: { id: leaseId } });
+  if (!lease) throw new HttpError(404, 'Lease not found');
+  const due = new Date(String(input.due_date || ''));
+  const asOf = input.as_of ? new Date(String(input.as_of)) : new Date();
+  if (Number.isNaN(due.getTime()) || Number.isNaN(asOf.getTime())) throw new HttpError(400, 'Valid due_date and as_of dates are required');
+  const daysPastDue = Math.max(0, Math.floor((asOf.getTime() - due.getTime()) / 86400000));
+  const graceDays = Number(lease.grace_period_days ?? 5);
+  const chargeableDays = Math.max(0, daysPastDue - graceDays);
+  const base = money(num(input.overdue_amount));
+  const pct = num(lease.late_penalty_percentage);
+  const fixed = num(lease.late_penalty_fixed);
+  const fee = chargeableDays > 0 ? money(fixed + (base * pct) / 100) : 0;
+  return { lease_id: leaseId, days_past_due: daysPastDue, grace_period_days: graceDays, chargeable_days: chargeableDays, late_fee: fee };
+}
+
 /**
  * Terminates a lease: cancels unmatured PDCs, releases the unit, and settles the security deposit.
  *   applied  = min(deposit, damage + early-termination penalty)   -> income from the deposit
@@ -200,13 +238,8 @@ export async function terminateLease(id: string, input: Record<string, any> = {}
   if (!lease) throw new HttpError(404, 'Lease not found');
   if (isTerminatedLease(lease.lease_status)) throw new HttpError(409, 'Lease is already terminated');
 
-  const deposit = money(num(lease.security_deposit));
-  const damage = money(num(input.damage_charges));
-  const penalty = money(num(input.early_termination_penalty));
-  const deductions = money(damage + penalty);
-  const applied = money(Math.min(deposit, deductions));
-  const excess = money(deductions - applied);
-  const refund = money(deposit - applied);
+  const { deposit, damage_charges: damage, early_termination_penalty: penalty, applied_from_deposit: applied, billed_to_tenant: excess, refund } =
+    computeDepositSettlement(num(lease.security_deposit), num(input.damage_charges), num(input.early_termination_penalty));
 
   const cancelled = await txn(async (tx) => {
     await tx.leases.updateMany({ where: { id }, data: { lease_status: 'TERMINATED' } });

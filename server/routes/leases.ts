@@ -4,7 +4,7 @@ import prisma from '../lib/prisma';
 import { parsePagination, paginatedResponse } from '../lib/middleware';
 import { sendDbError } from '../lib/errors';
 import { isTenant, tenantLeaseWhere } from '../lib/tenant-policy';
-import { createLease, terminateLease, isTerminatedLease, normaliseDates } from '../services/leases';
+import { createLease, terminateLease, previewLeaseSettlement, calculateLateFee, isTerminatedLease, normaliseDates } from '../services/leases';
 
 const router = Router();
 
@@ -59,6 +59,21 @@ router.patch('/:id', async (req: Request, res: Response) => {
     await prisma.leases.updateMany({ where: { id }, data: body });
     res.json({ success: true });
   } catch (e: any) { sendDbError(res, e, 'leases.update'); }
+});
+
+// POST /api/leases/:id/settlement-preview & late-fee-preview (E5: server-side calculations)
+router.post('/:id/settlement-preview', async (req: Request, res: Response) => {
+  try {
+    const result = await previewLeaseSettlement(req.params.id as string, req.body || {});
+    res.json({ data: result });
+  } catch (e: any) { sendDbError(res, e, 'leases.settlementPreview'); }
+});
+
+router.post('/:id/late-fee-preview', async (req: Request, res: Response) => {
+  try {
+    const result = await calculateLateFee(req.params.id as string, req.body || {});
+    res.json({ data: result });
+  } catch (e: any) { sendDbError(res, e, 'leases.lateFeePreview'); }
 });
 
 // POST /api/leases/:id/terminate — damages and penalties are settled against the deposit; the rest is refunded.

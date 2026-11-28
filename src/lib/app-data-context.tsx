@@ -301,7 +301,8 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
     try {
       // Helper to fetch all rows across PostgREST 1000-row default pages
       async function fetchAllRows<T = any>(
-        queryFn: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>
+        queryFn: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>,
+        tableName?: string
       ): Promise<T[]> {
         let rows: T[] = [];
         let from = 0;
@@ -309,11 +310,18 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         while (true) {
           try {
             const res = await Promise.resolve(queryFn(from, from + pageSize - 1));
-            if (res.error || !res.data || res.data.length === 0) break;
+            if (res.error) {
+              // B5: Surface errors instead of silently returning partial results
+              console.error(`[fetchAllRows${tableName ? ' ' + tableName : ''}] Error at offset ${from}:`, res.error?.message || res.error);
+              break;
+            }
+            if (!res.data || res.data.length === 0) break;
             rows = rows.concat(res.data);
             if (res.data.length < pageSize) break;
             from += pageSize;
-          } catch {
+          } catch (err) {
+            // B5: Log fetch errors instead of silently swallowing
+            console.error(`[fetchAllRows${tableName ? ' ' + tableName : ''}] Exception at offset ${from}:`, err);
             break;
           }
         }
@@ -337,34 +345,45 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
           db
             .from("units")
             .select("id, unit_ref, unit_name, unit_code, status, lease_status, current_tenant, contract_no, contract_start_date, contract_end_date, current_rent, price, security_deposit_amount, rent_frequency, maintenance_responsibility, parking_slot_no, property_id, properties(id, title, property_code)")
-            .range(from, to)
+            .order("unit_ref")
+            .range(from, to),
+          "units"
         ),
         fetchAllRows((from, to) =>
-          db.from("properties").select("id, title, property_code").range(from, to)
+          db.from("properties").select("id, title, property_code").order("id").range(from, to),
+          "properties"
         ),
         fetchAllRows((from, to) =>
-          db.from("customers").select("*").range(from, to)
+          db.from("customers").select("*").order("id").range(from, to),
+          "customers"
         ),
         fetchAllRows((from, to) =>
-          db.from("leases").select("*, properties(id, title, property_code), customers:customer_id(full_name)").range(from, to)
+          db.from("leases").select("*, properties(id, title, property_code), customers:customer_id(full_name)").order("id").range(from, to),
+          "leases"
         ),
         fetchAllRows((from, to) =>
-          db.from("fin_pdc_register").select("*").range(from, to)
+          db.from("fin_pdc_register").select("*").order("id").range(from, to),
+          "fin_pdc_register"
         ),
         fetchAllRows((from, to) =>
-          db.from("pdcs").select("*").range(from, to)
+          db.from("pdcs").select("*").order("id").range(from, to),
+          "pdcs"
         ),
         fetchAllRows((from, to) =>
-          db.from("reservations").select("*").range(from, to)
+          db.from("reservations").select("*").order("id").range(from, to),
+          "reservations"
         ),
         fetchAllRows((from, to) =>
-          db.from("fin_vouchers").select("*").range(from, to)
+          db.from("fin_vouchers").select("*").order("id").range(from, to),
+          "fin_vouchers"
         ),
         fetchAllRows((from, to) =>
-          db.from("key_handovers").select("*").range(from, to)
+          db.from("key_handovers").select("*").order("id").range(from, to),
+          "key_handovers"
         ),
         fetchAllRows((from, to) =>
-          db.from("inspection_reports").select("*").range(from, to)
+          db.from("inspection_reports").select("*").order("id").range(from, to),
+          "inspection_reports"
         ),
       ]);
 
@@ -696,38 +715,7 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
         };
       });
 
-      // Merge locally stored renewal PDCs if present
-      try {
-        const localRenewalPdcs = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
-        if (Array.isArray(localRenewalPdcs)) {
-          localRenewalPdcs.forEach((lp: any, idx: number) => {
-            const chq = String(lp.chequeNo || lp.chequeNumber || lp.cheque_number || "");
-            if (chq && !mappedPdcs.some(mp => mp.chequeNo === chq)) {
-              const linkedLease = mappedLeases.find(l => l.id === lp.leaseId || (lp.unit && l.unit === lp.unit));
-              mappedPdcs.unshift({
-                id: String(lp.id || `local-pdc-${idx}`),
-                leaseId: lp.leaseId || linkedLease?.id || "",
-                chequeNo: chq,
-                chequeNumber: chq,
-                bank: lp.bank || "Qatar National Bank (QNB)",
-                propertyName: lp.property || linkedLease?.property || "",
-                unitName: lp.unit || linkedLease?.unit || "",
-                tenantName: lp.tenantName || lp.payerName || linkedLease?.tenantName || "Tenant",
-                date: lp.date || lp.dueDate || "",
-                dueDate: lp.dueDate || lp.date || "",
-                depositDate: lp.depositDate || "",
-                unit: lp.unit || linkedLease?.unit || "",
-                property: lp.property || linkedLease?.property || "",
-                tenureStart: lp.tenureStart || "",
-                tenureEnd: lp.tenureEnd || "",
-                amount: Number(lp.amount || 0),
-                status: ((lp.status || "received").toLowerCase().replace(/ /g, "_") as PdcStatus),
-                payerName: lp.payerName || lp.tenantName || linkedLease?.tenantName || "Tenant",
-              });
-            }
-          });
-        }
-      } catch { /* ignore */ }
+      // E2: fin_pdc_register and pdcs tables are the single source of truth (removed pms_renewal_pdcs KV merge)
 
       // Guarantee Cheques Integration - strict DB data only, zero static fallbacks
 

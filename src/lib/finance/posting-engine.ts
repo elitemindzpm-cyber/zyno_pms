@@ -1,4 +1,4 @@
-import { kvStore } from "@/lib/kv-store";
+import { checkPostingPeriodClosed, ensurePostingPeriodsLoaded } from "./posting-periods-cache";
 import { db } from '../db';
 import {
   resolveAccountingAccounts,
@@ -656,24 +656,13 @@ function normalizeUuid(
   return valueString;
 }
 function isDateInClosedPostingPeriod(dateStr?: string): { closed: boolean; periodName?: string } {
-  if (!dateStr || typeof window === "undefined") return { closed: false };
-  try {
-    const ym = dateStr.split("T")[0].slice(0, 7);
-    const raw = kvStore.getItem("pms_posting_periods_cache");
-    if (!raw) return { closed: false };
-    const list = JSON.parse(raw) as Array<{ period_name: string; status: string }>;
-    const found = list.find(p => p.period_name === ym);
-    if (found && (found.status === "Closed" || (found as any).is_closed)) {
-      return { closed: true, periodName: ym };
-    }
-  } catch {}
-  return { closed: false };
+  return checkPostingPeriodClosed(dateStr);
 }
 
 export async function postVoucher(
   input: PostVoucherInput,
 ): Promise<PostingResult> {
-
+  await ensurePostingPeriodsLoaded();
   const periodCheck = isDateInClosedPostingPeriod(input.voucher_date);
   if (periodCheck.closed) {
     throw new Error(`Cannot post voucher: Accounting period ${periodCheck.periodName} is CLOSED.`);

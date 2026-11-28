@@ -58,6 +58,7 @@ model assets {
   department                       String?                  @db.Text
   depreciation_method              String?                  @db.Text
   depreciation_rate                Decimal?                 @db.Decimal(18, 4)
+  salvage_value                    Decimal?                 @default(0.0000) @db.Decimal(18, 4)
   employees                        employees?               @relation(fields: [assigned_employee_id], references: [id], onUpdate: Restrict)
   properties                       properties?              @relation(fields: [assigned_property_id], references: [id], onUpdate: Restrict)
   units                            units?                   @relation(fields: [assigned_unit_id], references: [id], onUpdate: Restrict)
@@ -68,7 +69,6 @@ model assets {
   @@index([assigned_property_id], map: "assets_assigned_property_id_fkey")
   @@index([assigned_unit_id], map: "assets_assigned_unit_id_fkey")
   @@index([department_id], map: "assets_department_id_fkey")
-  salvage_value Decimal? @default(0.0000) @db.Decimal(18, 4)
 }
 
 model bookings {
@@ -252,10 +252,9 @@ model collection_receipts {
 
 model customers {
   id                        String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  customer_code             String?   @unique(map: "uq_customers_customer_code") @db.VarChar(50)
   customer_type             String?   @default("Individual") @db.Text
   full_name                 String    @db.Text
-  qatar_id                  String?   @db.Text
+  qatar_id                  String?   @unique(map: "uq_customers_qatar_id", length: 64) @db.Text
   passport_number           String?   @db.Text
   commercial_registration   String?   @db.Text
   nationality               String?   @db.Text
@@ -299,7 +298,7 @@ model customers {
   trade_licence_expiry_date DateTime? @db.Date
   computer_card_no          String?   @db.Text
   computer_card_expiry_date DateTime? @db.Date
-  tax_identification_no     String?   @db.Text
+  tax_identification_no     String?   @unique(map: "uq_customers_tax_id", length: 64) @db.Text
   registered_office_address String?   @db.Text
   billing_address           String?   @db.Text
   company_telephone         String?   @db.Text
@@ -311,6 +310,7 @@ model customers {
   contact_designation       String?   @db.Text
   contact_mobile            String?   @db.Text
   contact_email             String?   @db.Text
+  customer_code             String?   @unique(map: "uq_customers_customer_code") @db.VarChar(50)
   users                     users?    @relation(fields: [verified_by], references: [id], onUpdate: Restrict)
   leases                    leases[]
 
@@ -419,6 +419,7 @@ model employees {
   emergency_contacts                                                                     String?                           @default("[]") @db.LongText
   qualifications                                                                         String?                           @default("[]") @db.LongText
   previous_experience                                                                    String?                           @default("[]") @db.LongText
+  approval_limit                                                                         Decimal?                          @db.Decimal(18, 4)
   assets                                                                                 assets[]
   hrms_branches                                                                          hrms_branches?                    @relation(fields: [branch_id], references: [id], onUpdate: Restrict)
   hrms_business_units                                                                    hrms_business_units?              @relation(fields: [business_unit_id], references: [id], onUpdate: Restrict)
@@ -485,7 +486,6 @@ model employees {
   @@index([hr_manager_id], map: "employees_hr_manager_id_fkey")
   @@index([reporting_manager_id], map: "employees_reporting_manager_id_fkey")
   @@index([sub_department_id], map: "employees_sub_department_id_fkey")
-  approval_limit Decimal? @db.Decimal(18, 4)
 }
 
 model erp_chart_of_accounts {
@@ -624,7 +624,6 @@ model fin_accounting_event_lines {
   fin_accounting_events fin_accounting_events @relation(fields: [event_id], references: [id], onDelete: NoAction, onUpdate: Restrict, map: "fk_fin_event_lines_event")
 
   @@unique([event_id, line_number], map: "ux_fin_accounting_event_lines_event_line_number")
-  @@unique([event_id, line_number], map: "ux_fin_event_lines_event_line")
   @@index([account_code], map: "idx_fin_event_lines_account_code")
   @@index([account_id], map: "idx_fin_event_lines_account_id")
   @@index([event_id], map: "idx_fin_event_lines_event")
@@ -779,10 +778,10 @@ model fin_deposits {
   property_id      String?  @db.VarChar(36)
   unit_id          String?  @db.VarChar(36)
   lease_id         String?  @db.VarChar(36)
-  payment_mode     String?  @db.VarChar(64)
   status           String   @default("Held") @db.VarChar(255)
   receipt_ref      String?  @db.Text
   created_at       DateTime @default(now()) @db.DateTime(6)
+  payment_mode     String?  @db.VarChar(64)
 }
 
 model fin_financial_years {
@@ -795,12 +794,12 @@ model fin_financial_years {
 
 model fin_legal_receivables {
   id                  BigInt   @id @default(autoincrement())
-  tenant_id           BigInt
-  property_id         BigInt?
-  unit_id             BigInt?
-  lease_id            BigInt?
-  original_amount     Decimal? @db.Decimal(18, 4)
-  outstanding_balance Decimal? @db.Decimal(18, 4)
+  tenant_id           String   @db.VarChar(36)
+  property_id         String?  @db.VarChar(36)
+  unit_id             String?  @db.VarChar(36)
+  lease_id            String?  @db.VarChar(36)
+  original_amount     Decimal  @default(0.0000) @db.Decimal(18, 4)
+  outstanding_balance Decimal  @default(0.0000) @db.Decimal(18, 4)
   escalation_date     DateTime @db.Date
   reason              String?  @db.Text
   legal_case_id       String?  @db.Text
@@ -845,14 +844,14 @@ model fin_payroll_syncs {
 }
 
 model fin_pdc_register {
-  id              BigInt    @id
+  id              BigInt    @id @default(autoincrement())
   cheque_number   String    @db.Text
   bank_id         BigInt?
   cheque_date     DateTime  @db.Date
-  amount          Decimal?  @db.Decimal(18, 4)
-  tenant_id       BigInt?
-  property_id     BigInt?
-  unit_id         BigInt?
+  amount          Decimal   @default(0.0000) @db.Decimal(18, 4)
+  tenant_id       String?   @db.VarChar(36)
+  property_id     String?   @db.VarChar(36)
+  unit_id         String?   @db.VarChar(36)
   status          String    @default("In Hand") @db.VarChar(255)
   deposit_date    DateTime? @db.Date
   cleared_date    DateTime? @db.Date
@@ -860,7 +859,13 @@ model fin_pdc_register {
   original_pdc_id BigInt?
   created_at      DateTime  @default(now()) @db.DateTime(6)
   lease_id        String?   @db.VarChar(36)
+
+  @@unique([lease_id, cheque_number(length: 100)], map: "uq_fin_pdc_lease_cheque")
   @@index([lease_id], map: "idx_fin_pdc_register_lease")
+  @@index([property_id], map: "idx_fin_pdc_register_property")
+  @@index([status], map: "idx_fin_pdc_register_status")
+  @@index([tenant_id], map: "idx_fin_pdc_register_tenant")
+  @@index([unit_id], map: "idx_fin_pdc_register_unit")
 }
 
 model fin_posting_periods {
@@ -954,8 +959,8 @@ model fin_voucher_lines {
   account_id       String           @db.VarChar(36)
   account_code     String?          @db.Text
   account_name     String?          @db.Text
-  debit_amount     Decimal?         @db.Decimal(18, 4)
-  credit_amount    Decimal?         @db.Decimal(18, 4)
+  debit_amount     Decimal          @default(0.0000) @db.Decimal(18, 4)
+  credit_amount    Decimal          @default(0.0000) @db.Decimal(18, 4)
   description      String?          @db.Text
   tenant_id        String?          @db.VarChar(36)
   lease_id         String?          @db.VarChar(36)
@@ -977,6 +982,7 @@ model fin_voucher_lines {
   @@index([tenant_id], map: "idx_fin_voucher_lines_tenant")
   @@index([unit_id], map: "idx_fin_voucher_lines_unit")
   @@index([voucher_id], map: "idx_fin_voucher_lines_voucher")
+  @@index([account_code(length: 50)], map: "idx_fin_voucher_lines_code")
 }
 
 model fin_vouchers {
@@ -986,7 +992,7 @@ model fin_vouchers {
   voucher_type                                                                  String                 @db.Text
   reference_no                                                                  String?                @db.Text
   description                                                                   String?                @db.Text
-  total_amount                                                                  Decimal?               @db.Decimal(18, 4)
+  total_amount                                                                  Decimal                @default(0.0000) @db.Decimal(18, 4)
   status                                                                        String                 @default("DRAFT") @db.VarChar(255)
   accounting_event_id                                                           String?                @unique @db.VarChar(36)
   posted_by                                                                     String?                @db.VarChar(36)
@@ -995,11 +1001,18 @@ model fin_vouchers {
   source_type                                                                   String?                @db.VarChar(255)
   source_id                                                                     String?                @db.VarChar(36)
   created_by                                                                    String?                @db.VarChar(36)
+  approval_status                                                               String?                @db.VarChar(32)
+  narration                                                                     String?                @db.Text
+  origin_module                                                                 String?                @db.VarChar(64)
+  reviewed_by                                                                   String?                @db.VarChar(36)
+  reviewed_at                                                                   DateTime?              @db.DateTime(6)
+  rejection_reason                                                              String?                @db.Text
   fin_accounting_events_fin_accounting_events_voucher_idTofin_vouchers          fin_accounting_events? @relation("fin_accounting_events_voucher_idTofin_vouchers")
   fin_voucher_lines                                                             fin_voucher_lines[]
   fin_accounting_events_fin_vouchers_accounting_event_idTofin_accounting_events fin_accounting_events? @relation("fin_vouchers_accounting_event_idTofin_accounting_events", fields: [accounting_event_id], references: [id], onDelete: NoAction, onUpdate: Restrict, map: "fk_fin_vouchers_accounting_event")
 
   @@index([source_type, source_id], map: "idx_fin_vouchers_source")
+  @@index([approval_status], map: "idx_fin_vouchers_approval_status")
 }
 
 model fixed_assets {
@@ -1735,7 +1748,6 @@ model leases {
   payment_frequency                                                 String?              @default("Monthly") @db.Text
   security_deposit                                                  Decimal?             @default(0.0000) @db.Decimal(18, 4)
   security_deposit_status                                           String?              @default("Pending") @db.Text
-  collection_status                                                 String?              @db.VarChar(32)
   grace_period_days                                                 Int?                 @default(5)
   late_penalty_percentage                                           Decimal?             @default(0.0000) @db.Decimal(18, 4)
   late_penalty_fixed                                                Decimal?             @default(0.0000) @db.Decimal(18, 4)
@@ -1759,6 +1771,10 @@ model leases {
   deleted_at                                                        DateTime?            @db.DateTime(6)
   check_in_report_id                                                String?              @db.VarChar(36)
   check_out_report_id                                               String?              @db.VarChar(36)
+  collection_status                                                 String?              @db.VarChar(32)
+  has_rent_free                                                     Boolean              @default(false)
+  rent_free_period_days                                             Int                  @default(0)
+  rent_free_position                                                String               @default("FIRST_MONTH") @db.VarChar(32)
   inspection_reports_inspection_reports_lease_idToleases            inspection_reports[] @relation("inspection_reports_lease_idToleases")
   key_handovers                                                     key_handovers[]
   inspection_reports_leases_check_in_report_idToinspection_reports  inspection_reports?  @relation("leases_check_in_report_idToinspection_reports", fields: [check_in_report_id], references: [id], onUpdate: Restrict)
@@ -1795,28 +1811,28 @@ model modules {
 }
 
 model mst_asset_categories {
-  id                      Int                       @id
+  id                      Int                       @id @default(autoincrement())
   name                    String                    @unique @db.VarChar(255)
   mst_asset_subcategories mst_asset_subcategories[]
 }
 
 model mst_asset_conditions {
-  id   Int    @id
+  id   Int    @id @default(autoincrement())
   name String @unique @db.VarChar(255)
 }
 
 model mst_asset_ownership_types {
-  id   Int    @id
+  id   Int    @id @default(autoincrement())
   name String @unique @db.VarChar(255)
 }
 
 model mst_asset_statuses {
-  id   Int    @id
+  id   Int    @id @default(autoincrement())
   name String @unique @db.VarChar(255)
 }
 
 model mst_asset_subcategories {
-  id                   Int                   @id
+  id                   Int                   @id @default(autoincrement())
   name                 String                @db.VarChar(255)
   category_id          Int?
   mst_asset_categories mst_asset_categories? @relation(fields: [category_id], references: [id], onUpdate: Restrict)
@@ -1826,27 +1842,27 @@ model mst_asset_subcategories {
 }
 
 model mst_departments {
-  id   Int    @id
+  id   Int    @id @default(autoincrement())
   name String @unique @db.VarChar(255)
 }
 
 model mst_designations {
-  id   Int    @id
+  id   Int    @id @default(autoincrement())
   name String @unique @db.VarChar(255)
 }
 
 model mst_employee_statuses {
-  id   Int    @id
+  id   Int    @id @default(autoincrement())
   name String @unique @db.VarChar(255)
 }
 
 model mst_employment_types {
-  id   Int    @id
+  id   Int    @id @default(autoincrement())
   name String @unique @db.VarChar(255)
 }
 
 model mst_facilities {
-  id         Int       @id
+  id         Int       @id @default(autoincrement())
   name       String    @unique @db.VarChar(255)
   capacity   Int       @default(1)
   paid       Boolean   @default(false)
@@ -1859,7 +1875,7 @@ model mst_furnishing {
 }
 
 model mst_genders {
-  id         Int    @id
+  id         Int    @id @default(autoincrement())
   name       String @unique @db.VarChar(255)
   sort_order Int?   @default(0)
 }
@@ -1880,7 +1896,7 @@ model mst_ownership_types {
 }
 
 model mst_payment_modes {
-  id         Int       @id
+  id         Int       @id @default(autoincrement())
   code       String    @unique @db.VarChar(255)
   name       String    @db.VarChar(255)
   created_at DateTime? @default(now()) @db.DateTime(6)
@@ -1892,7 +1908,7 @@ model mst_property_categories {
 }
 
 model mst_property_codes {
-  id             Int              @id
+  id             Int              @id @default(autoincrement())
   code           String           @unique @db.VarChar(255)
   mst_unit_codes mst_unit_codes[]
 }
@@ -1913,7 +1929,7 @@ model mst_security_deposit_types {
 }
 
 model mst_ticket_categories {
-  id         Int       @id
+  id         Int       @id @default(autoincrement())
   name       String    @unique @db.VarChar(255)
   sla_hours  Int       @default(24)
   priority   String    @default("medium") @db.Text
@@ -1921,7 +1937,7 @@ model mst_ticket_categories {
 }
 
 model mst_unit_codes {
-  id                 Int                 @id
+  id                 Int                 @id @default(autoincrement())
   code               String              @db.VarChar(255)
   property_code_id   Int?
   mst_property_codes mst_property_codes? @relation(fields: [property_code_id], references: [id], onUpdate: Restrict)
@@ -1946,7 +1962,7 @@ model mst_view_types {
 }
 
 model mst_work_locations {
-  id   Int    @id
+  id   Int    @id @default(autoincrement())
   name String @unique @db.VarChar(255)
 }
 
@@ -3055,6 +3071,7 @@ model units {
   deposit_name                String?                       @db.Text
   receivables_code            String?                       @db.Text
   receivables_name            String?                       @db.Text
+  market_rent                 Decimal?                      @db.Decimal(18, 4)
   assets                      assets[]
   pricing_rules               pricing_rules[]
   proc_grn_lines              proc_grn_lines[]
@@ -3067,8 +3084,7 @@ model units {
   unit_rooms                  unit_rooms[]
   properties                  properties?                   @relation(fields: [property_id], references: [id], onDelete: Cascade, onUpdate: Restrict)
 
-  @@index([property_id], map: "units_property_id_fkey")
-  market_rent Decimal? @db.Decimal(18, 4)
+  @@unique([property_id, unit_number(length: 100)], map: "uq_units_property_unit")
 }
 
 model users {
@@ -3087,6 +3103,731 @@ model users {
   system_notifications                                           system_notifications[]
   tenant_organisations_tenant_organisations_admin_user_idTousers tenant_organisations[]  @relation("tenant_organisations_admin_user_idTousers")
   tenant_organisations_tenant_organisations_onboarded_byTousers  tenant_organisations[]  @relation("tenant_organisations_onboarded_byTousers")
+}
+
+model maintenance_tickets {
+  id          String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  tenant_id   String?   @db.VarChar(36)
+  property_id String?   @db.VarChar(36)
+  unit_ref    String?   @db.VarChar(255)
+  title       String    @db.Text
+  description String?   @db.Text
+  category    String    @default("General") @db.VarChar(255)
+  priority    String    @default("medium") @db.VarChar(20)
+  status      String    @default("new") @db.VarChar(30)
+  assignee    String?   @db.VarChar(255)
+  host_id     String?   @db.VarChar(36)
+  reported_by String?   @db.VarChar(255)
+  resolved_at DateTime? @db.DateTime(6)
+  created_at  DateTime  @default(now()) @db.DateTime(6)
+  updated_at  DateTime  @default(now()) @db.DateTime(6)
+
+  @@index([tenant_id], map: "idx_maintenance_tickets_tenant")
+  @@index([property_id], map: "idx_maintenance_tickets_property")
+}
+
+model approval_requests {
+  id               String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  target_record_id String?  @db.VarChar(36)
+  target_table     String?  @db.VarChar(255)
+  requested_by     String?  @db.VarChar(255)
+  amount           Decimal? @db.Decimal(18, 4)
+  status           String   @default("pending") @db.VarChar(20)
+  notes            String?  @db.Text
+  created_at       DateTime @default(now()) @db.DateTime(6)
+  updated_at       DateTime @default(now()) @db.DateTime(6)
+}
+
+model approval_steps {
+  id          String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  request_id  String?   @db.VarChar(36)
+  step_order  Int?
+  approver_id String?   @db.VarChar(255)
+  status      String?   @db.VarChar(20)
+  decision_at DateTime? @db.DateTime(6)
+  comment     String?   @db.Text
+  created_at  DateTime  @default(now()) @db.DateTime(6)
+}
+
+model ar_ledgers {
+  id          String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  customer_id String?   @db.VarChar(36)
+  lease_id    String?   @db.VarChar(36)
+  reference   String?   @db.VarChar(255)
+  type        String?   @db.VarChar(30)
+  date        DateTime? @db.Date
+  amount      Decimal?  @db.Decimal(18, 4)
+  balance     Decimal?  @db.Decimal(18, 4)
+  status      String    @default("open") @db.VarChar(20)
+  created_at  DateTime  @default(now()) @db.DateTime(6)
+}
+
+model asset_assignments {
+  id                    String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  asset_id              String?   @db.VarChar(36)
+  lease_id              String?   @db.VarChar(36)
+  unit_id               String?   @db.VarChar(36)
+  property_id           String?   @db.VarChar(36)
+  assigned_date         DateTime? @db.Date
+  return_date           DateTime? @db.Date
+  condition_on_handover String?   @db.Text
+  condition_on_return   String?   @db.Text
+  handover_notes        String?   @db.Text
+  return_notes          String?   @db.Text
+  status                String    @default("assigned") @db.VarChar(20)
+  created_at            DateTime  @default(now()) @db.DateTime(6)
+  updated_at            DateTime  @default(now()) @db.DateTime(6)
+}
+
+model fin_transaction_receipts {
+  id                   String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  receipt_no           String?   @db.VarChar(100)
+  acknowledgement_no   String?   @db.VarChar(100)
+  accounting_event_id  String?   @db.VarChar(36)
+  voucher_id           String?   @db.VarChar(36)
+  receipt_date         DateTime? @db.Date
+  receipt_category     String?   @db.VarChar(100)
+  direction            String?   @db.VarChar(10)
+  amount               Decimal?  @db.Decimal(18, 4)
+  currency_code        String?   @db.VarChar(10)
+  source_type          String?   @db.VarChar(100)
+  source_id            String?   @db.VarChar(255)
+  reference_no         String?   @db.VarChar(255)
+  description          String?   @db.Text
+  tenant_id            String?   @db.VarChar(36)
+  customer_id          String?   @db.VarChar(36)
+  property_id          String?   @db.VarChar(36)
+  unit_id              String?   @db.VarChar(36)
+  lease_id             String?   @db.VarChar(36)
+  payment_method       String?   @db.VarChar(100)
+  instrument_reference String?   @db.VarChar(255)
+  status               String    @default("ISSUED") @db.VarChar(20)
+  issued_at            DateTime  @db.DateTime(6)
+  receipt_payload      String?   @db.LongText
+  metadata             String?   @db.LongText
+  created_at           DateTime  @default(now()) @db.DateTime(6)
+}
+
+model hrms_payroll_overrides {
+  id               String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  payroll_cycle_id String   @db.VarChar(36)
+  employee_id      String   @db.VarChar(36)
+  basic_pay        Decimal? @db.Decimal(18, 4)
+  allowances       Decimal? @db.Decimal(18, 4)
+  incentives       Decimal? @db.Decimal(18, 4)
+  other_deductions Decimal? @db.Decimal(18, 4)
+  remarks          String?  @db.Text
+  created_at       DateTime @default(now()) @db.DateTime(6)
+  updated_at       DateTime @default(now()) @db.DateTime(6)
+
+  @@unique([payroll_cycle_id, employee_id], map: "uq_hrms_payroll_overrides")
+}
+
+model journal_entries {
+  id            String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  je_no         String?   @db.VarChar(100)
+  posting_date  DateTime? @db.Date
+  period        String?   @db.VarChar(7)
+  source_module String?   @db.VarChar(100)
+  source_id     String?   @db.VarChar(255)
+  narration     String?   @db.Text
+  status        String    @default("draft") @db.VarChar(20)
+  tenant_id     String?   @db.VarChar(36)
+  property_id   String?   @db.VarChar(36)
+  created_at    DateTime  @default(now()) @db.DateTime(6)
+}
+
+model lease_reservations {
+  id                     String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  unit_id                String?   @db.VarChar(36)
+  prospect_name          String?   @db.VarChar(255)
+  prospect_contact       String?   @db.VarChar(255)
+  prospect_id_type       String?   @db.VarChar(100)
+  prospect_id_number     String?   @db.VarChar(100)
+  marketing_agent_id     String?   @db.VarChar(36)
+  proposed_lease_period  Int?
+  expected_start_date    DateTime? @db.Date
+  proposed_rental_amount Decimal?  @db.Decimal(18, 4)
+  reservation_validity   String?   @db.VarChar(100)
+  valid_until            DateTime? @db.Date
+  special_conditions     String?   @db.Text
+  status                 String    @default("Active") @db.VarChar(20)
+  created_at             DateTime  @default(now()) @db.DateTime(6)
+  updated_at             DateTime  @default(now()) @db.DateTime(6)
+}
+
+model payments {
+  id             String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  tenant_id      String?   @db.VarChar(36)
+  lease_id       String?   @db.VarChar(36)
+  customer_id    String?   @db.VarChar(36)
+  amount         Decimal?  @db.Decimal(18, 4)
+  payment_method String?   @db.VarChar(50)
+  payment_status String?   @db.VarChar(30)
+  payment_date   DateTime? @db.Date
+  reference_no   String?   @db.VarChar(100)
+  created_at     DateTime  @default(now()) @db.DateTime(6)
+  updated_at     DateTime  @default(now()) @db.DateTime(6)
+}
+
+model pms_app_state {
+  id         String   @id @db.VarChar(255)
+  data       String?  @db.LongText
+  updated_at DateTime @default(now()) @db.DateTime(6)
+}
+
+model proc_ap_invoices {
+  id             String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  invoice_number String?   @db.VarChar(100)
+  vendor_id      String?   @db.VarChar(64)
+  po_number      String?   @db.VarChar(100)
+  grn_number     String?   @db.VarChar(100)
+  invoice_date   DateTime? @db.Date
+  due_date       DateTime? @db.Date
+  amount         Decimal?  @db.Decimal(18, 4)
+  tax_amount     Decimal?  @db.Decimal(18, 4)
+  total_amount   Decimal?  @db.Decimal(18, 4)
+  status         String    @default("DRAFT") @db.VarChar(30)
+  remarks        String?   @db.Text
+  created_at     DateTime  @default(now()) @db.DateTime(6)
+  updated_at     DateTime  @default(now()) @db.DateTime(6)
+}
+
+model proc_landed_costs {
+  id                  String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  doc_number          String?  @db.VarChar(100)
+  purchase_order_id   String?  @db.VarChar(36)
+  goods_receipt_id    String?  @db.VarChar(36)
+  cost_type           String?  @db.VarChar(100)
+  vendor_id           String?  @db.VarChar(64)
+  amount              Decimal? @db.Decimal(18, 4)
+  status              String   @default("DRAFT") @db.VarChar(30)
+  posting_status      String   @default("UNPOSTED") @db.VarChar(30)
+  allocation_basis    String?  @db.VarChar(100)
+  remarks             String?  @db.Text
+  accounting_event_id String?  @db.VarChar(36)
+  created_at          DateTime @default(now()) @db.DateTime(6)
+  updated_at          DateTime @default(now()) @db.DateTime(6)
+}
+
+model proc_payable_invoice_lines {
+  id                   String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  payable_invoice_id   String?  @db.VarChar(36)
+  line_no              Int?
+  source_line_id       String?  @db.VarChar(36)
+  description          String?  @db.Text
+  item_type            String?  @db.VarChar(100)
+  quantity             Decimal? @db.Decimal(18, 4)
+  unit_rate            Decimal? @db.Decimal(18, 4)
+  line_total           Decimal? @db.Decimal(18, 4)
+  tax_amount           Decimal? @db.Decimal(18, 4)
+  expense_account_code String?  @db.VarChar(100)
+  asset_category       String?  @db.VarChar(100)
+  created_at           DateTime @default(now()) @db.DateTime(6)
+}
+
+model proc_payable_invoices {
+  id                  String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  doc_number          String?   @db.VarChar(100)
+  vendor_id           String?   @db.VarChar(64)
+  purchase_order_id   String?   @db.VarChar(36)
+  goods_receipt_id    String?   @db.VarChar(36)
+  invoice_date        DateTime? @db.Date
+  due_date            DateTime? @db.Date
+  status              String    @default("DRAFT") @db.VarChar(30)
+  posting_status      String    @default("UNPOSTED") @db.VarChar(30)
+  invoice_type        String?   @db.VarChar(30)
+  subtotal            Decimal?  @db.Decimal(18, 4)
+  tax_amount          Decimal?  @db.Decimal(18, 4)
+  discount_amount     Decimal?  @db.Decimal(18, 4)
+  total_amount        Decimal?  @db.Decimal(18, 4)
+  paid_amount         Decimal?  @db.Decimal(18, 4)
+  outstanding_amount  Decimal?  @db.Decimal(18, 4)
+  payment_status      String?   @db.VarChar(30)
+  remarks             String?   @db.Text
+  accounting_event_id String?   @db.VarChar(36)
+  created_at          DateTime  @default(now()) @db.DateTime(6)
+  updated_at          DateTime  @default(now()) @db.DateTime(6)
+}
+
+model proc_po_lines {
+  id                   String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  purchase_order_id    String?  @db.VarChar(36)
+  line_no              Int?
+  description          String?  @db.Text
+  item_type            String?  @db.VarChar(100)
+  quantity             Decimal? @db.Decimal(18, 4)
+  unit_rate            Decimal? @db.Decimal(18, 4)
+  line_total           Decimal? @db.Decimal(18, 4)
+  expense_account_code String?  @db.VarChar(100)
+  asset_category       String?  @db.VarChar(100)
+  uom                  String?  @db.VarChar(30)
+  created_at           DateTime @default(now()) @db.DateTime(6)
+}
+
+model proc_purchase_lines {
+  id                   String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  purchase_id          String?  @db.VarChar(36)
+  line_no              Int?
+  grn_line_id          String?  @db.VarChar(36)
+  description          String?  @db.Text
+  item_type            String?  @db.VarChar(100)
+  quantity             Decimal? @db.Decimal(18, 4)
+  unit_rate            Decimal? @db.Decimal(18, 4)
+  base_amount          Decimal? @db.Decimal(18, 4)
+  landed_cost_amount   Decimal? @db.Decimal(18, 4)
+  total_amount         Decimal? @db.Decimal(18, 4)
+  asset_category       String?  @db.VarChar(100)
+  expense_account_code String?  @db.VarChar(100)
+  account_code         String?  @db.VarChar(100)
+  account_name         String?  @db.VarChar(255)
+  is_active            Boolean  @default(true)
+  created_at           DateTime @default(now()) @db.DateTime(6)
+}
+
+model proc_purchases {
+  id                  String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  doc_number          String?   @db.VarChar(100)
+  purchase_order_id   String?   @db.VarChar(36)
+  goods_receipt_id    String?   @db.VarChar(36)
+  payable_invoice_id  String?   @db.VarChar(36)
+  status              String    @default("DRAFT") @db.VarChar(30)
+  posting_status      String    @default("UNPOSTED") @db.VarChar(30)
+  property_id         String?   @db.VarChar(36)
+  cost_center_id      String?   @db.VarChar(36)
+  purchase_date       DateTime? @db.Date
+  total_amount        Decimal?  @db.Decimal(18, 4)
+  capitalized_amount  Decimal?  @db.Decimal(18, 4)
+  accounting_event_id String?   @db.VarChar(36)
+  created_at          DateTime  @default(now()) @db.DateTime(6)
+  updated_at          DateTime  @default(now()) @db.DateTime(6)
+}
+
+model proc_three_way_matches {
+  id                 String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  payable_invoice_id String?  @db.VarChar(36)
+  purchase_order_id  String?  @db.VarChar(36)
+  goods_receipt_id   String?  @db.VarChar(36)
+  match_status       String?  @db.VarChar(30)
+  quantity_variance  Decimal? @db.Decimal(18, 4)
+  amount_variance    Decimal? @db.Decimal(18, 4)
+  created_at         DateTime @default(now()) @db.DateTime(6)
+  updated_at         DateTime @default(now()) @db.DateTime(6)
+}
+
+model proc_trade_categories {
+  id         String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  name       String   @db.VarChar(255)
+  sort_order Int      @default(0)
+  is_active  Boolean  @default(true)
+  created_at DateTime @default(now()) @db.DateTime(6)
+}
+
+model procurement_approval_delegations {
+  id                String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  policy_version_id String?   @db.VarChar(36)
+  source_role       String?   @db.VarChar(100)
+  delegate_role     String?   @db.VarChar(100)
+  source_user_id    String?   @db.VarChar(255)
+  delegate_user_id  String?   @db.VarChar(255)
+  max_amount        Decimal?  @db.Decimal(18, 4)
+  effective_from    DateTime? @db.DateTime(6)
+  effective_to      DateTime? @db.DateTime(6)
+  reason            String?   @db.Text
+  status            String    @default("ACTIVE") @db.VarChar(20)
+  created_at        DateTime  @default(now()) @db.DateTime(6)
+}
+
+model procurement_items {
+  id              String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  item_code       String   @unique(map: "uq_procurement_items") @db.VarChar(100)
+  name            String?  @db.VarChar(255)
+  category        String?  @db.VarChar(100)
+  item_type       String?  @db.VarChar(100)
+  budget_type     String?  @db.VarChar(100)
+  budget_head     String?  @db.VarChar(100)
+  unit_price      Decimal? @db.Decimal(18, 4)
+  unit_of_measure String?  @db.VarChar(30)
+  reorder_level   Decimal? @db.Decimal(18, 4)
+  active          Boolean  @default(true)
+  created_at      DateTime @default(now()) @db.DateTime(6)
+  updated_at      DateTime @default(now()) @db.DateTime(6)
+}
+
+model procurement_policy_rules {
+  id                String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  policy_version_id String?  @db.VarChar(36)
+  document_type     String?  @db.VarChar(30)
+  min_amount        Decimal? @db.Decimal(18, 4)
+  max_amount        Decimal? @db.Decimal(18, 4)
+  required_role     String?  @db.VarChar(100)
+  approval_sequence Int?
+  sla_hours         Int?
+  escalation_role   String?  @db.VarChar(100)
+  created_at        DateTime @default(now()) @db.DateTime(6)
+}
+
+model procurement_policy_versions {
+  id               String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  policy_code      String?   @db.VarChar(100)
+  version_no       Int?
+  status           String    @default("DRAFT") @db.VarChar(20)
+  enforcement_mode String?   @db.VarChar(30)
+  effective_from   DateTime? @db.DateTime(6)
+  effective_to     DateTime? @db.DateTime(6)
+  notes            String?   @db.Text
+  created_at       DateTime  @default(now()) @db.DateTime(6)
+  updated_at       DateTime  @default(now()) @db.DateTime(6)
+}
+
+model provisions {
+  id            String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  name          String?  @db.VarChar(255)
+  amount        Decimal? @db.Decimal(18, 4)
+  period        String?  @db.VarChar(7)
+  gl_account_id String?  @db.VarChar(36)
+  created_at    DateTime @default(now()) @db.DateTime(6)
+}
+
+model receipts {
+  id         String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  lease_id   String?  @db.VarChar(36)
+  receipt_no String?  @db.VarChar(100)
+  amount     Decimal? @db.Decimal(18, 4)
+  created_at DateTime @default(now()) @db.DateTime(6)
+}
+
+model rent_schedules {
+  id         String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  lease_id   String?   @db.VarChar(36)
+  due_date   DateTime? @db.Date
+  amount     Decimal?  @db.Decimal(18, 4)
+  status     String    @default("unpaid") @db.VarChar(30)
+  created_at DateTime  @default(now()) @db.DateTime(6)
+  updated_at DateTime  @default(now()) @db.DateTime(6)
+}
+
+model revenue_recognition_logs {
+  id                       String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  closing_month            String?  @db.VarChar(7)
+  run_by                   String?  @db.VarChar(255)
+  total_leases_processed   Int?
+  total_revenue_recognized Decimal? @db.Decimal(18, 4)
+  journal_voucher_id       String?  @db.VarChar(36)
+  status                   String?  @db.VarChar(30)
+  details                  String?  @db.LongText
+  created_at               DateTime @default(now()) @db.DateTime(6)
+}
+
+model vendor_bank_details {
+  id             String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  vendor_id      String?  @db.VarChar(64)
+  bank_name      String?  @db.VarChar(255)
+  account_name   String?  @db.VarChar(255)
+  account_number String?  @db.VarChar(100)
+  iban           String?  @db.VarChar(100)
+  swift_code     String?  @db.VarChar(50)
+  currency       String?  @db.VarChar(10)
+  created_at     DateTime @default(now()) @db.DateTime(6)
+}
+
+model vendor_contacts {
+  id         String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  vendor_id  String?  @db.VarChar(64)
+  name       String?  @db.VarChar(255)
+  role       String?  @db.VarChar(100)
+  phone      String?  @db.VarChar(50)
+  email      String?  @db.VarChar(255)
+  is_primary Boolean?
+  created_at DateTime @default(now()) @db.DateTime(6)
+}
+
+model vendor_qualifications {
+  id            String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  vendor_id     String?   @db.VarChar(64)
+  category      String?   @db.VarChar(100)
+  certification String?   @db.VarChar(255)
+  expiry_date   DateTime? @db.Date
+  status        String?   @db.VarChar(30)
+  notes         String?   @db.Text
+  created_at    DateTime  @default(now()) @db.DateTime(6)
+}
+
+model hrms_master_items {
+  id          String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  category    String   @db.VarChar(64)
+  name        String   @db.VarChar(255)
+  code        String?  @db.VarChar(64)
+  description String?  @db.Text
+  extra       String?  @db.LongText
+  is_active   Boolean  @default(true)
+  created_at  DateTime @default(now()) @db.DateTime(6)
+  updated_at  DateTime @default(now()) @db.DateTime(6)
+
+  @@index([category], map: "idx_hrms_master_items_category")
+}
+
+model app_kv_store {
+  tenant_id  String   @db.VarChar(36)
+  k          String   @db.VarChar(255)
+  v          String   @db.LongText
+  updated_at DateTime @default(now()) @db.DateTime(6)
+
+  @@id([tenant_id, k])
+}
+
+model app_sequences {
+  name          String @id @db.VarChar(64)
+  current_value BigInt @default(0)
+}
+
+model fin_ar_invoices {
+  id                     String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  invoice_no             String    @unique(map: "uq_fin_ar_invoices_no") @db.VarChar(100)
+  tenant                 String?   @db.VarChar(255)
+  property               String?   @db.VarChar(255)
+  unit                   String?   @db.VarChar(100)
+  customer_id            String?   @db.VarChar(36)
+  lease_id               String?   @db.VarChar(36)
+  invoice_date           DateTime  @db.Date
+  due_date               DateTime? @db.Date
+  stream                 String?   @db.VarChar(100)
+  account_code           String    @db.VarChar(50)
+  amount                 Decimal   @db.Decimal(18, 4)
+  paid_amount            Decimal   @default(0.0000) @db.Decimal(18, 4)
+  status                 String    @default("Pending") @db.VarChar(20)
+  billing_period         String?   @db.VarChar(7)
+  notes                  String?   @db.Text
+  voucher_number         String?   @db.VarChar(255)
+  receipt_voucher_number String?   @db.VarChar(255)
+  created_at             DateTime  @default(now()) @db.DateTime(6)
+  updated_at             DateTime  @default(now()) @db.DateTime(6)
+
+  @@index([unit, billing_period], map: "idx_fin_ar_invoices_unit_period")
+}
+
+model fin_ap_invoices {
+  id                     String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  invoice_no             String    @unique(map: "uq_fin_ap_invoices_no") @db.VarChar(100)
+  vendor                 String?   @db.VarChar(255)
+  property               String?   @db.VarChar(255)
+  invoice_date           DateTime  @db.Date
+  voucher_date           DateTime? @db.Date
+  due_date               DateTime? @db.Date
+  account                String?   @db.VarChar(255)
+  account_code           String    @db.VarChar(50)
+  stream                 String?   @db.VarChar(100)
+  amount                 Decimal   @db.Decimal(18, 4)
+  paid_amount            Decimal   @default(0.0000) @db.Decimal(18, 4)
+  status                 String    @default("Unpaid") @db.VarChar(20)
+  lines_json             String?   @db.LongText
+  voucher_number         String?   @db.VarChar(255)
+  payment_voucher_number String?   @db.VarChar(255)
+  created_at             DateTime  @default(now()) @db.DateTime(6)
+  updated_at             DateTime  @default(now()) @db.DateTime(6)
+}
+
+model fin_legal_cases {
+  id                  String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  legal_case_id       String   @unique(map: "uq_fin_legal_cases_no") @db.VarChar(100)
+  tenant_name         String?  @db.VarChar(255)
+  property_name       String?  @db.VarChar(255)
+  unit_ref            String?  @db.VarChar(100)
+  original_amount     Decimal  @db.Decimal(18, 4)
+  outstanding_balance Decimal  @db.Decimal(18, 4)
+  escalation_date     DateTime @db.Date
+  reason              String?  @db.Text
+  status              String   @default("Legal Notice Sent") @db.VarChar(50)
+  voucher_number      String?  @db.VarChar(255)
+  created_at          DateTime @default(now()) @db.DateTime(6)
+  updated_at          DateTime @default(now()) @db.DateTime(6)
+}
+
+model fin_payroll_runs {
+  id             String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  payroll_run_id String   @unique(map: "uq_fin_payroll_runs_no") @db.VarChar(100)
+  period         String?  @db.VarChar(50)
+  department     String?  @db.VarChar(255)
+  account_code   String?  @db.VarChar(50)
+  basic_salary   Decimal  @default(0.0000) @db.Decimal(18, 4)
+  allowances     Decimal  @default(0.0000) @db.Decimal(18, 4)
+  overtime       Decimal  @default(0.0000) @db.Decimal(18, 4)
+  deductions     Decimal  @default(0.0000) @db.Decimal(18, 4)
+  total_amount   Decimal  @db.Decimal(18, 4)
+  bank_account   String?  @db.VarChar(255)
+  status         String   @default("Posted") @db.VarChar(20)
+  error_details  String?  @db.Text
+  voucher_number String?  @db.VarChar(255)
+  created_at     DateTime @default(now()) @db.DateTime(6)
+}
+
+model fin_bank_clearances {
+  id             String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  ref            String   @db.VarChar(100)
+  bank           String?  @db.VarChar(255)
+  type           String?  @db.VarChar(100)
+  amount         Decimal  @db.Decimal(18, 4)
+  clearance_date DateTime @db.Date
+  status         String   @default("Pending Clearance") @db.VarChar(30)
+  created_at     DateTime @default(now()) @db.DateTime(6)
+}
+
+model fin_bank_recon_records {
+  id                String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  account_number    String   @db.VarChar(255)
+  statement_date    DateTime @db.Date
+  book_balance      Decimal  @default(0.0000) @db.Decimal(18, 4)
+  statement_balance Decimal  @default(0.0000) @db.Decimal(18, 4)
+  difference        Decimal  @default(0.0000) @db.Decimal(18, 4)
+  status            String   @default("Reconciled") @db.VarChar(30)
+  created_at        DateTime @default(now()) @db.DateTime(6)
+}
+
+model fin_recon_statements {
+  id         String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  title      String   @db.VarChar(255)
+  period     String?  @db.VarChar(50)
+  balance    String?  @db.VarChar(100)
+  auditor    String?  @db.VarChar(255)
+  created_at DateTime @default(now()) @db.DateTime(6)
+}
+
+model fin_tax_configs {
+  id             String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  code           String   @unique(map: "uq_fin_tax_configs_code") @db.VarChar(32)
+  name           String   @db.VarChar(120)
+  rate           Decimal  @default(0.0000) @db.Decimal(8, 4)
+  output_gl_code String   @default("21300") @db.VarChar(50)
+  input_gl_code  String   @default("12500") @db.VarChar(50)
+  is_default     Boolean  @default(false)
+  is_active      Boolean  @default(true)
+  created_at     DateTime @default(now()) @db.DateTime(6)
+}
+
+model fin_credit_debit_notes {
+  id               String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  note_number      String   @unique(map: "uq_fin_credit_debit_notes_no") @db.VarChar(100)
+  note_type        String   @db.VarChar(20)
+  party_type       String   @db.VarChar(30)
+  party_id         String?  @db.VarChar(64)
+  party_name       String   @db.VarChar(255)
+  linked_agreement String?  @db.VarChar(100)
+  linked_invoice   String?  @db.VarChar(100)
+  amount           Decimal  @default(0.0000) @db.Decimal(18, 4)
+  account_code     String   @db.VarChar(50)
+  reason           String?  @db.VarChar(255)
+  notes            String?  @db.Text
+  note_date        DateTime @db.Date
+  voucher_number   String?  @db.VarChar(255)
+  status           String   @default("DRAFT") @db.VarChar(30)
+  created_at       DateTime @default(now()) @db.DateTime(6)
+  updated_at       DateTime @default(now()) @db.DateTime(6)
+
+  @@index([note_type, status], map: "idx_fin_cdn_type_status")
+}
+
+model fin_payment_receipts {
+  id             String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  receipt_number String   @unique(map: "uq_fin_payment_receipts_no") @db.VarChar(100)
+  voucher_number String   @db.VarChar(100)
+  invoice_number String   @db.VarChar(100)
+  po_number      String?  @db.VarChar(100)
+  grn_number     String?  @db.VarChar(100)
+  vendor_id      String?  @db.VarChar(64)
+  vendor_name    String?  @db.VarChar(255)
+  amount_paid    Decimal  @default(0.0000) @db.Decimal(18, 4)
+  payment_date   DateTime @db.Date
+  payment_method String?  @db.VarChar(100)
+  reference_no   String?  @db.VarChar(100)
+  bank_account   String?  @db.VarChar(255)
+  status         String   @default("Settled") @db.VarChar(30)
+  remarks        String?  @db.Text
+  created_at     DateTime @default(now()) @db.DateTime(6)
+
+  @@index([invoice_number], map: "idx_fin_payment_receipts_inv")
+}
+
+model fin_budget_heads {
+  id               String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  code             String   @unique(map: "uq_fin_budget_heads_code") @db.VarChar(64)
+  name             String   @db.VarChar(255)
+  budget_type      String   @default("OPEX") @db.VarChar(30)
+  annual_limit     Decimal  @default(0.0000) @db.Decimal(18, 4)
+  allocated_amount Decimal  @default(0.0000) @db.Decimal(18, 4)
+  fiscal_year      Int      @default(2026)
+  is_active        Boolean  @default(true)
+  created_at       DateTime @default(now()) @db.DateTime(6)
+}
+
+model maintenance_work_orders {
+  id             String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  wo_number      String    @unique(map: "uq_maintenance_work_orders_no") @db.VarChar(64)
+  ticket_id      String?   @db.VarChar(64)
+  property       String?   @db.VarChar(255)
+  unit_ref       String?   @db.VarChar(100)
+  title          String    @db.VarChar(255)
+  category       String?   @db.VarChar(100)
+  priority       String    @default("medium") @db.VarChar(30)
+  status         String    @default("open") @db.VarChar(40)
+  assigned_to    String?   @db.VarChar(255)
+  scheduled_date DateTime? @db.Date
+  completed_date DateTime? @db.Date
+  estimated_cost Decimal   @default(0.0000) @db.Decimal(18, 4)
+  actual_cost    Decimal   @default(0.0000) @db.Decimal(18, 4)
+  notes          String?   @db.Text
+  created_at     DateTime  @default(now()) @db.DateTime(6)
+  updated_at     DateTime  @default(now()) @db.DateTime(6)
+
+  @@index([status], map: "idx_mwo_status")
+}
+
+model maintenance_technicians {
+  id          String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  name        String   @db.VarChar(255)
+  phone       String?  @db.VarChar(64)
+  email       String?  @db.VarChar(255)
+  specialty   String?  @db.VarChar(120)
+  status      String   @default("available") @db.VarChar(30)
+  rating      Decimal  @default(5.00) @db.Decimal(4, 2)
+  active_jobs Int      @default(0)
+  created_at  DateTime @default(now()) @db.DateTime(6)
+}
+
+model maintenance_ppm_schedules {
+  id                  String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  title               String    @db.VarChar(255)
+  property            String?   @db.VarChar(255)
+  asset_name          String?   @db.VarChar(255)
+  category            String?   @db.VarChar(100)
+  frequency           String    @default("Monthly") @db.VarChar(40)
+  next_due_date       DateTime  @db.Date
+  last_completed_date DateTime? @db.Date
+  assigned_to         String?   @db.VarChar(255)
+  status              String    @default("scheduled") @db.VarChar(30)
+  created_at          DateTime  @default(now()) @db.DateTime(6)
+}
+
+model maintenance_comments {
+  id               String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  entity_type      String   @db.VarChar(20)
+  entity_id        String   @db.VarChar(64)
+  author           String   @db.VarChar(255)
+  role             String   @db.VarChar(64)
+  comment          String   @db.Text
+  attachments_json String?  @db.LongText
+  created_at       DateTime @default(now()) @db.DateTime(6)
+
+  @@index([entity_type, entity_id], map: "idx_mc_entity")
+}
+
+model asset_lifecycle_records {
+  id           String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
+  record_type  String   @db.VarChar(40)
+  asset_id     String?  @db.VarChar(64)
+  payload_json String   @db.LongText
+  created_at   DateTime @default(now()) @db.DateTime(6)
+
+  @@index([record_type], map: "idx_alr_type")
 }
 
 enum fin_accounting_events_event_type {
@@ -3283,466 +4024,4 @@ enum proc_shipments_status {
   REJECTED
   CANCELLED
   CLOSED
-}
-
-model maintenance_tickets {
-  id           String    @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  tenant_id    String?   @db.VarChar(36)
-  property_id  String?   @db.VarChar(36)
-  unit_ref     String?   @db.VarChar(255)
-  title        String    @db.Text
-  description  String?   @db.Text
-  category     String    @default("General") @db.VarChar(255)
-  priority     String    @default("medium") @db.VarChar(20)
-  status       String    @default("new") @db.VarChar(30)
-  assignee     String?   @db.VarChar(255)
-  host_id      String?   @db.VarChar(36)
-  reported_by  String?   @db.VarChar(255)
-  resolved_at  DateTime? @db.DateTime(6)
-  created_at   DateTime  @default(now()) @db.DateTime(6)
-  updated_at   DateTime  @default(now()) @db.DateTime(6)
-
-  @@index([tenant_id], map: "idx_maintenance_tickets_tenant")
-  @@index([property_id], map: "idx_maintenance_tickets_property")
-}
-
-model approval_requests {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  target_record_id String? @db.VarChar(36)
-  target_table String? @db.VarChar(255)
-  requested_by String? @db.VarChar(255)
-  amount Decimal? @db.Decimal(18,4)
-  status String @db.VarChar(20) @default("pending")
-  notes String? @db.Text
-  created_at DateTime @db.DateTime(6) @default(now())
-  updated_at DateTime @db.DateTime(6) @default(now())
-}
-
-model approval_steps {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  request_id String? @db.VarChar(36)
-  step_order Int?
-  approver_id String? @db.VarChar(255)
-  status String? @db.VarChar(20)
-  decision_at DateTime? @db.DateTime(6)
-  comment String? @db.Text
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model ar_ledgers {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  customer_id String? @db.VarChar(36)
-  lease_id String? @db.VarChar(36)
-  reference String? @db.VarChar(255)
-  type String? @db.VarChar(30)
-  date DateTime? @db.Date
-  amount Decimal? @db.Decimal(18,4)
-  balance Decimal? @db.Decimal(18,4)
-  status String @db.VarChar(20) @default("open")
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model asset_assignments {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  asset_id String? @db.VarChar(36)
-  lease_id String? @db.VarChar(36)
-  unit_id String? @db.VarChar(36)
-  property_id String? @db.VarChar(36)
-  assigned_date DateTime? @db.Date
-  return_date DateTime? @db.Date
-  condition_on_handover String? @db.Text
-  condition_on_return String? @db.Text
-  handover_notes String? @db.Text
-  return_notes String? @db.Text
-  status String @db.VarChar(20) @default("assigned")
-  created_at DateTime @db.DateTime(6) @default(now())
-  updated_at DateTime @db.DateTime(6) @default(now())
-}
-
-model fin_transaction_receipts {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  receipt_no String? @db.VarChar(100)
-  acknowledgement_no String? @db.VarChar(100)
-  accounting_event_id String? @db.VarChar(36)
-  voucher_id String? @db.VarChar(36)
-  receipt_date DateTime? @db.Date
-  receipt_category String? @db.VarChar(100)
-  direction String? @db.VarChar(10)
-  amount Decimal? @db.Decimal(18,4)
-  currency_code String? @db.VarChar(10)
-  source_type String? @db.VarChar(100)
-  source_id String? @db.VarChar(255)
-  reference_no String? @db.VarChar(255)
-  description String? @db.Text
-  tenant_id String? @db.VarChar(36)
-  customer_id String? @db.VarChar(36)
-  property_id String? @db.VarChar(36)
-  unit_id String? @db.VarChar(36)
-  lease_id String? @db.VarChar(36)
-  payment_method String? @db.VarChar(100)
-  instrument_reference String? @db.VarChar(255)
-  status String @db.VarChar(20) @default("ISSUED")
-  issued_at DateTime @db.DateTime(6)
-  receipt_payload Json? @db.Json
-  metadata Json? @db.Json
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model hrms_payroll_overrides {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  payroll_cycle_id String @db.VarChar(36)
-  employee_id String @db.VarChar(36)
-  basic_pay Decimal? @db.Decimal(18,4)
-  allowances Decimal? @db.Decimal(18,4)
-  incentives Decimal? @db.Decimal(18,4)
-  other_deductions Decimal? @db.Decimal(18,4)
-  remarks String? @db.Text
-  created_at DateTime @db.DateTime(6) @default(now())
-  updated_at DateTime @db.DateTime(6) @default(now())
-  @@unique([payroll_cycle_id, employee_id])
-}
-
-model journal_entries {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  je_no String? @db.VarChar(100)
-  posting_date DateTime? @db.Date
-  period String? @db.VarChar(7)
-  source_module String? @db.VarChar(100)
-  source_id String? @db.VarChar(255)
-  narration String? @db.Text
-  status String @db.VarChar(20) @default("draft")
-  tenant_id String? @db.VarChar(36)
-  property_id String? @db.VarChar(36)
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model lease_reservations {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  unit_id String? @db.VarChar(36)
-  prospect_name String? @db.VarChar(255)
-  prospect_contact String? @db.VarChar(255)
-  prospect_id_type String? @db.VarChar(100)
-  prospect_id_number String? @db.VarChar(100)
-  marketing_agent_id String? @db.VarChar(36)
-  proposed_lease_period Int?
-  expected_start_date DateTime? @db.Date
-  proposed_rental_amount Decimal? @db.Decimal(18,4)
-  reservation_validity String? @db.VarChar(100)
-  valid_until DateTime? @db.Date
-  special_conditions String? @db.Text
-  status String @db.VarChar(20) @default("Active")
-  created_at DateTime @db.DateTime(6) @default(now())
-  updated_at DateTime @db.DateTime(6) @default(now())
-}
-
-model payments {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  tenant_id String? @db.VarChar(36)
-  lease_id String? @db.VarChar(36)
-  customer_id String? @db.VarChar(36)
-  amount Decimal? @db.Decimal(18,4)
-  payment_method String? @db.VarChar(50)
-  payment_status String? @db.VarChar(30)
-  payment_date DateTime? @db.Date
-  reference_no String? @db.VarChar(100)
-  created_at DateTime @db.DateTime(6) @default(now())
-  updated_at DateTime @db.DateTime(6) @default(now())
-}
-
-model pms_app_state {
-  id String @id @db.VarChar(255)
-  data Json? @db.Json
-  updated_at DateTime @db.DateTime(6) @default(now())
-}
-
-model proc_ap_invoices {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  invoice_number String? @db.VarChar(100)
-  vendor_id String? @db.VarChar(64)
-  po_number String? @db.VarChar(100)
-  grn_number String? @db.VarChar(100)
-  invoice_date DateTime? @db.Date
-  due_date DateTime? @db.Date
-  amount Decimal? @db.Decimal(18,4)
-  tax_amount Decimal? @db.Decimal(18,4)
-  total_amount Decimal? @db.Decimal(18,4)
-  status String @db.VarChar(30) @default("DRAFT")
-  remarks String? @db.Text
-  created_at DateTime @db.DateTime(6) @default(now())
-  updated_at DateTime @db.DateTime(6) @default(now())
-}
-
-model proc_landed_costs {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  doc_number String? @db.VarChar(100)
-  purchase_order_id String? @db.VarChar(36)
-  goods_receipt_id String? @db.VarChar(36)
-  cost_type String? @db.VarChar(100)
-  vendor_id String? @db.VarChar(64)
-  amount Decimal? @db.Decimal(18,4)
-  status String @db.VarChar(30) @default("DRAFT")
-  posting_status String @db.VarChar(30) @default("UNPOSTED")
-  allocation_basis String? @db.VarChar(100)
-  remarks String? @db.Text
-  accounting_event_id String? @db.VarChar(36)
-  created_at DateTime @db.DateTime(6) @default(now())
-  updated_at DateTime @db.DateTime(6) @default(now())
-}
-
-model proc_payable_invoice_lines {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  payable_invoice_id String? @db.VarChar(36)
-  line_no Int?
-  source_line_id String? @db.VarChar(36)
-  description String? @db.Text
-  item_type String? @db.VarChar(100)
-  quantity Decimal? @db.Decimal(18,4)
-  unit_rate Decimal? @db.Decimal(18,4)
-  line_total Decimal? @db.Decimal(18,4)
-  tax_amount Decimal? @db.Decimal(18,4)
-  expense_account_code String? @db.VarChar(100)
-  asset_category String? @db.VarChar(100)
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model proc_payable_invoices {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  doc_number String? @db.VarChar(100)
-  vendor_id String? @db.VarChar(64)
-  purchase_order_id String? @db.VarChar(36)
-  goods_receipt_id String? @db.VarChar(36)
-  invoice_date DateTime? @db.Date
-  due_date DateTime? @db.Date
-  status String @db.VarChar(30) @default("DRAFT")
-  posting_status String @db.VarChar(30) @default("UNPOSTED")
-  invoice_type String? @db.VarChar(30)
-  subtotal Decimal? @db.Decimal(18,4)
-  tax_amount Decimal? @db.Decimal(18,4)
-  discount_amount Decimal? @db.Decimal(18,4)
-  total_amount Decimal? @db.Decimal(18,4)
-  paid_amount Decimal? @db.Decimal(18,4)
-  outstanding_amount Decimal? @db.Decimal(18,4)
-  payment_status String? @db.VarChar(30)
-  remarks String? @db.Text
-  accounting_event_id String? @db.VarChar(36)
-  created_at DateTime @db.DateTime(6) @default(now())
-  updated_at DateTime @db.DateTime(6) @default(now())
-}
-
-model proc_po_lines {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  purchase_order_id String? @db.VarChar(36)
-  line_no Int?
-  description String? @db.Text
-  item_type String? @db.VarChar(100)
-  quantity Decimal? @db.Decimal(18,4)
-  unit_rate Decimal? @db.Decimal(18,4)
-  line_total Decimal? @db.Decimal(18,4)
-  expense_account_code String? @db.VarChar(100)
-  asset_category String? @db.VarChar(100)
-  uom String? @db.VarChar(30)
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model proc_purchase_lines {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  purchase_id String? @db.VarChar(36)
-  line_no Int?
-  grn_line_id String? @db.VarChar(36)
-  description String? @db.Text
-  item_type String? @db.VarChar(100)
-  quantity Decimal? @db.Decimal(18,4)
-  unit_rate Decimal? @db.Decimal(18,4)
-  base_amount Decimal? @db.Decimal(18,4)
-  landed_cost_amount Decimal? @db.Decimal(18,4)
-  total_amount Decimal? @db.Decimal(18,4)
-  asset_category String? @db.VarChar(100)
-  expense_account_code String? @db.VarChar(100)
-  account_code String? @db.VarChar(100)
-  account_name String? @db.VarChar(255)
-  is_active Boolean @default(true)
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model proc_purchases {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  doc_number String? @db.VarChar(100)
-  purchase_order_id String? @db.VarChar(36)
-  goods_receipt_id String? @db.VarChar(36)
-  payable_invoice_id String? @db.VarChar(36)
-  status String @db.VarChar(30) @default("DRAFT")
-  posting_status String @db.VarChar(30) @default("UNPOSTED")
-  property_id String? @db.VarChar(36)
-  cost_center_id String? @db.VarChar(36)
-  purchase_date DateTime? @db.Date
-  total_amount Decimal? @db.Decimal(18,4)
-  capitalized_amount Decimal? @db.Decimal(18,4)
-  accounting_event_id String? @db.VarChar(36)
-  created_at DateTime @db.DateTime(6) @default(now())
-  updated_at DateTime @db.DateTime(6) @default(now())
-}
-
-model proc_three_way_matches {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  payable_invoice_id String? @db.VarChar(36)
-  purchase_order_id String? @db.VarChar(36)
-  goods_receipt_id String? @db.VarChar(36)
-  match_status String? @db.VarChar(30)
-  quantity_variance Decimal? @db.Decimal(18,4)
-  amount_variance Decimal? @db.Decimal(18,4)
-  created_at DateTime @db.DateTime(6) @default(now())
-  updated_at DateTime @db.DateTime(6) @default(now())
-}
-
-model proc_trade_categories {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  name String @db.VarChar(255)
-  sort_order Int @default(0)
-  is_active Boolean @default(true)
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model procurement_approval_delegations {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  policy_version_id String? @db.VarChar(36)
-  source_role String? @db.VarChar(100)
-  delegate_role String? @db.VarChar(100)
-  source_user_id String? @db.VarChar(255)
-  delegate_user_id String? @db.VarChar(255)
-  max_amount Decimal? @db.Decimal(18,4)
-  effective_from DateTime? @db.DateTime(6)
-  effective_to DateTime? @db.DateTime(6)
-  reason String? @db.Text
-  status String @db.VarChar(20) @default("ACTIVE")
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model procurement_items {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  item_code String @db.VarChar(100)
-  name String? @db.VarChar(255)
-  category String? @db.VarChar(100)
-  item_type String? @db.VarChar(100)
-  budget_type String? @db.VarChar(100)
-  budget_head String? @db.VarChar(100)
-  unit_price Decimal? @db.Decimal(18,4)
-  unit_of_measure String? @db.VarChar(30)
-  reorder_level Decimal? @db.Decimal(18,4)
-  active Boolean @default(true)
-  created_at DateTime @db.DateTime(6) @default(now())
-  updated_at DateTime @db.DateTime(6) @default(now())
-  @@unique([item_code])
-}
-
-model procurement_policy_rules {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  policy_version_id String? @db.VarChar(36)
-  document_type String? @db.VarChar(30)
-  min_amount Decimal? @db.Decimal(18,4)
-  max_amount Decimal? @db.Decimal(18,4)
-  required_role String? @db.VarChar(100)
-  approval_sequence Int?
-  sla_hours Int?
-  escalation_role String? @db.VarChar(100)
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model procurement_policy_versions {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  policy_code String? @db.VarChar(100)
-  version_no Int?
-  status String @db.VarChar(20) @default("DRAFT")
-  enforcement_mode String? @db.VarChar(30)
-  effective_from DateTime? @db.DateTime(6)
-  effective_to DateTime? @db.DateTime(6)
-  notes String? @db.Text
-  created_at DateTime @db.DateTime(6) @default(now())
-  updated_at DateTime @db.DateTime(6) @default(now())
-}
-
-model provisions {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  name String? @db.VarChar(255)
-  amount Decimal? @db.Decimal(18,4)
-  period String? @db.VarChar(7)
-  gl_account_id String? @db.VarChar(36)
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model receipts {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  lease_id String? @db.VarChar(36)
-  receipt_no String? @db.VarChar(100)
-  amount Decimal? @db.Decimal(18,4)
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model rent_schedules {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  lease_id String? @db.VarChar(36)
-  due_date DateTime? @db.Date
-  amount Decimal? @db.Decimal(18,4)
-  status String @db.VarChar(30) @default("unpaid")
-  created_at DateTime @db.DateTime(6) @default(now())
-  updated_at DateTime @db.DateTime(6) @default(now())
-}
-
-model revenue_recognition_logs {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  closing_month String? @db.VarChar(7)
-  run_by String? @db.VarChar(255)
-  total_leases_processed Int?
-  total_revenue_recognized Decimal? @db.Decimal(18,4)
-  journal_voucher_id String? @db.VarChar(36)
-  status String? @db.VarChar(30)
-  details Json? @db.Json
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model vendor_bank_details {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  vendor_id String? @db.VarChar(64)
-  bank_name String? @db.VarChar(255)
-  account_name String? @db.VarChar(255)
-  account_number String? @db.VarChar(100)
-  iban String? @db.VarChar(100)
-  swift_code String? @db.VarChar(50)
-  currency String? @db.VarChar(10)
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model vendor_contacts {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  vendor_id String? @db.VarChar(64)
-  name String? @db.VarChar(255)
-  role String? @db.VarChar(100)
-  phone String? @db.VarChar(50)
-  email String? @db.VarChar(255)
-  is_primary Boolean?
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model vendor_qualifications {
-  id String @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  vendor_id String? @db.VarChar(64)
-  category String? @db.VarChar(100)
-  certification String? @db.VarChar(255)
-  expiry_date DateTime? @db.Date
-  status String? @db.VarChar(30)
-  notes String? @db.Text
-  created_at DateTime @db.DateTime(6) @default(now())
-}
-
-model hrms_master_items {
-  id          String   @id @default(dbgenerated("(uuid())")) @db.VarChar(36)
-  category    String   @db.VarChar(64)
-  name        String   @db.VarChar(255)
-  code        String?  @db.VarChar(64)
-  description String?  @db.Text
-  extra       String?  @db.LongText
-  is_active   Boolean  @default(true)
-  created_at  DateTime @default(now()) @db.DateTime(6)
-  updated_at  DateTime @default(now()) @db.DateTime(6)
-
-  @@index([category], map: "idx_hrms_master_items_category")
 }

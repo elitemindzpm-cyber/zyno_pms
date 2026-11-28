@@ -222,6 +222,14 @@ export const coaApi = {
   list: () => request<{ data: any[] }>('/api/accounting/coa'),
 };
 
+// Accounting – SQL Ageing Report (D8)
+export const ageingApi = {
+  get: (type: 'ar' | 'ap', asOf?: string) =>
+    request<{ data: any[]; totals: any; type: string; asOf: string }>(
+      `/api/accounting/ageing?type=${type}${asOf ? `&as_of=${encodeURIComponent(asOf)}` : ''}`,
+    ),
+};
+
 // HRMS – Employees
 export const employeesApi = {
   list: (p?: any) => listRecords('hrms/employees', p),

@@ -262,11 +262,7 @@ export function CustomerStatementSubModule({
           return isNaN(t1) || isNaN(t2) ? 9999 : Math.abs(Math.round((t1 - t2) / 86400000));
         };
 
-        let localRenewal: any[] = [];
-        try {
-          const parsed = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
-          if (Array.isArray(parsed)) localRenewal = parsed;
-        } catch { localRenewal = []; }
+        const localRenewal: any[] = [];
 
         const voucherHints = new Map<string, Array<{ amount: number; unit: string; tenant: string }>>();
         for (const v of vchRes.data || []) {
@@ -467,12 +463,6 @@ export function CustomerStatementSubModule({
     };
 
     pdcs.forEach(mergeCandidate);
-    try {
-      const localRenewal = JSON.parse(kvStore.getItem("pms_renewal_pdcs") || "[]");
-      if (Array.isArray(localRenewal)) {
-        localRenewal.forEach(mergeCandidate);
-      }
-    } catch { /* ignore */ }
 
     return combinedPdcs.filter(p => {
       // 1. Direct lease match

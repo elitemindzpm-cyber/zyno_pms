@@ -10,6 +10,8 @@ type Rule = { method: string; path: RegExp };
 const TENANT_RULES: Rule[] = [
   // Lease list and detail are filtered to the tenant's own leases inside the route.
   { method: 'GET', path: /^\/api\/leases(\/[^/]+)?$/ },
+  // Tenant portal aggregated summary scoped strictly to the signed-in tenant's leases/tickets/payments.
+  { method: 'GET', path: /^\/api\/portal\/summary$/ },
   // Maintenance tickets: insert and query are scoped (own tenant_id, active lease) inside db.ts.
   { method: 'POST', path: /^\/api\/db\/maintenance_tickets\/(insert|query)$/ },
   // Session and self-service reference data.

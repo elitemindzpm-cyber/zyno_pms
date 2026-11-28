@@ -1,4 +1,5 @@
 import { kvStore } from "@/lib/kv-store";
+import { COMMON_GL_ACCOUNTS, BANK_GL_ACCOUNTS, useGlAccountOptions } from "@/lib/finance/gl-account-options";
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { useSearch, useNavigate } from "@tanstack/react-router";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -48,6 +49,7 @@ import { ReceivablesLegal } from "./finance/receivables";
 import { PayrollSync } from "./finance/payroll-sync";
 import { formatDDMMMYYYY, formatDateDDMMYYYY } from "@/lib/date-utils";
 import { postVoucher } from "@/lib/finance/posting-engine";
+import { checkPostingPeriodClosed, setPostingPeriodsCache } from "@/lib/finance/posting-periods-cache";
 import { useFinanceStore, resolvePdcBankGl, resolveCanonicalPropertyName, type ReceivableInvoice } from "@/lib/finance/finance-store";
 import { ApInvoicesApi, type ProcApInvoice, type PaymentReceipt } from "@/lib/proc-invoices-api";
 import { PaymentReceiptDialog } from "@/components/payment-receipt-dialog";
@@ -75,18 +77,7 @@ import { UtilityRechargeRecoverySubModule } from "@/components/finance/utility-r
 import { SecurityDepositReconciliationSubModule } from "@/components/finance/security-deposit-reconciliation-report";
 
 export function isDateInClosedPostingPeriod(dateStr?: string): { closed: boolean; periodName?: string } {
-  if (!dateStr || typeof window === "undefined") return { closed: false };
-  try {
-    const ym = dateStr.split("T")[0].slice(0, 7);
-    const raw = kvStore.getItem("pms_posting_periods_cache");
-    if (!raw) return { closed: false };
-    const list = JSON.parse(raw) as Array<{ period_name: string; status: string }>;
-    const found = list.find(p => p.period_name === ym);
-    if (found && found.status === "Closed") {
-      return { closed: true, periodName: ym };
-    }
-  } catch {}
-  return { closed: false };
+  return checkPostingPeriodClosed(dateStr);
 }
 export interface FinanceModuleProps {
   role: "admin" | "prop-mgr" | "finance" | "cashier";
@@ -345,11 +336,6 @@ function FinancialYearSubModule() {
   const [form, setForm] = useState({ name: "FY 2026-2027", start_date: "2026-01-01", end_date: "2026-12-31", status: "Active" as const });
 
   useEffect(() => { load(); }, []);
-  useEffect(() => {
-    if (typeof window !== "undefined" && data.length > 0) {
-      try { kvStore.setItem("pms_posting_periods_cache", JSON.stringify(data)); } catch {}
-    }
-  }, [data]);
   async function load() {
     setLoading(true);
     try {
@@ -979,10 +965,38 @@ function BudgetHeadSubModule() {
     description: ""
   });
 
-  // Save to kvStore
+  // Load Budget Heads from /api/accounting/budget-heads
   useEffect(() => {
-    kvStore.setItem("zyno_finance_budget_heads", JSON.stringify(budgetHeads));
-  }, [budgetHeads]);
+    let active = true;
+    async function loadBudgets() {
+      setLoadingBudgets(true);
+      try {
+        const res = await apiRequest<{ data: any[] }>("/api/accounting/budget-heads");
+        if (!active) return;
+        const mapped: BudgetHeadItem[] = (res?.data || []).map((r: any) => ({
+          id: String(r.id),
+          code: String(r.code),
+          name: String(r.name),
+          budget_type: r.budget_type === "CAPEX" ? "CAPEX" : "OPEX",
+          cost_center_code: r.cost_center_code || "CC-PROP-SALATA",
+          cost_center_name: r.cost_center_name || "Operations",
+          account_code: r.account_code || "51004001",
+          account_name: r.account_name || "Mapped Account",
+          allocated_budget: Number(r.allocated_amount ?? r.annual_limit ?? 0),
+          financial_year: r.fiscal_year ? `FY ${r.fiscal_year}` : "FY 2026-2027",
+          status: r.is_active === false ? "Inactive" : "Active",
+          description: r.description || "",
+        }));
+        setBudgetHeads(mapped);
+      } catch {
+        if (active) setBudgetHeads([]);
+      } finally {
+        if (active) setLoadingBudgets(false);
+      }
+    }
+    loadBudgets();
+    return () => { active = false; };
+  }, []);
 
   // Load Cost Centers
   useEffect(() => {
@@ -1053,7 +1067,7 @@ function BudgetHeadSubModule() {
     setDialogOpen(true);
   }
 
-  function handleSave() {
+  async function handleSave() {
     if (!form.name.trim() || !form.code.trim()) {
       toast.error("Please provide both Budget Head Code and Name.");
       return;
@@ -1062,26 +1076,23 @@ function BudgetHeadSubModule() {
     const cc = costCenters.find(c => c.code === form.cost_center_code);
     const coa = COA_EXPENSE_ASSET_OPTIONS.find(a => a.code === form.account_code);
     const allocated = parseFloat(form.allocated_budget) || 0;
+    const fyYear = parseInt(form.financial_year.replace(/\D/g, "").slice(0, 4), 10) || 2026;
 
-    if (editingItem) {
-      setBudgetHeads(prev => prev.map(bh => bh.id === editingItem.id ? {
-        ...bh,
-        code: form.code,
-        name: form.name,
-        budget_type: form.budget_type,
-        cost_center_code: form.cost_center_code,
-        cost_center_name: cc?.name || form.cost_center_code,
-        account_code: form.account_code,
-        account_name: coa?.name || "Mapped Account",
-        allocated_budget: allocated,
-        financial_year: form.financial_year,
-        status: form.status,
-        description: form.description
-      } : bh));
-      toast.success(`Budget Head ${form.code} updated successfully.`);
-    } else {
-      const newItem: BudgetHeadItem = {
-        id: `bh-${Date.now()}`,
+    try {
+      const saved = await apiRequest<{ data: any }>("/api/accounting/budget-heads", {
+        method: "POST",
+        body: JSON.stringify({
+          code: form.code,
+          name: form.name,
+          budget_type: form.budget_type,
+          allocated_amount: allocated,
+          annual_limit: allocated,
+          fiscal_year: fyYear,
+        }),
+      });
+      const dbId = saved?.data?.id ? String(saved.data.id) : editingItem?.id || `bh-${Date.now()}`;
+      const nextItem: BudgetHeadItem = {
+        id: dbId,
         code: form.code,
         name: form.name,
         budget_type: form.budget_type,
@@ -1094,16 +1105,28 @@ function BudgetHeadSubModule() {
         status: form.status,
         description: form.description
       };
-      setBudgetHeads(prev => [newItem, ...prev]);
-      toast.success(`New Budget Head ${form.code} created.`);
+      if (editingItem) {
+        setBudgetHeads(prev => prev.map(bh => bh.id === editingItem.id ? nextItem : bh));
+        toast.success(`Budget Head ${form.code} updated successfully.`);
+      } else {
+        setBudgetHeads(prev => [nextItem, ...prev.filter(bh => bh.code !== form.code)]);
+        toast.success(`New Budget Head ${form.code} created.`);
+      }
+      setDialogOpen(false);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to save Budget Head.");
     }
-    setDialogOpen(false);
   }
 
-  function handleDelete(id: string) {
+  async function handleDelete(id: string) {
     if (!confirm("Are you sure you want to remove this Budget Head?")) return;
-    setBudgetHeads(prev => prev.filter(bh => bh.id !== id));
-    toast.success("Budget Head removed.");
+    try {
+      await apiRequest(`/api/accounting/budget-heads/${id}`, { method: "DELETE" });
+      setBudgetHeads(prev => prev.filter(bh => bh.id !== id));
+      toast.success("Budget Head removed.");
+    } catch (e: any) {
+      toast.error(e.message || "Failed to remove Budget Head.");
+    }
   }
 
   // Filtered Budget Heads
@@ -1648,16 +1671,22 @@ function PostingPeriodSubModule() {
   async function load() {
     try {
       const res = await FinPostingPeriodsApi.fetchAll();
-      setData(res || []);
+      const rows = res || [];
+      setData(rows);
+      setPostingPeriodsCache(rows);
     } catch {
       setData([]);
     }
   }
 
   async function toggle(row: FinPostingPeriod) {
-    const nextStatus = row.status === "Open" ? "Closed" : "Open";
+    const nextStatus: "Open" | "Closed" = row.status === "Open" ? "Closed" : "Open";
     try { await FinPostingPeriodsApi.update(row.id, { status: nextStatus }); } catch { }
-    setData(prev => prev.map(p => p.id === row.id ? { ...p, status: nextStatus } : p));
+    setData(prev => {
+      const next = prev.map(p => p.id === row.id ? { ...p, status: nextStatus } : p);
+      setPostingPeriodsCache(next);
+      return next;
+    });
     toast.success(`Period ${row.period_name} is now ${nextStatus}`);
   }
 
@@ -1700,7 +1729,11 @@ function PostingPeriodSubModule() {
           status: form.status
         });
       } catch { }
-      setData(prev => prev.map(p => p.id === editingId ? { ...p, period_name, year: y, month: m, status: form.status } : p));
+      setData(prev => {
+        const next = prev.map(p => p.id === editingId ? { ...p, period_name, year: y, month: m, status: form.status } : p);
+        setPostingPeriodsCache(next);
+        return next;
+      });
       toast.success(`Posting Period ${period_name} updated successfully!`);
     } else {
       // Create new
@@ -1714,7 +1747,11 @@ function PostingPeriodSubModule() {
       try {
         await FinPostingPeriodsApi.create(newPeriod);
       } catch { }
-      setData(prev => [newPeriod, ...prev]);
+      setData(prev => {
+        const next = [newPeriod, ...prev];
+        setPostingPeriodsCache(next);
+        return next;
+      });
       toast.success(`Posting Period ${period_name} added successfully!`);
     }
     setOpen(false);
@@ -1992,17 +2029,7 @@ function ChartOfAccountsSubModule() {
         fetchPropertyCoaMappings().catch(() => [])
       ]);
 
-      // ── Merge Custom User-Added COA Accounts from kvStore ──
-      let customCoas: ERPChartOfAccount[] = [];
-      try {
-        const rawCustom = kvStore.getItem("fin_custom_coa_accounts_v1");
-        if (rawCustom) {
-          const parsed = JSON.parse(rawCustom);
-          if (Array.isArray(parsed)) customCoas = parsed;
-        }
-      } catch {}
-
-      // ── Clean Master COA (preserve full 5-tier TYPE -> GROUP -> CLASS -> GL -> SL records) ──
+      // Master COA comes directly from MariaDB (E2: removed fin_custom_coa_accounts_v1 KV merge)
       const masterMap = new Map<string, ERPChartOfAccount>();
       (accs || []).forEach(a => {
         const key = a.sl_code || a.code || a.gl_code || a.name;
@@ -2010,31 +2037,8 @@ function ChartOfAccountsSubModule() {
           masterMap.set(key, a);
         }
       });
-      customCoas.forEach(c => {
-        const key = c.sl_code || c.code || c.gl_code || c.name;
-        if (!masterMap.has(key)) {
-          masterMap.set(key, c);
-        }
-      });
       const cleanMaster = Array.from(masterMap.values());
-
-      // Merge any offline custom accounts into tree.gls so they also show in Hierarchy Tree
-      const existingGlCodes = new Set((tree.gls || []).map((g: any) => g.code));
       const mergedGls = [...(tree.gls || [])];
-      customCoas.forEach(c => {
-        const glCode = String(c.gl_code || c.code || "");
-        if (glCode && !existingGlCodes.has(glCode)) {
-          existingGlCodes.add(glCode);
-          mergedGls.push({
-            id: c.id || `custom-gl-${glCode}`,
-            code: glCode,
-            name: String(c.gl_name || c.name || ""),
-            class_code: String(c.class_code || (tree.classes?.[0]?.code ?? "111")),
-            group_code: String(c.group_code || (tree.groups?.[0]?.code ?? "11")),
-            type_code: String(c.type_code || "1"),
-          } as any);
-        }
-      });
 
       // ── Clean Unit Sub-Ledgers ──
       const distinctUnitMap = new Map<string, UnitCOA>();
@@ -2127,34 +2131,8 @@ function ChartOfAccountsSubModule() {
 
     setSavingCoa(true);
     try {
-      const created = await createCoaAccount(payload);
-
-      const newCustomAcc: ERPChartOfAccount = {
-        id: created?.erpAccount?.id || `custom-coa-${Date.now()}`,
-        code: payload.sl_code,
-        name: payload.sl_name,
-        type: payload.type_name,
-        type_code: payload.type_code,
-        type_name: payload.type_name,
-        group_code: payload.group_code,
-        group_name: payload.group_name,
-        class_code: payload.class_code,
-        class_name: payload.class_name,
-        gl_code: payload.gl_code,
-        gl_name: payload.gl_name,
-        sl_code: payload.sl_code,
-        sl_name: payload.sl_name,
-        created_at: new Date().toISOString(),
-      };
-
-      try {
-        const rawCustom = kvStore.getItem("fin_custom_coa_accounts_v1");
-        const existing: ERPChartOfAccount[] = rawCustom ? JSON.parse(rawCustom) : [];
-        const filtered = existing.filter(a => (a.sl_code || a.code) !== payload.sl_code);
-        filtered.push(newCustomAcc);
-        kvStore.setItem("fin_custom_coa_accounts_v1", JSON.stringify(filtered));
-        window.dispatchEvent(new Event("fin_custom_coa_updated"));
-      } catch {}
+      await createCoaAccount(payload);
+      window.dispatchEvent(new Event("fin_custom_coa_updated"));
 
       toast.success(`COA Account ${payload.sl_code} - ${payload.sl_name} created under ${payload.type_name} → ${payload.gl_code} ${payload.gl_name}!`);
       setForm(emptyCoaForm);
@@ -3065,6 +3043,7 @@ function ChartOfAccountsSubModule() {
 }
 
 function JournalLedgerSubModule() {
+  useGlAccountOptions();
   const { leases, units } = useAppData();
   const { journalEntries: storeJournalEntries, addJournalEntry } = useFinanceStore();
   const [open, setOpen] = useState(false);
@@ -3392,7 +3371,7 @@ function JournalLedgerSubModule() {
                     size="sm"
                     variant="outline"
                     className="h-7 text-xs gap-1 border-emerald-500/40 text-emerald-600"
-                    onClick={() => setJeLines(lines => [...lines, { id: String(Date.now() + Math.random()), type: "CR", account: COMMON_GL_ACCOUNTS[1].name, property: propertiesList[0] || "All / Corporate", amount: "0", description: form.narration }])}
+                    onClick={() => setJeLines(lines => [...lines, { id: String(Date.now() + Math.random()), type: "CR", account: (COMMON_GL_ACCOUNTS[1] ?? COMMON_GL_ACCOUNTS[0])?.name ?? "", property: propertiesList[0] || "All / Corporate", amount: "0", description: form.narration }])}
                   >
                     <Plus className="h-3.5 w-3.5" /> Add Credit (Cr) Line
                   </Button>
@@ -3494,6 +3473,7 @@ function JournalLedgerSubModule() {
 }
 
 function CreditDebitBuilderSubModule() {
+  useGlAccountOptions();
   const { leases, units } = useAppData();
   const { addJournalEntry } = useFinanceStore();
   const propertiesList = useMemo(() => {
@@ -4112,20 +4092,7 @@ const EXPENSE_GL_ACCOUNTS = [
 ];
 
 function getAvailableExpenseGlAccounts(): string[] {
-  const set = new Set<string>(EXPENSE_GL_ACCOUNTS);
-  try {
-    const rawCustom = kvStore.getItem("fin_custom_coa_accounts_v1");
-    if (rawCustom) {
-      const parsed: ERPChartOfAccount[] = JSON.parse(rawCustom);
-      parsed.forEach(acc => {
-        const t = (acc.type || "").toLowerCase();
-        if (t.includes("exp") || String(acc.code || "").startsWith("5")) {
-          set.add(`${acc.code} - ${acc.name || acc.gl_name}`);
-        }
-      });
-    }
-  } catch {}
-  return Array.from(set);
+  return [...EXPENSE_GL_ACCOUNTS];
 }
 
 function supplierCreditDays(paymentTerms?: string): number | null {
@@ -4463,18 +4430,6 @@ function PayableInvoiceSubModule() {
         payment_method: payForm.paymentMethod,
         payment_reference: payForm.transactionReference,
       });
-
-      // Update local storage for pms_vendor_invoices
-      try {
-        const mntRaw = kvStore.getItem("pms_vendor_invoices");
-        if (mntRaw) {
-          const mntList: any[] = JSON.parse(mntRaw);
-          const updatedMnt = mntList.map((m: any) =>
-            m.invoiceNo === payTarget.invoice_no ? { ...m, status: "Approved" } : m
-          );
-          kvStore.setItem("pms_vendor_invoices", JSON.stringify(updatedMnt));
-        }
-      } catch {}
 
       // Add Payment Voucher into Finance Store
       const suffix = payTarget.invoice_no.replace('APINV-', '').replace('INV-AP-', '').replace('INV-', '');
@@ -5066,11 +5021,9 @@ function PayableInvoiceSubModule() {
   );
 }
 
-const BANK_GL_ACCOUNTS: Array<{ code: string; name: string }> = [];
-
-const COMMON_GL_ACCOUNTS: Array<{ code: string; name: string }> = [];
 
 function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment Voucher" | "Receipt Voucher" }) {
+  useGlAccountOptions();
   const { vouchers: sharedVouchers, setVouchers: setSharedVouchers, leases, units } = useAppData();
   const { addVoucher: addFinanceStoreVoucher } = useFinanceStore();
   const [open, setOpen] = useState(false);
@@ -5533,7 +5486,7 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
                       className="h-7 text-xs gap-1 border-emerald-500/40 text-emerald-600 hover:bg-emerald-50"
                       onClick={() => setJournalLines(lines => [
                         ...lines,
-                        { id: String(Date.now() + Math.random()), type: "CR", account: COMMON_GL_ACCOUNTS[1].name, property: form.property || propertiesList[0] || "All / Corporate", amount: "0", description: form.name }
+                        { id: String(Date.now() + Math.random()), type: "CR", account: (COMMON_GL_ACCOUNTS[1] ?? COMMON_GL_ACCOUNTS[0])?.name ?? "", property: form.property || propertiesList[0] || "All / Corporate", amount: "0", description: form.name }
                       ])}
                     >
                       <Plus className="h-3.5 w-3.5" /> Add Credit (Cr) Line
@@ -5737,7 +5690,7 @@ function VoucherManagerSubModule({ type }: { type: "Journal Voucher" | "Payment 
                         debit: v === "Cash"
                           ? "12100001 - Cash In Hand / Operating Cash"
                           : current.debit.startsWith("12100001")
-                            ? BANK_GL_ACCOUNTS[0].name
+                            ? (BANK_GL_ACCOUNTS[0]?.name ?? "")
                             : current.debit,
                       } : {}),
                     }))}>
@@ -6703,8 +6656,6 @@ function BankAccountSubModule() {
     status: "Active"
   });
 
-  const LOCAL_STORAGE_KEY = "pms_fin_bank_accounts_override_v2";
-
   useEffect(() => {
     load();
     const handleSync = () => load();
@@ -6844,11 +6795,7 @@ function BankAccountSubModule() {
       console.warn("DB account status update error:", err);
     }
 
-    setData(prev => {
-      const next = prev.map(a => String(a.id) === String(account.id) ? updatedAccount : a);
-      try { kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
-      return next;
-    });
+    setData(prev => prev.map(a => String(a.id) === String(account.id) ? updatedAccount : a));
 
     toast.success(`Account "${account.account_title || account.account_number}" marked as ${newStatus}`);
   }
@@ -6862,11 +6809,7 @@ function BankAccountSubModule() {
     } catch (err) {
       console.warn("DB delete account error:", err);
     }
-    setData(prev => {
-      const next = prev.filter(a => String(a.id) !== String(account.id));
-      try { kvStore.setItem(LOCAL_STORAGE_KEY, JSON.stringify(next)); } catch {}
-      return next;
-    });
+    setData(prev => prev.filter(a => String(a.id) !== String(account.id)));
     window.dispatchEvent(new Event("banks-updated"));
     toast.success(`Account "${account.account_title || account.account_number}" deleted from database`);
   }
@@ -9495,6 +9438,7 @@ function BalanceSheetSubModule() {
 }
 
 function GeneralLedgerReportSubModule() {
+  useGlAccountOptions();
   const { allLedgerTransactions, leases, units, customers, isSyncing, refreshFinanceData, resetAndInitializeGLFromPDCs, correctVoucherDate, voucherDateCorrections } = useFinanceStore() as any;
   const [dateCorrectionModalOpen, setDateCorrectionModalOpen] = useState(false);
   const [selectedVoucherForCorrection, setSelectedVoucherForCorrection] = useState<{
@@ -11314,11 +11258,27 @@ function NoteStatusBadge({ status }: { status: NoteStatus }) {
 // AP-side: Vendor owes us back (goods return, overcharge, etc.)
 // GL: Dr. 21000 Trade Payables / Cr. 51xxx Expense (reversal)
 // ─────────────────────────────────────────────────────────────────────────────
+function mapDbToDebitNote(r: any): DebitNote {
+  return {
+    id: String(r.id),
+    dn_number: String(r.note_number),
+    date: String(r.note_date || r.created_at || "").slice(0, 10),
+    party_type: r.party_type === "Customer" ? "Customer" : "Vendor",
+    party_id: r.party_id || "",
+    party_name: String(r.party_name || ""),
+    linked_agreement: r.linked_agreement || "",
+    linked_invoice: r.linked_invoice || "",
+    amount: Number(r.amount) || 0,
+    reason: r.reason || "",
+    expense_gl: r.account_code || "",
+    notes: r.notes || "",
+    status: (r.status || "DRAFT") as NoteStatus,
+    created_at: r.created_at || new Date().toISOString(),
+  };
+}
+
 function DebitNoteSubModule() {
-  const LS_KEY = "fin_debit_notes";
-  const [notes, setNotes] = useState<DebitNote[]>(() => {
-    try { return JSON.parse(kvStore.getItem(LS_KEY) || "[]"); } catch { return []; }
-  });
+  const [notes, setNotes] = useState<DebitNote[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [viewNote, setViewNote] = useState<DebitNote | null>(null);
   const [saving, setSaving] = useState(false);
@@ -11335,10 +11295,13 @@ function DebitNoteSubModule() {
     date: new Date().toISOString().slice(0, 10),
   });
 
-  function save(updatedNotes: DebitNote[]) {
-    setNotes(updatedNotes);
-    kvStore.setItem(LS_KEY, JSON.stringify(updatedNotes));
-  }
+  useEffect(() => {
+    let active = true;
+    apiRequest<{ data: any[] }>("/api/accounting/credit-debit-notes?note_type=DEBIT")
+      .then((res) => { if (active) setNotes((res?.data || []).map(mapDbToDebitNote)); })
+      .catch(() => { if (active) setNotes([]); });
+    return () => { active = false; };
+  }, []);
 
   function handlePartyTypeChange(type: "Vendor" | "Customer") {
     setForm({
@@ -11375,48 +11338,78 @@ function DebitNoteSubModule() {
     }
   }
 
-  function handleCreate() {
+  async function handleCreate() {
     if (!form.party_name.trim() || !form.amount) return toast.error("Party Name and Amount are required.");
     setSaving(true);
-    const seq = String(notes.length + 1).padStart(6, "0");
-    const newNote: DebitNote = {
-      id: `dn-${Date.now()}`,
-      dn_number: `DN-${new Date().getFullYear()}-${seq}`,
-      date: form.date,
-      party_type: form.party_type,
-      party_id: form.party_id,
-      party_name: form.party_name,
-      linked_agreement: form.linked_agreement,
-      linked_invoice: form.linked_invoice,
-      amount: form.amount,
-      reason: form.reason,
-      expense_gl: form.expense_gl,
-      notes: form.notes,
-      status: "DRAFT",
-      created_at: new Date().toISOString(),
-    };
-    save([newNote, ...notes]);
-    setShowModal(false);
-    setSaving(false);
-    toast.success(`Debit Note ${newNote.dn_number} created in DRAFT.`);
+    try {
+      const accountCode = form.expense_gl || (form.party_type === "Vendor" ? "51004001" : "41100001");
+      const res = await apiRequest<{ data: any }>("/api/accounting/credit-debit-notes", {
+        method: "POST",
+        body: JSON.stringify({
+          note_type: "DEBIT",
+          party_type: form.party_type,
+          party_id: form.party_id || null,
+          party_name: form.party_name,
+          linked_agreement: form.linked_agreement || null,
+          linked_invoice: form.linked_invoice || null,
+          amount: Number(form.amount),
+          account_code: accountCode,
+          reason: form.reason || null,
+          notes: form.notes || null,
+          note_date: form.date,
+        }),
+      });
+      const created = mapDbToDebitNote(res.data);
+      setNotes(prev => [created, ...prev]);
+      setShowModal(false);
+      toast.success(`Debit Note ${created.dn_number} created in DRAFT.`);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to create Debit Note");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function handleApprove(dn: DebitNote) {
-    const updated = notes.map(n => n.id === dn.id ? { ...n, status: "APPROVED" as NoteStatus } : n);
-    save(updated);
-    toast.success(`${dn.dn_number} approved.`);
+  async function handleApprove(dn: DebitNote) {
+    try {
+      const res = await apiRequest<{ data: any }>(`/api/accounting/credit-debit-notes/${dn.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action: "approve" }),
+      });
+      const updatedNote = mapDbToDebitNote(res.data);
+      setNotes(prev => prev.map(n => n.id === dn.id ? updatedNote : n));
+      toast.success(`${dn.dn_number} approved.`);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to approve Debit Note");
+    }
   }
 
-  function handlePost(dn: DebitNote) {
-    const updated = notes.map(n => n.id === dn.id ? { ...n, status: "POSTED" as NoteStatus } : n);
-    save(updated);
-    toast.success(`${dn.dn_number} posted to GL. Dr. ${dn.party_type === "Vendor" ? "21000 (Trade Payables)" : "13100001 (Trade Receivables)"} / Cr. ${dn.expense_gl}`);
+  async function handlePost(dn: DebitNote) {
+    try {
+      const res = await apiRequest<{ data: any }>(`/api/accounting/credit-debit-notes/${dn.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action: "post" }),
+      });
+      const updatedNote = mapDbToDebitNote(res.data);
+      setNotes(prev => prev.map(n => n.id === dn.id ? updatedNote : n));
+      toast.success(`${dn.dn_number} posted to GL.`);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to post Debit Note to GL");
+    }
   }
 
-  function handleCancel(dn: DebitNote) {
-    const updated = notes.map(n => n.id === dn.id ? { ...n, status: "CANCELLED" as NoteStatus } : n);
-    save(updated);
-    toast.info(`${dn.dn_number} cancelled.`);
+  async function handleCancel(dn: DebitNote) {
+    try {
+      const res = await apiRequest<{ data: any }>(`/api/accounting/credit-debit-notes/${dn.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action: "cancel" }),
+      });
+      const updatedNote = mapDbToDebitNote(res.data);
+      setNotes(prev => prev.map(n => n.id === dn.id ? updatedNote : n));
+      toast.info(`${dn.dn_number} cancelled.`);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to cancel Debit Note");
+    }
   }
 
   const totals = {
@@ -11717,11 +11710,25 @@ function DebitNoteSubModule() {
 // AR-side: We credit a tenant/customer or vendor discount
 // GL: Dr. 41xxx Revenue (or expense) / Cr. 13100001 Trade Receivables
 // ─────────────────────────────────────────────────────────────────────────────
+function mapDbToCreditNote(r: any): CreditNote {
+  return {
+    id: String(r.id),
+    cn_number: String(r.note_number),
+    date: String(r.note_date || r.created_at || "").slice(0, 10),
+    party_name: String(r.party_name || ""),
+    party_type: r.party_type === "Vendor" ? "Vendor" : "Tenant",
+    linked_invoice: r.linked_invoice || "",
+    amount: Number(r.amount) || 0,
+    reason: r.reason || "",
+    revenue_gl: r.account_code || "",
+    notes: r.notes || "",
+    status: (r.status || "DRAFT") as NoteStatus,
+    created_at: r.created_at || new Date().toISOString(),
+  };
+}
+
 function CreditNoteSubModule() {
-  const LS_KEY = "fin_credit_notes";
-  const [notes, setNotes] = useState<CreditNote[]>(() => {
-    try { return JSON.parse(kvStore.getItem(LS_KEY) || "[]"); } catch { return []; }
-  });
+  const [notes, setNotes] = useState<CreditNote[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [viewNote, setViewNote] = useState<CreditNote | null>(null);
   const [saving, setSaving] = useState(false);
@@ -11737,10 +11744,13 @@ function CreditNoteSubModule() {
     date: new Date().toISOString().slice(0, 10),
   });
 
-  function save(updatedNotes: CreditNote[]) {
-    setNotes(updatedNotes);
-    kvStore.setItem(LS_KEY, JSON.stringify(updatedNotes));
-  }
+  useEffect(() => {
+    let active = true;
+    apiRequest<{ data: any[] }>("/api/accounting/credit-debit-notes?note_type=CREDIT")
+      .then((res) => { if (active) setNotes((res?.data || []).map(mapDbToCreditNote)); })
+      .catch(() => { if (active) setNotes([]); });
+    return () => { active = false; };
+  }, []);
 
   function handlePartyTypeChange(type: "Vendor" | "Tenant") {
     setForm({
@@ -11774,46 +11784,77 @@ function CreditNoteSubModule() {
     }
   }
 
-  function handleCreate() {
+  async function handleCreate() {
     if (!form.party_name.trim() || !form.amount) return toast.error("Party name and amount are required.");
     setSaving(true);
-    const seq = String(notes.length + 1).padStart(6, "0");
-    const newNote: CreditNote = {
-      id: `cn-${Date.now()}`,
-      cn_number: `CN-${new Date().getFullYear()}-${seq}`,
-      date: form.date,
-      party_name: form.party_name,
-      party_type: form.party_type,
-      linked_invoice: form.linked_invoice,
-      amount: form.amount,
-      reason: form.reason,
-      revenue_gl: form.revenue_gl,
-      notes: form.notes,
-      status: "DRAFT",
-      created_at: new Date().toISOString(),
-    };
-    save([newNote, ...notes]);
-    setShowModal(false);
-    setSaving(false);
-    toast.success(`Credit Note ${newNote.cn_number} created.`);
+    try {
+      const accountCode = form.revenue_gl || (form.party_type === "Tenant" ? "41100001" : "51004001");
+      const res = await apiRequest<{ data: any }>("/api/accounting/credit-debit-notes", {
+        method: "POST",
+        body: JSON.stringify({
+          note_type: "CREDIT",
+          party_type: form.party_type,
+          party_name: form.party_name,
+          linked_agreement: form.linked_agreement || null,
+          linked_invoice: form.linked_invoice || null,
+          amount: Number(form.amount),
+          account_code: accountCode,
+          reason: form.reason || null,
+          notes: form.notes || null,
+          note_date: form.date,
+        }),
+      });
+      const created = mapDbToCreditNote(res.data);
+      setNotes(prev => [created, ...prev]);
+      setShowModal(false);
+      toast.success(`Credit Note ${created.cn_number} created.`);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to create Credit Note");
+    } finally {
+      setSaving(false);
+    }
   }
 
-  function handleApprove(cn: CreditNote) {
-    const updated = notes.map(n => n.id === cn.id ? { ...n, status: "APPROVED" as NoteStatus } : n);
-    save(updated);
-    toast.success(`${cn.cn_number} approved.`);
+  async function handleApprove(cn: CreditNote) {
+    try {
+      const res = await apiRequest<{ data: any }>(`/api/accounting/credit-debit-notes/${cn.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action: "approve" }),
+      });
+      const updatedNote = mapDbToCreditNote(res.data);
+      setNotes(prev => prev.map(n => n.id === cn.id ? updatedNote : n));
+      toast.success(`${cn.cn_number} approved.`);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to approve Credit Note");
+    }
   }
 
-  function handlePost(cn: CreditNote) {
-    const updated = notes.map(n => n.id === cn.id ? { ...n, status: "POSTED" as NoteStatus } : n);
-    save(updated);
-    toast.success(`${cn.cn_number} posted to GL. Dr. ${cn.revenue_gl} / Cr. 13100001`);
+  async function handlePost(cn: CreditNote) {
+    try {
+      const res = await apiRequest<{ data: any }>(`/api/accounting/credit-debit-notes/${cn.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action: "post" }),
+      });
+      const updatedNote = mapDbToCreditNote(res.data);
+      setNotes(prev => prev.map(n => n.id === cn.id ? updatedNote : n));
+      toast.success(`${cn.cn_number} posted to GL.`);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to post Credit Note to GL");
+    }
   }
 
-  function handleCancel(cn: CreditNote) {
-    const updated = notes.map(n => n.id === cn.id ? { ...n, status: "CANCELLED" as NoteStatus } : n);
-    save(updated);
-    toast.info(`${cn.cn_number} cancelled.`);
+  async function handleCancel(cn: CreditNote) {
+    try {
+      const res = await apiRequest<{ data: any }>(`/api/accounting/credit-debit-notes/${cn.id}/action`, {
+        method: "POST",
+        body: JSON.stringify({ action: "cancel" }),
+      });
+      const updatedNote = mapDbToCreditNote(res.data);
+      setNotes(prev => prev.map(n => n.id === cn.id ? updatedNote : n));
+      toast.info(`${cn.cn_number} cancelled.`);
+    } catch (e: any) {
+      toast.error(e.message || "Failed to cancel Credit Note");
+    }
   }
 
   const totals = {

@@ -84,6 +84,7 @@ import mastersRouter      from './routes/masters';
 import authRouter         from './routes/auth';
 import dbRouter           from './routes/db';
 import kvRouter           from './routes/kv';
+import portalRouter       from './routes/portal';
 
 // ─── API Routes ──────────────────────────────────────────────────────────────
 app.use('/api/properties',   propertiesRouter);
@@ -99,6 +100,7 @@ app.use('/api/masters',      mastersRouter);
 app.use('/api/auth',         authRouter);
 app.use('/api/db',           dbRouter);
 app.use('/api/kv',           kvRouter);
+app.use('/api/portal',       portalRouter);
 
 app.listen(PORT, () => {
   console.log(`PMS API server running on port ${PORT}`);

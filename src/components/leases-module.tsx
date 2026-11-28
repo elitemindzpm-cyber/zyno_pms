@@ -1,4 +1,3 @@
-import { kvStore } from "@/lib/kv-store";
 import { Link } from "@tanstack/react-router";
 import { useEffect, useState, useCallback, useMemo } from 'react';
 import { Button } from "@/components/ui/button";
@@ -195,52 +194,7 @@ export function LeasesModule({ role }: LeasesModuleProps) {
         created_at: new Date().toISOString(),
       };
 
-      // 1. Persist to kvStore pms_renewed_leases_v1
-      try {
-        const rawRen = kvStore.getItem('pms_renewed_leases_v1');
-        const renewals: any[] = rawRen ? JSON.parse(rawRen) : [];
-        const filtered = renewals.filter(r => r.id !== newRenewedLease.id && r.lease_number !== newRenewedLease.lease_number);
-        filtered.unshift(newRenewedLease);
-        kvStore.setItem('pms_renewed_leases_v1', JSON.stringify(filtered));
-      } catch (e) {
-        console.warn('Could not save renewal to pms_renewed_leases_v1:', e);
-      }
-
-      // 2. Persist to kvStore pms_custom_lease_overrides
-      try {
-        const stored = JSON.parse(kvStore.getItem('pms_custom_lease_overrides') || '{}');
-        stored[newRenewedLease.id] = {
-          commencement_date: newRenewedLease.commencement_date,
-          expiry_date: newRenewedLease.expiry_date,
-          monthlyRent: mRent,
-          rental_amount: annRent,
-          lease_status: 'ACTIVE',
-          tenant_name: newRenewedLease.tenant_name,
-          pdc_count: pdcs,
-          updated_at: new Date().toISOString(),
-        };
-        stored[newRenewedLease.lease_number] = stored[newRenewedLease.id];
-
-        if (renewForm.oldLeaseId) {
-          stored[renewForm.oldLeaseId] = {
-            ...(stored[renewForm.oldLeaseId] || {}),
-            lease_status: 'RENEWED',
-            updated_at: new Date().toISOString(),
-          };
-        }
-        if (renewForm.oldLeaseNumber) {
-          stored[renewForm.oldLeaseNumber] = {
-            ...(stored[renewForm.oldLeaseNumber] || {}),
-            lease_status: 'RENEWED',
-            updated_at: new Date().toISOString(),
-          };
-        }
-        kvStore.setItem('pms_custom_lease_overrides', JSON.stringify(stored));
-      } catch (e) {
-        console.warn('Could not update pms_custom_lease_overrides:', e);
-      }
-
-      // 3. Persist to DB safely (checking UUID validity)
+      // Persist renewal directly to leases & units tables (E1)
       try {
         const isOldUUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(renewForm.oldLeaseId);
         if (isOldUUID) {
@@ -296,62 +250,24 @@ export function LeasesModule({ role }: LeasesModuleProps) {
 
   function openEditModal(lease: any) {
     setSelectedLease(lease);
-    const storedOverrides = (() => {
-      try {
-        return JSON.parse(kvStore.getItem('pms_custom_lease_overrides') || '{}');
-      } catch {
-        return {};
-      }
-    })();
-    // Helper to resolve override with precise key matching
-    function lookupOverride(leaseItem: any, overridesMap: Record<string, any>) {
-      if (!overridesMap) return null;
-      const lNum = leaseItem.lease_number || '';
-      const cleanLNum = lNum ? lNum.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
-      const id = leaseItem.id || '';
-      const cleanId = id ? id.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
-
-      let matched = overridesMap[id] ||
-        (cleanId ? overridesMap[cleanId] : null) ||
-        (lNum ? overridesMap[lNum] : null) ||
-        (cleanLNum ? overridesMap[cleanLNum] : null);
-
-      if (!matched) {
-        const u = getUnitName(leaseItem)?.toUpperCase()?.trim();
-        const cleanU = u ? u.replace(/[^a-zA-Z0-9]/g, '') : '';
-        const candidate = overridesMap[u] || (cleanU ? overridesMap[cleanU] : null);
-        if (
-          candidate &&
-          (!candidate.lease_number || candidate.lease_number === lNum || candidate.lease_number === id) &&
-          (!candidate.id || candidate.id === lNum || candidate.id === id)
-        ) {
-          matched = candidate;
-        }
-      }
-
-      return matched;
-    }
-
-    const o = lookupOverride(lease, storedOverrides);
-
-    const monthly = o?.monthlyRent ?? (lease.monthlyRent || (lease.rental_amount ? Math.round((lease.rental_amount / 12) * 100) / 100 : 0));
-    const annual = o?.rental_amount ?? (lease.rental_amount || (monthly * 12));
+    const monthly = lease.monthlyRent || (lease.rental_amount ? Math.round((lease.rental_amount / 12) * 100) / 100 : 0);
+    const annual = lease.rental_amount || (monthly * 12);
 
     setEditForm({
       id: lease.id,
       lease_number: lease.lease_number || lease.id,
-      tenant_name: o?.tenant_name || getTenantName(lease),
+      tenant_name: getTenantName(lease),
       property_name: getPropertyName(lease),
       unit_name: getUnitName(lease),
-      commencement_date: o?.commencement_date || toRawDate(lease.commencement_date),
-      expiry_date: o?.expiry_date || toRawDate(lease.expiry_date),
+      commencement_date: toRawDate(lease.commencement_date),
+      expiry_date: toRawDate(lease.expiry_date),
       monthlyRent: String(monthly),
       rental_amount: String(annual),
-      lease_status: o?.lease_status || lease.lease_status || 'DRAFT',
-      has_rent_free: o?.has_rent_free ?? Boolean(lease.has_rent_free || lease.rent_free_period_days),
-      rent_free_days: o?.rent_free_days || lease.rent_free_period_days || 30,
-      rent_free_position: o?.rent_free_position || lease.rent_free_position || 'FIRST_MONTH',
-      pdc_count: o?.pdc_count || lease.pdc_count || lease.number_of_pdc || 12,
+      lease_status: lease.lease_status || 'DRAFT',
+      has_rent_free: Boolean(lease.has_rent_free || lease.rent_free_period_days),
+      rent_free_days: lease.rent_free_period_days || lease.rent_free_days || 30,
+      rent_free_position: lease.rent_free_position || 'FIRST_MONTH',
+      pdc_count: lease.pdc_count || lease.number_of_pdc || 12,
     });
     setEditModalOpen(true);
   }
@@ -362,41 +278,7 @@ export function LeasesModule({ role }: LeasesModuleProps) {
     const annRent = parseFloat(editForm.rental_amount) || (mRent * 12);
     const pdcCount = parseInt(String(editForm.pdc_count), 10) || 12;
 
-    const updatedData = {
-      commencement_date: editForm.commencement_date,
-      expiry_date: editForm.expiry_date,
-      monthlyRent: mRent,
-      rental_amount: annRent,
-      lease_status: editForm.lease_status,
-      tenant_name: editForm.tenant_name,
-      has_rent_free: editForm.has_rent_free,
-      rent_free_days: editForm.has_rent_free ? (parseInt(String(editForm.rent_free_days), 10) || 30) : 0,
-      rent_free_position: editForm.rent_free_position,
-      pdc_count: pdcCount,
-      updated_at: new Date().toISOString(),
-    };
-
-    // 1. Persistent kvStore overrides (survives page refresh & context reloads)
-    try {
-      const stored = JSON.parse(kvStore.getItem('pms_custom_lease_overrides') || '{}');
-      const cleanLease = editForm.lease_number ? editForm.lease_number.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
-      const cleanId = editForm.id ? editForm.id.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
-      const keysToSave = [
-        editForm.id,
-        cleanId,
-        editForm.lease_number,
-        cleanLease,
-      ].filter(Boolean);
-
-      keysToSave.forEach(k => {
-        stored[k] = updatedData;
-      });
-      kvStore.setItem('pms_custom_lease_overrides', JSON.stringify(stored));
-    } catch (e) {
-      console.warn("Could not save to kvStore:", e);
-    }
-
-    // 2. Persist to DB leases table (errors are surfaced, never swallowed)
+    // Persist directly to DB leases table (E1: no KV overrides)
     const dbErrors: string[] = [];
     const rentFreeDays = editForm.has_rent_free ? (parseInt(String(editForm.rent_free_days), 10) || 30) : 0;
     try {
@@ -408,15 +290,20 @@ export function LeasesModule({ role }: LeasesModuleProps) {
         ? `id.eq.${editForm.id},lease_number.eq.${editForm.lease_number || editForm.id}`
         : `lease_number.eq.${editForm.lease_number || editForm.id}`;
 
+      const leasePayload = {
+        commencement_date: editForm.commencement_date,
+        expiry_date: editForm.expiry_date,
+        rental_amount: annRent,
+        lease_status: editForm.lease_status.toUpperCase(),
+        number_of_pdc: pdcCount,
+        has_rent_free: editForm.has_rent_free,
+        rent_free_period_days: rentFreeDays,
+        rent_free_position: editForm.rent_free_position,
+      };
+
       let updateRes = await db
         .from('leases')
-        .update({
-          commencement_date: editForm.commencement_date,
-          expiry_date: editForm.expiry_date,
-          rental_amount: annRent,
-          lease_status: editForm.lease_status.toUpperCase(),
-          number_of_pdc: pdcCount,
-        })
+        .update(leasePayload)
         .or(orFilter)
         .select('id');
 
@@ -430,13 +317,7 @@ export function LeasesModule({ role }: LeasesModuleProps) {
         if (uMatch?.id) {
           updateRes = await db
             .from('leases')
-            .update({
-              commencement_date: editForm.commencement_date,
-              expiry_date: editForm.expiry_date,
-              rental_amount: annRent,
-              lease_status: editForm.lease_status.toUpperCase(),
-              number_of_pdc: pdcCount,
-            })
+            .update(leasePayload)
             .eq('unit_id', uMatch.id)
             .select('id');
         }
@@ -444,19 +325,6 @@ export function LeasesModule({ role }: LeasesModuleProps) {
 
       if (updateRes.error) dbErrors.push(`lease: ${updateRes.error.message}`);
       else if (!updateRes.data || updateRes.data.length === 0) dbErrors.push('lease: no database row was updated (blocked by permissions or lease not found)');
-
-      // Rent-free fields are written separately so a missing column cannot block the core update.
-      if (matchVal) {
-        const { error: rfError } = await db
-          .from('leases')
-          .update({
-            has_rent_free: editForm.has_rent_free,
-            rent_free_period_days: rentFreeDays,
-            rent_free_position: editForm.rent_free_position,
-          })
-          .eq(matchCol, matchVal);
-        if (rfError) console.warn('Rent-free fields not persisted to leases table:', rfError.message);
-      }
     } catch (e: any) {
       dbErrors.push(`lease: ${e?.message || e}`);
     }
@@ -592,185 +460,7 @@ export function LeasesModule({ role }: LeasesModuleProps) {
         else allLeases.push(mc);
       }
 
-      // Also merge any newly created leases from Leasing Module kvStore ('pms_leasing_v2_leases')
-      try {
-        const rawV2Leases = kvStore.getItem('pms_leasing_v2_leases');
-        if (rawV2Leases) {
-          const parsedV2: any[] = JSON.parse(rawV2Leases);
-          if (Array.isArray(parsedV2)) {
-            for (const vl of parsedV2) {
-              const vlId = vl.id || vl.lease_number;
-              const vlNum = vl.lease_number || vl.id;
-              const sameV2 = findSame(vlId, vlNum);
-              if (sameV2) {
-                fillFromLocal(sameV2, { unit_code: vl.unit || vl.unit_code || '', tenant_name: vl.tenantName || vl.tenant_name || '', properties: { title: vl.property || vl.property_name || '' } });
-              } else {
-                const sDate = vl.startDate || vl.commencement_date || '';
-                const eDate = vl.endDate || vl.expiry_date || '';
-                const mRent = Number(vl.monthlyRent || 0);
-                let pMonths = Number(vl.lease_period_months || 0);
-                if (!pMonths && sDate && eDate) {
-                  const sd = new Date(sDate);
-                  const ed = new Date(eDate);
-                  if (!isNaN(sd.getTime()) && !isNaN(ed.getTime())) {
-                    pMonths = Math.max(1, Math.round((ed.getTime() - sd.getTime()) / (1000 * 60 * 60 * 24 * 30)));
-                  }
-                }
-                const totalRent = Number(vl.rental_amount || (mRent * (pMonths > 0 ? pMonths : 12)));
-                allLeases.unshift({
-                  id: vlId,
-                  lease_number: vlNum,
-                  properties: { title: vl.property || vl.property_name || '' },
-                  units: null,
-                  customers: null,
-                  tenant_name: vl.tenantName || vl.tenant_name || '',
-                  unit_code: vl.unit || vl.unit_code || '',
-                  commencement_date: sDate,
-                  expiry_date: eDate,
-                  monthlyRent: mRent,
-                  rental_amount: totalRent,
-                  lease_period_months: pMonths || 12,
-                  lease_status: String(vl.status || vl.lease_status || 'ACTIVE').toUpperCase(),
-                  pdc_count: vl.pdcCount || vl.pdc_count || 12,
-                });
-              }
-            }
-          }
-        }
-      } catch (err) {
-        console.warn('Error reading v2 leases:', err);
-      }
-
-      // Load persistent local renewals (e.g. L-OA2204-R1) and ensure prior leases are marked RENEWED
-      const deletedLeasesSet = new Set<string>(
-        (() => {
-          try {
-            return JSON.parse(kvStore.getItem('pms_deleted_leases_v1') || '["SLT-OS41-14-R3", "SLT-OS4114-R3"]').map((s: string) => String(s).toUpperCase());
-          } catch {
-            return ["SLT-OS41-14-R3", "SLT-OS4114-R3"];
-          }
-        })()
-      );
-      deletedLeasesSet.add("SLT-OS41-14-R3");
-      deletedLeasesSet.add("SLT-OS4114-R3");
-
-      try {
-        const rawRenewals = kvStore.getItem('pms_renewed_leases_v1');
-        let localRenewals: any[] = rawRenewals ? JSON.parse(rawRenewals) : [];
-        const beforeLen = localRenewals.length;
-        localRenewals = localRenewals.filter(r => {
-          const rId = String(r.id || '').toUpperCase();
-          const rNum = String(r.lease_number || '').toUpperCase();
-          return !deletedLeasesSet.has(rId) && !deletedLeasesSet.has(rNum);
-        });
-        if (localRenewals.length !== beforeLen) {
-          kvStore.setItem('pms_renewed_leases_v1', JSON.stringify(localRenewals));
-        }
-        // local renewals fallback removed
-
-        for (const ren of localRenewals) {
-          const renLeaseNum = ren.lease_number || ren.id;
-          const renId = ren.id || renLeaseNum;
-          if (!allLeases.some(l => l.id === renId || l.lease_number === renLeaseNum)) {
-            allLeases.unshift({
-              id: renId,
-              lease_number: renLeaseNum,
-              properties: ren.properties || { title: ren.property_name || ren.property || '' },
-              units: null,
-              customers: null,
-              tenant_name: ren.tenant_name || ren.tenantName || '',
-              unit_code: ren.unit_code || ren.unit || '',
-              commencement_date: ren.commencement_date || ren.startDate || '2026-10-01',
-              expiry_date: ren.expiry_date || ren.endDate || '2027-09-30',
-              monthlyRent: Number(ren.monthlyRent || (ren.rental_amount ? Math.round(ren.rental_amount / 12) : 6500)),
-              rental_amount: Number(ren.rental_amount || (ren.monthlyRent ? ren.monthlyRent * 12 : 78000)),
-              lease_status: (ren.lease_status || ren.status || 'ACTIVE').toUpperCase(),
-              renewal_of: ren.renewal_of || ren.renewalOf,
-            });
-          }
-
-          // Mark superseded prior lease as RENEWED
-          const prevId = ren.renewal_of || ren.renewalOf;
-          const renUnit = (ren.unit_code || ren.unit || '').toUpperCase().trim();
-          allLeases.forEach(l => {
-            const lNum = l.lease_number || l.id;
-            const lUnit = getUnitName(l)?.toUpperCase()?.trim();
-            if (prevId && (lNum === prevId || l.id === prevId)) {
-              l.lease_status = 'RENEWED';
-            } else if (renUnit && lUnit === renUnit && lNum !== renLeaseNum && l.id !== renId) {
-              const lEnd = toRawDate(l.expiry_date);
-              const renStart = toRawDate(ren.commencement_date || ren.startDate);
-              if (lEnd && renStart && lEnd <= renStart) {
-                l.lease_status = 'RENEWED';
-              }
-            }
-          });
-        }
-      } catch (err) {
-        console.warn('Error reading local renewals:', err);
-      }
-
-      // Apply persistent kvStore overrides so refreshed page never reverts
-      const storedOverrides = (() => {
-        try {
-          return JSON.parse(kvStore.getItem('pms_custom_lease_overrides') || '{}');
-        } catch {
-          return {};
-        }
-      })();
-
-      const finalLeases = allLeases
-        .filter((leaseItem) => {
-          const u = getUnitName(leaseItem)?.toUpperCase()?.trim();
-          const t = getTenantName(leaseItem)?.toLowerCase()?.trim();
-          const lNum = String(leaseItem.lease_number || '').toUpperCase().trim();
-          const lId = String(leaseItem.id || '').toUpperCase().trim();
-          if (deletedLeasesSet.has(lNum) || deletedLeasesSet.has(lId)) {
-            return false;
-          }
-          return true;
-        })
-        .map((leaseItem) => {
-          const u = getUnitName(leaseItem)?.toUpperCase()?.trim();
-          const cleanU = u ? u.replace(/[^a-zA-Z0-9]/g, '') : '';
-          const lNum = leaseItem.lease_number || '';
-          const cleanLNum = lNum ? lNum.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
-          const id = leaseItem.id || '';
-          const cleanId = id ? id.replace(/[^a-zA-Z0-9]/g, '').toUpperCase() : '';
-
-          let o = storedOverrides[id] ||
-            (cleanId ? storedOverrides[cleanId] : null) ||
-            (lNum ? storedOverrides[lNum] : null) ||
-            (cleanLNum ? storedOverrides[cleanLNum] : null);
-
-          // Only match unit override if it does not conflict with another lease
-          if (!o && (u || cleanU)) {
-            const candidate = storedOverrides[u] || (cleanU ? storedOverrides[cleanU] : null);
-            if (
-              candidate &&
-              (!candidate.lease_number || candidate.lease_number === lNum || candidate.lease_number === id) &&
-              (!candidate.id || candidate.id === lNum || candidate.id === id)
-            ) {
-              o = candidate;
-            }
-          }
-
-          if (!o) return leaseItem;
-          return {
-            ...leaseItem,
-            commencement_date: o.commencement_date || leaseItem.commencement_date,
-            expiry_date: o.expiry_date || leaseItem.expiry_date,
-            monthlyRent: o.monthlyRent ?? leaseItem.monthlyRent,
-            rental_amount: o.rental_amount ?? leaseItem.rental_amount,
-            lease_status: o.lease_status || leaseItem.lease_status,
-            tenant_name: o.tenant_name || leaseItem.tenant_name,
-            has_rent_free: o.has_rent_free ?? leaseItem.has_rent_free,
-            rent_free_days: o.rent_free_days ?? leaseItem.rent_free_days,
-            rent_free_position: o.rent_free_position || leaseItem.rent_free_position,
-            pdc_count: o.pdc_count ?? leaseItem.pdc_count,
-            customers: o.tenant_name ? { ...leaseItem.customers, full_name: o.tenant_name, name: o.tenant_name } : leaseItem.customers,
-          };
-        });
+      const finalLeases = allLeases;
 
       // Ensure any superseded contract with an active renewal is strictly marked RENEWED
       finalLeases.forEach((l) => {
@@ -1280,28 +970,6 @@ export function LeasesModule({ role }: LeasesModuleProps) {
                               const refNo = lease.lease_number || lease.id;
                               if (!window.confirm(`Are you sure you want to delete contract ${refNo} for unit ${getUnitName(lease)}?`)) return;
                               try {
-                                const deletedList: string[] = JSON.parse(kvStore.getItem('pms_deleted_leases_v1') || '["SLT-OS41-14-R3", "SLT-OS4114-R3"]');
-                                if (lease.id) deletedList.push(String(lease.id).toUpperCase());
-                                if (lease.lease_number) deletedList.push(String(lease.lease_number).toUpperCase());
-                                kvStore.setItem('pms_deleted_leases_v1', JSON.stringify(Array.from(new Set(deletedList))));
-
-                                const rawRenewals = kvStore.getItem('pms_renewed_leases_v1');
-                                if (rawRenewals) {
-                                  const filteredRen = JSON.parse(rawRenewals).filter((r: any) => r.id !== lease.id && r.lease_number !== lease.lease_number);
-                                  kvStore.setItem('pms_renewed_leases_v1', JSON.stringify(filteredRen));
-                                }
-                                const rawV2 = kvStore.getItem('pms_leasing_v2_leases');
-                                if (rawV2) {
-                                  const filteredV2 = JSON.parse(rawV2).filter((r: any) => r.id !== lease.id && r.lease_number !== lease.lease_number);
-                                  kvStore.setItem('pms_leasing_v2_leases', JSON.stringify(filteredV2));
-                                }
-                                const rawOverrides = kvStore.getItem('pms_custom_lease_overrides');
-                                if (rawOverrides) {
-                                  const ov = JSON.parse(rawOverrides);
-                                  if (lease.id) delete ov[lease.id];
-                                  if (lease.lease_number) delete ov[lease.lease_number];
-                                  kvStore.setItem('pms_custom_lease_overrides', JSON.stringify(ov));
-                                }
                                 if (lease.lease_number) {
                                   await db.from('leases').delete().eq('lease_number', lease.lease_number);
                                 }

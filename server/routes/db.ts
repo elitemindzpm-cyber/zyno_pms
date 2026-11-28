@@ -148,6 +148,32 @@ router.use((req: Request, res: Response, next: NextFunction) => {
 });
 const ACCOUNT_LINE_TABLES = new Set(['fin_accounting_event_lines', 'fin_voucher_lines']);
 
+/** D5: Posted vouchers, posted accounting events, and their lines are immutable. */
+async function assertNotPostedLedgerRecord(modelName: string, model: any, where: Record<string, any>, action: 'modified' | 'deleted') {
+  if (modelName === 'fin_vouchers' || modelName === 'fin_accounting_events') {
+    const rows = await model.findMany({ where, select: { id: true, status: true } });
+    if (rows.some((r: any) => String(r.status).toUpperCase() === 'POSTED')) {
+      throw new HttpError(400, modelName === 'fin_vouchers'
+        ? `Posted vouchers cannot be ${action}. You must post a Reversal Voucher`
+        : `Posted accounting events cannot be ${action}. Reverse the event instead`);
+    }
+  } else if (modelName === 'fin_voucher_lines') {
+    const lines = await model.findMany({ where, select: { voucher_id: true } });
+    const voucherIds = Array.from(new Set(lines.map((l: any) => l.voucher_id).filter(Boolean))) as string[];
+    if (voucherIds.length) {
+      const postedV = await prisma.fin_vouchers.findFirst({ where: { id: { in: voucherIds }, status: { in: ['Posted', 'POSTED', 'posted'] } }, select: { id: true } });
+      if (postedV) throw new HttpError(400, `Lines of a posted voucher cannot be ${action}`);
+    }
+  } else if (modelName === 'fin_accounting_event_lines') {
+    const lines = await model.findMany({ where, select: { event_id: true } });
+    const eventIds = Array.from(new Set(lines.map((l: any) => l.event_id).filter(Boolean))) as string[];
+    if (eventIds.length) {
+      const postedE = await prisma.fin_accounting_events.findFirst({ where: { id: { in: eventIds }, status: 'POSTED' as any }, select: { id: true } });
+      if (postedE) throw new HttpError(400, `Lines of a posted accounting event cannot be ${action}`);
+    }
+  }
+}
+
 // Table aliases for backwards compatibility with legacy DB code
 const TABLE_ALIASES: Record<string, string> = {
   pdcs: 'fin_pdc_register',
@@ -370,6 +396,27 @@ router.post('/:table/insert', async (req: Request, res: Response) => {
     }
 
     const data = coerceForModel(modelName, req.body.data);
+    if (modelName === 'fin_voucher_lines') {
+      const rows = Array.isArray(data) ? data : [data];
+      for (const row of rows) {
+        if (!row) continue;
+        // C5: Map legacy debit/credit aliases to debit_amount/credit_amount
+        if (row.debit !== undefined && row.debit_amount === undefined) { row.debit_amount = row.debit; delete row.debit; }
+        if (row.credit !== undefined && row.credit_amount === undefined) { row.credit_amount = row.credit; delete row.credit; }
+        // Resolve required account_id from fin_coa_accounts when only account_code is provided
+        if (!row.account_id && row.account_code) {
+          const coa = await prisma.fin_coa_accounts.findFirst({
+            where: { account_code: String(row.account_code), is_active: true },
+            select: { id: true, account_name: true },
+          });
+          if (!coa) {
+            return res.status(400).json({ data: null, error: `fin_voucher_lines.account_code "${row.account_code}" does not resolve to an active row in fin_coa_accounts` });
+          }
+          row.account_id = coa.id;
+          if (!row.account_name) row.account_name = coa.account_name;
+        }
+      }
+    }
     if (ACCOUNT_LINE_TABLES.has(table)) {
       const rowsToCheck = Array.isArray(data) ? data : [data];
       for (const row of rowsToCheck) {
@@ -454,10 +501,17 @@ router.post('/:table/update', async (req: Request, res: Response) => {
     }
 
     const where = coerceWhere(modelName, req.body.where ?? {});
+    // B1: Reject empty filters to prevent unguarded bulk writes
+    if (!where || !Object.keys(where).length) {
+      return res.status(400).json({ data: null, error: 'A non-empty filter (where) is required for update operations' });
+    }
     const data = coerceForModel(modelName, req.body.data);
     if (!data) {
       return res.status(400).json({ data: null, error: 'No data provided for update' });
     }
+
+    // D5: Block edits to posted vouchers, posted accounting events, and their lines.
+    await assertNotPostedLedgerRecord(modelName, model, where, 'modified');
 
     if (modelName === 'leases' && isTerminatedLease(data.lease_status)) {
       const targets = await model.findMany({ where, select: { id: true } });
@@ -466,10 +520,21 @@ router.post('/:table/update', async (req: Request, res: Response) => {
       return res.json({ data: { count: results.length, settlements: results }, error: null });
     }
 
+    // B4: When filtering by id, return the updated row instead of just {count}
+    if (where.id && !Array.isArray(where.id) && typeof where.id !== 'object') {
+      const updated = await model.update({ where: { id: where.id }, data });
+      return res.json({ data: updated, error: null });
+    }
+
     const result = await model.updateMany({
       where,
       data,
     });
+
+    // B1: Treat zero-match updates as a 404
+    if (result.count === 0) {
+      return res.status(404).json({ data: null, error: `No matching records found in ${table} to update` });
+    }
 
     return res.json({ data: result, error: null });
   } catch (err: any) {
@@ -493,19 +558,16 @@ router.post('/:table/delete', async (req: Request, res: Response) => {
     }
 
     const where = coerceWhere(modelName, req.body.where ?? {});
+    // B1: Reject empty filters to prevent unguarded bulk deletes
+    if (!where || !Object.keys(where).length) {
+      return res.status(400).json({ data: null, error: 'A non-empty filter (where) is required for delete operations' });
+    }
     if (modelName === 'properties') {
       const targets = await model.findMany({ where, select: { id: true } });
       for (const t of targets) await assertPropertyDeletable(t.id);
     }
-    // Posted financial records are never deleted; they are reversed instead.
-    if (modelName === 'fin_vouchers' || modelName === 'fin_accounting_events') {
-      const rows = await model.findMany({ where, select: { id: true, status: true } });
-      if (rows.some((r: any) => String(r.status).toUpperCase() === 'POSTED')) {
-        throw new HttpError(400, modelName === 'fin_vouchers'
-          ? 'Posted vouchers cannot be deleted. You must post a Reversal Voucher'
-          : 'Posted accounting events cannot be deleted. Reverse the event instead');
-      }
-    }
+    // Posted financial records and their lines are never deleted; they are reversed instead.
+    await assertNotPostedLedgerRecord(modelName, model, where, 'deleted');
     const result = await model.deleteMany({
       where,
     });

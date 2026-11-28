@@ -426,46 +426,19 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
   const searchParams = new URLSearchParams(routerState.location.search);
   const activeTab = searchParams.get("tab") || "tickets";
 
-  // Persistent Data State from LocalStorage
-  const [tickets, setTickets] = useState<MaintenanceTicket[]>(() => {
-    try {
-      const saved = kvStore.getItem("pms_maintenance_tickets");
-      return saved ? JSON.parse(saved) : initialTickets;
-    } catch {
-      return initialTickets;
-    }
-  });
+  // State hydrated from MariaDB tables via getDbState
+  const [tickets, setTickets] = useState<MaintenanceTicket[]>(() => initialTickets);
   const [loading, setLoading] = useState(false);
-  const [workOrders, setWorkOrders] = useState<WorkOrder[]>(() => {
-    return initialWorkOrders;
-  });
-  const [ppmSchedules, setPpmSchedules] = useState<PpmSchedule[]>(() => {
-    try {
-      const saved = kvStore.getItem("pms_ppm_schedules");
-      return saved ? JSON.parse(saved) : initialPpmSchedules;
-    } catch {
-      return initialPpmSchedules;
-    }
-  });
-  const [technicians, setTechnicians] = useState<Technician[]>(() => {
-    try {
-      const saved = kvStore.getItem("pms_technicians");
-      return saved ? JSON.parse(saved) : initialTechnicians;
-    } catch {
-      return initialTechnicians;
-    }
-  });
-  const [vendorInvoices, setVendorInvoices] = useState<MaintenanceVendorInvoice[]>(() => {
-    return initialVendorInvoices;
-  });
-  const [stockCatalog, setStockCatalog] = useState<StockItem[]>(() => {
-    return initialStockCatalog;
-  });
+  const [workOrders, setWorkOrders] = useState<WorkOrder[]>(() => initialWorkOrders);
+  const [ppmSchedules, setPpmSchedules] = useState<PpmSchedule[]>(() => initialPpmSchedules);
+  const [technicians, setTechnicians] = useState<Technician[]>(() => initialTechnicians);
+  const [vendorInvoices, setVendorInvoices] = useState<MaintenanceVendorInvoice[]>(() => initialVendorInvoices);
+  const [stockCatalog, setStockCatalog] = useState<StockItem[]>(() => initialStockCatalog);
   // Dynamic Properties & Units from Db
   const [properties, setProperties] = useState<Property[]>([]);
   const [units, setUnits] = useState<Unit[]>([]);
 
-  // 100% Database REST API synchronization (PostgreSQL pms_app_state)
+  // 100% Database REST API synchronization
   useEffect(() => {
     async function loadMaintenanceData() {
       try {
@@ -491,14 +464,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
   }, []);
 
   // Ticket Spare Parts Map state (persisted per ticket)
-  const [ticketSparePartsMap, setTicketSparePartsMap] = useState<Record<string, Array<{ id: string; partId: string; quantity: number }>>>(() => {
-    try {
-      const saved = kvStore.getItem("pms_ticket_spare_parts");
-      return saved ? JSON.parse(saved) : {};
-    } catch {
-      return {};
-    }
-  });
+  const [ticketSparePartsMap, setTicketSparePartsMap] = useState<Record<string, Array<{ id: string; partId: string; quantity: number }>>>(() => ({}));
 
   useEffect(() => {
     setDbState("maintenance_tickets", tickets);
@@ -527,12 +493,9 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
   // Real-time listener for invoice payment updates from Finance / Vendor Management
   useEffect(() => {
     const handleInvoiceSync = () => {
-      try {
-        const saved = kvStore.getItem("pms_vendor_invoices");
-        if (saved) {
-          setVendorInvoices(JSON.parse(saved));
-        }
-      } catch {}
+      void getDbState<MaintenanceVendorInvoice[]>("maintenance_vendor_invoices", []).then((rows) => {
+        if (Array.isArray(rows) && rows.length > 0) setVendorInvoices(rows);
+      });
     };
     window.addEventListener("pms_vendor_invoices_updated", handleInvoiceSync);
     window.addEventListener("finance_vouchers_updated", handleInvoiceSync);
@@ -768,41 +731,62 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
     ],
   };
 
-  // Timeline / Comments state for Tickets
-  const [ticketComments, setTicketComments] = useState<Record<string, TicketCommentItem[]>>(() => {
-    try {
-      const saved = kvStore.getItem("pms_ticket_comments");
-      return saved ? JSON.parse(saved) : initialTicketCommentsState;
-    } catch {
-      return initialTicketCommentsState;
-    }
-  });
-
-  // Timeline / Comments state for Work Orders
-  const [woComments, setWoComments] = useState<Record<string, TicketCommentItem[]>>(() => {
-    try {
-      const saved = kvStore.getItem("pms_wo_comments");
-      return saved ? JSON.parse(saved) : initialWoCommentsState;
-    } catch {
-      return initialWoCommentsState;
-    }
-  });
+  // Timeline / Comments state backed by MariaDB maintenance_comments
+  const [ticketComments, setTicketComments] = useState<Record<string, TicketCommentItem[]>>(() => initialTicketCommentsState);
+  const [woComments, setWoComments] = useState<Record<string, TicketCommentItem[]>>(() => initialWoCommentsState);
 
   useEffect(() => {
-    try {
-      kvStore.setItem("pms_ticket_comments", JSON.stringify(ticketComments));
-    } catch (e) {
-      console.error("Failed to save ticketComments to kvStore", e);
-    }
-  }, [ticketComments]);
+    let active = true;
+    db.from("maintenance_comments")
+      .select("*")
+      .order("created_at", { ascending: true })
+      .then(({ data, error }) => {
+        if (!active || error || !Array.isArray(data) || data.length === 0) return;
+        const nextTickets: Record<string, TicketCommentItem[]> = { ...initialTicketCommentsState };
+        const nextWos: Record<string, TicketCommentItem[]> = { ...initialWoCommentsState };
+        for (const row of data) {
+          let attachments: Array<{ name: string; size: string }> | undefined;
+          if (row.attachments_json) {
+            try { attachments = JSON.parse(row.attachments_json); } catch { /* ignore */ }
+          }
+          const item: TicketCommentItem = {
+            id: String(row.id),
+            author: String(row.author || "Staff"),
+            role: (row.role || "Property Manager") as TicketCommentItem["role"],
+            timestamp: row.created_at
+              ? new Date(row.created_at).toLocaleString("en-US", { dateStyle: "medium", timeStyle: "short" })
+              : "",
+            comment: String(row.comment || ""),
+            ...(attachments ? { attachments } : {}),
+          };
+          const bucket = row.entity_type === "WORK_ORDER" ? nextWos : nextTickets;
+          bucket[row.entity_id] = [...(bucket[row.entity_id] || []), item];
+        }
+        setTicketComments(nextTickets);
+        setWoComments(nextWos);
+      });
+    return () => { active = false; };
+  }, []);
 
-  useEffect(() => {
-    try {
-      kvStore.setItem("pms_wo_comments", JSON.stringify(woComments));
-    } catch (e) {
-      console.error("Failed to save woComments to kvStore", e);
-    }
-  }, [woComments]);
+  function appendCommentToStateAndDb(
+    entityType: "TICKET" | "WORK_ORDER",
+    entityId: string,
+    item: TicketCommentItem,
+  ) {
+    const setter = entityType === "WORK_ORDER" ? setWoComments : setTicketComments;
+    setter((prev) => ({
+      ...prev,
+      [entityId]: [...(prev[entityId] || []), item],
+    }));
+    void db.from("maintenance_comments").insert({
+      entity_type: entityType,
+      entity_id: entityId,
+      author: item.author,
+      role: item.role,
+      comment: item.comment,
+      attachments_json: item.attachments ? JSON.stringify(item.attachments) : null,
+    });
+  }
 
   // Comment Box input states
   const [newTicketCommentText, setNewTicketCommentText] = useState("");
@@ -1069,19 +1053,14 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
 
     // If attachments exist, seed initial comment
     if (ticketForm.attachments.length > 0) {
-      setTicketComments(prev => ({
-        ...prev,
-        [newT.id]: [
-          {
-            id: `tc-init-${Date.now()}`,
-            author: ticketForm.reportedBy,
-            role: "Tenant",
-            timestamp: new Date().toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" }),
-            comment: `Initial complaint logged with ${ticketForm.attachments.length} attachment(s).`,
-            attachments: ticketForm.attachments,
-          },
-        ],
-      }));
+      appendCommentToStateAndDb("TICKET", newT.id, {
+        id: `tc-init-${Date.now()}`,
+        author: ticketForm.reportedBy,
+        role: "Tenant",
+        timestamp: new Date().toLocaleString("en-US", { dateStyle: "short", timeStyle: "short" }),
+        comment: `Initial complaint logged with ${ticketForm.attachments.length} attachment(s).`,
+        attachments: ticketForm.attachments,
+      });
     }
 
     // If ticket is marked Urgent / Emergency, automatically generate and dispatch linked Work Order immediately
@@ -1169,10 +1148,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
       comment: `Converted to Work Order ${newWoId}. Scheduled with ${newWo.technicianName}.`,
     };
 
-    setTicketComments(prev => ({
-      ...prev,
-      [ticket.id]: [...(prev[ticket.id] || []), convertLog],
-    }));
+    appendCommentToStateAndDb("TICKET", ticket.id, convertLog);
 
     toast.success(`Work Order ${newWoId} created & scheduled from Ticket ${ticket.id}`);
     setSelectedTicket(null);
@@ -1193,10 +1169,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
       attachments: newTicketCommentFile.trim() ? [{ name: newTicketCommentFile.trim(), size: "1.5 MB" }] : undefined,
     };
 
-    setTicketComments(prev => ({
-      ...prev,
-      [ticketId]: [...(prev[ticketId] || []), newC],
-    }));
+    appendCommentToStateAndDb("TICKET", ticketId, newC);
 
     toast.success("Comment and attachment posted to ticket timeline");
     setNewTicketCommentText("");
@@ -1219,10 +1192,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
       attachments: newWoCommentFile.trim() ? [{ name: newWoCommentFile.trim(), size: "2.1 MB" }] : undefined,
     };
 
-    setWoComments(prev => ({
-      ...prev,
-      [woId]: [...(prev[woId] || []), newC],
-    }));
+    appendCommentToStateAndDb("WORK_ORDER", woId, newC);
 
     toast.success("Note and timestamped attachment added to Work Order");
     setNewWoCommentText("");
@@ -1335,15 +1305,8 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
         comment: syncNote,
       };
 
-      setTicketComments(prev => ({
-        ...prev,
-        [ticketId]: [...(prev[ticketId] || []), syncComment],
-      }));
-
-      setWoComments(prev => ({
-        ...prev,
-        [woId]: [...(prev[woId] || []), syncComment],
-      }));
+      appendCommentToStateAndDb("TICKET", ticketId, syncComment);
+      appendCommentToStateAndDb("WORK_ORDER", woId, syncComment);
 
       toast.success(`Work Order ${woId} is now ${newStatus.toUpperCase()}. Linked Ticket ${ticketId} updated to ${mappedTicketStatus.toUpperCase()}!`);
     } else {
@@ -1655,11 +1618,6 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
 
     const updatedInvoices = [newInv, ...vendorInvoices.filter(i => i.invoiceNo !== newInv.invoiceNo)];
     setVendorInvoices(updatedInvoices);
-    try {
-      kvStore.setItem("pms_vendor_invoices", JSON.stringify(updatedInvoices));
-    } catch (e) {
-      console.error("Failed to save pms_vendor_invoices:", e);
-    }
 
     // ── Push to Finance → Payable Invoice & Vendor Management ──────────────
     pushApInvoiceToFinanceStore({
@@ -3374,26 +3332,18 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
                 comment: `Updated ticket details & dispatched linked Work Order ${newWoId} to ${assignedTechnicianOrVendor}.${partsNote}`,
               };
 
-              setTicketComments(prev => ({
-                ...prev,
-                [selectedTicket.id]: [...(prev[selectedTicket.id] || []), auditLog],
-              }));
+              appendCommentToStateAndDb("TICKET", selectedTicket.id, auditLog);
 
               // Copy existing ticket comments + dispatch log to new work order timeline
               const existingTicketTimeline = ticketComments[selectedTicket.id] || [];
-              setWoComments(prev => ({
-                ...prev,
-                [newWoId]: [
-                  ...existingTicketTimeline,
-                  {
-                    id: `woc-init-${Date.now()}`,
-                    author: role === "admin" ? "Admin Operations" : "Property Manager",
-                    role: "Property Manager",
-                    timestamp: currentTimestamp,
-                    comment: `Work Order ${newWoId} initiated and dispatched from Ticket ${selectedTicket.id}.${partsNote}`,
-                  }
-                ],
-              }));
+              existingTicketTimeline.forEach((cmt) => appendCommentToStateAndDb("WORK_ORDER", newWoId, cmt));
+              appendCommentToStateAndDb("WORK_ORDER", newWoId, {
+                id: `woc-init-${Date.now()}`,
+                author: role === "admin" ? "Admin Operations" : "Property Manager",
+                role: "Property Manager",
+                timestamp: currentTimestamp,
+                comment: `Work Order ${newWoId} initiated and dispatched from Ticket ${selectedTicket.id}.${partsNote}`,
+              });
 
               // Record stock movement log in shared movement register with exact date & time stamp
               if (issuedPartsList.length > 0) {
@@ -3882,10 +3832,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
                     comment: `Updated material consumption: ${logDetail}. Billed Material Cost: QAR ${calculatedMaterialsCost.toLocaleString()} (${totalReturnedCount} unused units returned to inventory).`,
                   };
 
-                  setWoComments(prev => ({
-                    ...prev,
-                    [woId]: [...(prev[woId] || []), consumptionLog],
-                  }));
+                  appendCommentToStateAndDb("WORK_ORDER", woId, consumptionLog);
 
                   toast.success(`Material consumption updated! ${totalReturnedCount} unused units returned to inventory.`);
                 };

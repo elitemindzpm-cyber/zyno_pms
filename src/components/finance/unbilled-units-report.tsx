@@ -88,23 +88,9 @@ function getConcessionStatusForPeriod(
   l: any,
   periodStartStr: string,
 ): { isFree: boolean; note?: string } {
-  let override: any = null;
-  try {
-    if (typeof window !== "undefined") {
-      const stored = JSON.parse(kvStore.getItem("pms_custom_lease_overrides") || "{}");
-      const uKey = (l?.unit || "").toString().toUpperCase().trim();
-      override =
-        stored[l?.id] ||
-        (l?.contractNumber ? stored[l?.contractNumber] : null) ||
-        (uKey ? stored[uKey] : null);
-    }
-  } catch {}
-
-  const graceDays = Number(
-    override?.grace_period_days ?? l?.gracePeriodDays ?? l?.grace_period_days ?? 0,
-  );
-  const startStr = override?.commencement_date || l?.startDate || l?.commencement_date;
-  const endStr = override?.expiry_date || l?.endDate || l?.expiry_date;
+  const graceDays = Number(l?.gracePeriodDays ?? l?.grace_period_days ?? 0);
+  const startStr = l?.startDate || l?.commencement_date;
+  const endStr = l?.endDate || l?.expiry_date;
 
   // The lease "grace period" is a late-payment grace (defaults to 7 days) - it is NOT free rent.
   if (false && graceDays > 0 && startStr) {
@@ -120,7 +106,6 @@ function getConcessionStatusForPeriod(
   }
 
   const hasRentFree = Boolean(
-    override?.has_rent_free ??
     l?.hasRentFree ??
     l?.has_rent_free ??
     l?.rent_free_period_days ??
@@ -128,14 +113,14 @@ function getConcessionStatusForPeriod(
   );
 
   // Day-based free period (< 1 month): handled by proration from the rent start date.
-  if (getDayBasedRentFreeDays({ ...l, ...(override || {}), rentFreeDays: override?.rent_free_days ?? l?.rentFreeDays, hasRentFree: override?.has_rent_free ?? l?.hasRentFree })) {
+  if (getDayBasedRentFreeDays({ ...l, rentFreeDays: l?.rentFreeDays ?? l?.rent_free_period_days, hasRentFree: l?.hasRentFree ?? l?.has_rent_free })) {
     return { isFree: false };
   }
 
   if (!hasRentFree) return { isFree: false };
 
   const rfPosition =
-    override?.rent_free_position ?? l?.rentFreePosition ?? l?.rent_free_position ?? "FIRST_MONTH";
+    l?.rentFreePosition ?? l?.rent_free_position ?? "FIRST_MONTH";
 
   if (!startStr) {
     return { isFree: true, note: "Rent-Free Concession (QR 0.00)" };

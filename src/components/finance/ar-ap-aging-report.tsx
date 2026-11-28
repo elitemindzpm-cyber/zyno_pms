@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { useFinanceStore } from "@/lib/finance/finance-store";
 import { useAppData } from "@/lib/app-data-context";
+import { ageingApi } from "@/lib/api-client";
 import { toast } from "sonner";
 
 interface AgingItem {
@@ -107,6 +108,30 @@ export function ArApAgingReportSubModule() {
   const [bucketFilter, setBucketFilter] = useState<string>("ALL");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const [selectedPartyRow, setSelectedPartyRow] = useState<PartyAgingRow | null>(null);
+  const [serverAgeingItems, setServerAgeingItems] = useState<AgingItem[] | null>(null);
+
+  // D8: Fetch authoritative SQL-backed ageing buckets from /api/accounting/ageing
+  useEffect(() => {
+    let cancelled = false;
+    ageingApi
+      .get(activeTab, asOfDate)
+      .then((res) => {
+        if (cancelled) return;
+        const flat: AgingItem[] = [];
+        for (const p of res.data || []) {
+          for (const it of p.items || []) {
+            flat.push({ ...it, canQuickSettle: true });
+          }
+        }
+        setServerAgeingItems(flat);
+      })
+      .catch(() => {
+        if (!cancelled) setServerAgeingItems(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [activeTab, asOfDate, receivableInvoices, payableInvoices]);
 
   // Authoritative GL balance for Account 12413001 (Tenant Receivables — Unit SL)
   // Strictly reconciled with General Ledger and Trial Balance Detailed
@@ -602,8 +627,8 @@ export function ArApAgingReportSubModule() {
   };
 
   const activeRows = useMemo(
-    () => buildPartyRows(activeTab === "ar" ? arAgingItems : apAgingItems),
-    [activeTab, arAgingItems, apAgingItems, propertyFilter, bucketFilter, searchQuery]
+    () => buildPartyRows(serverAgeingItems !== null && serverAgeingItems.length > 0 ? serverAgeingItems : activeTab === "ar" ? arAgingItems : apAgingItems),
+    [serverAgeingItems, activeTab, arAgingItems, apAgingItems, propertyFilter, bucketFilter, searchQuery]
   );
 
   const totals = useMemo(() => {

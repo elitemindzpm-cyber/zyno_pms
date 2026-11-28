@@ -6,6 +6,7 @@ import { request as apiRequest } from "@/lib/api-client";
 import { insertVoucherOnce } from "./voucher-persist";
 import { resolveAccountingAccounts } from "./account-resolver";
 import { postVoucher } from "./posting-engine";
+import { checkPostingPeriodClosed, refreshPostingPeriodsCache } from "./posting-periods-cache";
 import {
   GUARANTEE_CHEQUE_DATE,
   resolvePropertyFromUnitCode,
@@ -17,18 +18,7 @@ const KAHRAMAA_DEPOSIT_BY_UNIT: Record<string, any> = {};
 
 
 export function isPostingPeriodClosed(dateStr?: string): { closed: boolean; periodName?: string } {
-  if (!dateStr || typeof window === "undefined") return { closed: false };
-  try {
-    const ym = dateStr.split("T")[0].slice(0, 7);
-    const raw = kvStore.getItem("pms_posting_periods_cache");
-    if (!raw) return { closed: false };
-    const list = JSON.parse(raw) as Array<{ period_name: string; status: string }>;
-    const found = list.find(p => p.period_name === ym);
-    if (found && (found.status === "Closed" || (found as any).is_closed)) {
-      return { closed: true, periodName: ym };
-    }
-  } catch {}
-  return { closed: false };
+  return checkPostingPeriodClosed(dateStr);
 }
 
 // ── Shared Canonical Property, Dimension & Receipt-Normalization Helpers ─────
@@ -1085,8 +1075,9 @@ function mapDbVoucherRow(r: any): FinanceVoucher {
 export function FinanceProvider({ children }: { children: ReactNode }) {
   const FINANCE_STORAGE_KEY = "zyno-pms-finance-data-v6";
 
-  // One-time cleanup of legacy/stale local caches that cause amount discrepancies
+  // Load posting periods cache from DB and clean up legacy localStorage keys
   useEffect(() => {
+    void refreshPostingPeriodsCache();
     if (typeof window !== "undefined") {
       try {
         const legacyKeys = [

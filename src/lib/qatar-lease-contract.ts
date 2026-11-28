@@ -409,42 +409,28 @@ function toArabicTenantName(raw: string): string {
  * Builds full dynamic contract data matching the specific tenant and property
  */
 export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseContractData {
-  // 0. Check kvStore overrides if available in browser
-  let localOverride: any = null;
-  try {
-    if (typeof window !== 'undefined') {
-      const stored = JSON.parse(kvStore.getItem('pms_custom_lease_overrides') || '{}');
-      const uKey = (raw.unit || raw.unit_ref || raw.propertyUnitNumber || raw.unit_code || raw.unit_name || '').toString().toUpperCase().trim();
-      localOverride = stored[raw.id] || (raw.lease_number ? stored[raw.lease_number] : null) || (raw.contractNumber ? stored[raw.contractNumber] : null) || (uKey ? stored[uKey] : null);
-    }
-  } catch (e) {
-    // ignore
-  }
-
   const hasRentFree = Boolean(
-    localOverride?.has_rent_free ??
     raw.has_rent_free ??
     raw.hasRentFree ??
     raw.rent_free_period_days ??
     raw.rentFreeDays
   );
-  const rentFreeDays = localOverride?.rent_free_days ?? raw.rent_free_days ?? raw.rentFreeDays ?? (hasRentFree ? 30 : 0);
-  const rentFreePosition = localOverride?.rent_free_position ?? raw.rent_free_position ?? raw.rentFreePosition ?? 'FIRST_MONTH';
+  const rentFreeDays = raw.rent_free_days ?? raw.rent_free_period_days ?? raw.rentFreeDays ?? (hasRentFree ? 30 : 0);
+  const rentFreePosition = raw.rent_free_position ?? raw.rentFreePosition ?? 'FIRST_MONTH';
 
-  // The lease record is authoritative; a cached override only fills what the record does not have.
-  const rent = Number(raw.monthlyRent || raw.rent || raw.rental_amount || raw.current_rent || raw.price || localOverride?.monthlyRent || 0);
-  const deposit = Number(raw.securityDepositAmount ?? raw.securityDeposit ?? raw.security_deposit ?? raw.security_deposit_amount ?? localOverride?.securityDeposit ?? 0);
+  const rent = Number(raw.monthlyRent || raw.rent || raw.rental_amount || raw.current_rent || raw.price || 0);
+  const deposit = Number(raw.securityDepositAmount ?? raw.securityDeposit ?? raw.security_deposit ?? raw.security_deposit_amount ?? 0);
   const utilDeposit = Number(raw.electricityWaterDeposit ?? raw.utilityDeposit ?? 0);
-  const pdcTotal = Number(raw.pdc_count ?? raw.pdcCount ?? localOverride?.pdc_count ?? 12);
+  const pdcTotal = Number(raw.pdc_count ?? raw.pdcCount ?? raw.number_of_pdc ?? 12);
   const postDatedCount = Math.max(0, pdcTotal - 1);
 
-  const sDate = raw.startDate || raw.leaseStartDate || raw.commencement_date || raw.contract_start_date || localOverride?.commencement_date || "2026-09-01";
-  const eDate = raw.endDate || raw.leaseEndDate || raw.expiry_date || raw.contract_end_date || localOverride?.expiry_date || "2027-08-31";
+  const sDate = raw.startDate || raw.leaseStartDate || raw.commencement_date || raw.contract_start_date || "2026-09-01";
+  const eDate = raw.endDate || raw.leaseEndDate || raw.expiry_date || raw.contract_end_date || "2027-08-31";
 
   const rawUnit = raw.unit || raw.unit_ref || raw.propertyUnitNumber || raw.unit_code || raw.unit_name || "—";
   const unitNum = String(rawUnit).replace(/^(Flat|Unit|Shop|Office|Villa)\s*/i, "").trim() || "—";
   const propName = raw.property || raw.propertyAddressEn || raw.property_name || raw.properties?.title || "—";
-  const tenantName = raw.tenantName || raw.tenantNameEn || raw.tenant_name || raw.full_name || localOverride?.tenant_name || "—";
+  const tenantName = raw.tenantName || raw.tenantNameEn || raw.tenant_name || raw.full_name || "—";
   const qid = raw.tenantQid || raw.qid || raw.qatar_id || raw.customer_qid || "—";
   const mobile = raw.tenantMobile || raw.phone || raw.mobile || raw.mobile_number || "—";
 
