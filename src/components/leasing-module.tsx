@@ -101,7 +101,7 @@ import { useFinanceStore } from "@/lib/finance/finance-store";
 import { executeFinalSettlement, settleEarlyLeaseVacate } from "@/lib/finance/settlement-engine";
 import { collectSecurityDeposit } from "@/lib/finance/depositService";
 import { receivePdc } from "@/lib/finance/pdcService";
-import { postGuaranteeCheque, postRentReceipt } from "@/lib/finance/posting-engine";
+import { postGuaranteeCheque, postRentReceipt, postLeaseDepositReceipt } from "@/lib/finance/posting-engine";
 import { getDocumentBranding } from "@/lib/document-branding";
 import { getImpersonationSession } from "@/lib/impersonation";
 import { getCurrentProfile } from "@/lib/auth-guards";
@@ -4976,12 +4976,37 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     setAddVoucherForm({ leaseId: "", name: "Receipts Voucher - Rent", receiptNo: "", method: "PDC", period: "", debit: "PDC In Hand", credit: "Rental Income", amount: "", createPdc: true, pdcChequeNo: "", pdcBank: "", pdcDate: today.toISOString().split("T")[0] });
   }
 
-  function addSecurityDeposit() {
+  async function addSecurityDeposit() {
     const { leaseId, amount, method, receiptNo, chequeNo, bank, chequeDate, notes } = securityDepositForm;
     if (!leaseId || !amount) { alert("Please select a lease and enter the deposit amount."); return; }
     const isPdc = method === "PDC" || method === "Guarantee Cheque";
     const numAmount = Number(amount);
     const voucherRef = receiptNo || `SD-${Date.now()}`;
+
+    // ONE authoritative posting. A cash or bank deposit goes through the posting engine (the unit's own deposit
+    // sub-ledger, the lease dimensions, atomic on the server). The browser no longer also inserts its own voucher,
+    // which used to book every deposit twice. It runs first, so a failure stops here and nothing is half-recorded.
+    const leaseForPost: any = leases.find((l) => l.id === leaseId);
+    let engineBooked = false;
+    if (!isPdc && leaseForPost?.customerId && leaseForPost?.propertyId && leaseForPost?.unitId) {
+      try {
+        await postLeaseDepositReceipt(
+          numAmount,
+          String(leaseForPost.customerId),
+          String(leaseForPost.propertyId),
+          String(leaseForPost.unitId),
+          method === "Cash" ? "Cash" : "Bank",
+          voucherRef,
+          leaseForPost.unit || undefined,
+          "SECURITY",
+          String(leaseForPost.id),
+        );
+        engineBooked = true;
+      } catch (postErr) {
+        toast.error(`Security deposit was not posted: ${postErr instanceof Error ? postErr.message : "ledger posting failed"}`);
+        return;
+      }
+    }
     const newVoucher: Voucher = {
       id: `v${vouchers.length + 1}`,
       leaseId,
@@ -5025,22 +5050,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
     const lease = leases.find(l => l.id === leaseId);
     const tenantLabel = lease?.tenantName || lease?.tenant || "Tenant";
     const unitLabel = lease?.unit || lease?.unitRef || "";
-    void insertVoucherOnce({
-      voucher_number: `VCH-SD-RCV-${voucherRef}`,
-      voucher_date: postingDate,
-      voucher_type: "RV",
-      description: `Security Deposit Received — ${tenantLabel}${unitLabel ? ` (${unitLabel})` : ""}${chequeNo ? ` [Cheque #${chequeNo}]` : ""}`,
-      total_amount: numAmount,
-      status: "posted",
-      posted_at: new Date().toISOString(),
-    }).then(({ data: vData, error: vErr }) => {
-      if (!vErr && vData?.id) {
-        void db.from("fin_voucher_lines").insert([
-          { voucher_id: vData.id, account_code: drCode, account_name: drName, debit_amount: numAmount, credit_amount: 0, description: `Security Deposit — ${tenantLabel}` },
-          { voucher_id: vData.id, account_code: "21500001", account_name: "Security Deposit Liability", debit_amount: 0, credit_amount: numAmount, description: `Security Deposit — ${tenantLabel}` },
-        ]);
-      }
-    }, (err: any) => console.warn("[addSecurityDeposit] GL posting note:", err));
+    // (the browser-side voucher insert that used to be here was a second posting of the same deposit)
 
     // Post to FinanceStore so GL / Trial Balance / Balance Sheet / Cash Book update immediately
     addFinanceStoreVoucher({
@@ -5057,7 +5067,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       property_name: lease?.property || "",
       unit_ref: unitLabel,
       tenant_name: tenantLabel,
-    });
+    }, { skipDbPersist: engineBooked });
     if (method === "Cash" && numAmount > 0) {
       addCashBookEntry({
         date: postingDate,

@@ -1107,7 +1107,8 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
           "pms_general_ledger_entries_v2",
           "pms_cash_book_v2"
         ];
-        legacyKeys.forEach(k => kvStore.removeItem(k));
+        // Only the keys that still exist: removing an absent key was still a network call on every page load.
+        legacyKeys.forEach(k => { if (kvStore.getItem(k) != null) kvStore.removeItem(k); });
 
         // Deduplicate stored vouchers (e.g. redundant PV-SET vouchers for same tenant and unit)
         const vKey = `${FINANCE_STORAGE_KEY}-vouchers`;
@@ -1167,7 +1168,31 @@ export function FinanceProvider({ children }: { children: ReactNode }) {
   // Track IDs already merged from DB to avoid duplicates
   const seenVoucherIds = useRef(new Set<string>());
 
-  const fetchDbData = async (showToast = false) => {
+  // One full reload at a time. Several triggers (mount, voucher events, realtime) used to start overlapping
+  // reloads of the same data; a request made while one is running now waits and runs once more afterwards.
+  const dbFetchInFlight = useRef<Promise<void> | null>(null);
+  const dbFetchQueued = useRef(false);
+  const fetchDbData = (showToast = false): Promise<void> => {
+    if (dbFetchInFlight.current) {
+      dbFetchQueued.current = true;
+      return dbFetchInFlight.current;
+    }
+    const run = (async () => {
+      try {
+        await fetchDbDataOnce(showToast);
+      } finally {
+        dbFetchInFlight.current = null;
+      }
+      if (dbFetchQueued.current) {
+        dbFetchQueued.current = false;
+        await fetchDbData(false);
+      }
+    })();
+    dbFetchInFlight.current = run;
+    return run;
+  };
+
+  const fetchDbDataOnce = async (showToast = false) => {
     setIsSyncing(true);
     try {
       // 1. Pull existing fin_vouchers from Db

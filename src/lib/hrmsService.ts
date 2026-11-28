@@ -1496,7 +1496,7 @@ export const HrmsApi = {
     }
 
     if (lines.length > 0) {
-      return await createAccountingEvent({
+      const event = await createAccountingEvent({
         event_type: 'ADJUSTMENT',
         source_type: 'HRMS_FNF',
         source_id: fnf.id,
@@ -1506,6 +1506,13 @@ export const HrmsApi = {
         idempotency_key: `fnf-gl-${fnf.id}`,
         lines
       });
+      // The event used to be left as a DRAFT while the screen said it was posted. Post it, then mark the
+      // settlement Disbursed only once the ledger entry exists. (Posting again with the same key is a no-op.)
+      const { postAccountingEvent } = await import('@/lib/finance/posting-engine');
+      await postAccountingEvent(event.id);
+      const { error: statusErr } = await db.from('hrms_fnf_settlements').update({ status: 'Disbursed' }).eq('id', fnf.id);
+      if (statusErr) throw new Error(`The settlement was posted but its status could not be updated: ${statusErr.message}`);
+      return event;
     }
   },
 

@@ -296,7 +296,31 @@ export function AppDataProvider({ children }: { children: ReactNode }) {
   const [appData, setAppData] = useState<PmsAppData>(EMPTY_DATA);
   const [syncing, setSyncing] = useState(true);
 
-  const fetchDirectFromDatabase = useCallback(async () => {
+  // One full reload at a time; requests made while one is running wait and run once more afterwards.
+  const reloadInFlight = useRef<Promise<void> | null>(null);
+  const reloadQueued = useRef(false);
+  const fetchDirectFromDatabase = useCallback((): Promise<void> => {
+    if (reloadInFlight.current) {
+      reloadQueued.current = true;
+      return reloadInFlight.current;
+    }
+    const run = (async () => {
+      try {
+        await fetchDirectFromDatabaseOnce();
+      } finally {
+        reloadInFlight.current = null;
+      }
+      if (reloadQueued.current) {
+        reloadQueued.current = false;
+        await fetchDirectFromDatabase();
+      }
+    })();
+    reloadInFlight.current = run;
+    return run;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const fetchDirectFromDatabaseOnce = useCallback(async () => {
     setSyncing(true);
     try {
       // Helper to fetch all rows across PostgREST 1000-row default pages

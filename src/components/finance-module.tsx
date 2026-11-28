@@ -1,5 +1,5 @@
 import { kvStore } from "@/lib/kv-store";
-import { COMMON_GL_ACCOUNTS, BANK_GL_ACCOUNTS, useGlAccountOptions } from "@/lib/finance/gl-account-options";
+import { COMMON_GL_ACCOUNTS, BANK_GL_ACCOUNTS, PARTY_VENDORS, PARTY_CUSTOMERS, EXPENSE_GL_OPTIONS, REVENUE_GL_OPTIONS, useGlAccountOptions } from "@/lib/finance/gl-account-options";
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useSearch, useNavigate } from "@tanstack/react-router";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
@@ -11788,15 +11788,10 @@ const CUSTOMER_CREDIT_REASONS = [
 ];
 
 // Common Master Party Presets
-const DEFAULT_VENDORS: Array<{ id: string; name: string; agreement: string; agreements: string[]; doc: string }> = [];
-
-const DEFAULT_CUSTOMERS: Array<{ id: string; name: string; agreement: string; agreements: string[]; doc: string }> = [];
-
-// COA options for expense GL (Debit Note)
-const EXPENSE_GL_OPTIONS: Array<{ value: string; label: string }> = [];
-
-// COA options for revenue GL (Credit Note)
-const REVENUE_GL_OPTIONS: Array<{ value: string; label: string }> = [];
+// Vendors, customers and the expense / revenue GL options are loaded from the database (see gl-account-options.ts);
+// they used to be empty constants, which left the Debit and Credit Note forms impossible to complete.
+const DEFAULT_VENDORS = PARTY_VENDORS;
+const DEFAULT_CUSTOMERS = PARTY_CUSTOMERS;
 
 type NoteStatus = "DRAFT" | "APPROVED" | "POSTED" | "CANCELLED";
 
@@ -11871,6 +11866,7 @@ function mapDbToDebitNote(r: any): DebitNote {
 }
 
 function DebitNoteSubModule() {
+  useGlAccountOptions();
   const [notes, setNotes] = useState<DebitNote[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [viewNote, setViewNote] = useState<DebitNote | null>(null);
@@ -12218,7 +12214,7 @@ function DebitNoteSubModule() {
                 <Select value={form.expense_gl} onValueChange={v => setForm({ ...form, expense_gl: v })}>
                   <SelectTrigger className="h-8 text-xs"><SelectValue /></SelectTrigger>
                   <SelectContent>
-                    {EXPENSE_GL_OPTIONS.map(g => <SelectItem key={g.value} value={g.value}>{g.label}</SelectItem>)}
+                    {(form.party_type === "Vendor" ? EXPENSE_GL_OPTIONS : REVENUE_GL_OPTIONS).map(g => <SelectItem key={g.value} value={g.value}>{g.label}</SelectItem>)}
                   </SelectContent>
                 </Select>
               </div>
@@ -12240,8 +12236,8 @@ function DebitNoteSubModule() {
                 </>
               ) : (
                 <>
-                  <p className="font-mono">• <strong className="text-rose-600">Dr. 13100001</strong> Trade Receivables (Customer) — QAR {form.amount.toLocaleString()}</p>
-                  <p className="font-mono">• <strong className="text-emerald-600">Cr. {form.expense_gl}</strong> {EXPENSE_GL_OPTIONS.find(g => g.value === form.expense_gl)?.label.split("–")[1]?.trim() || "Recovery Income"} — QAR {form.amount.toLocaleString()}</p>
+                  <p className="font-mono">• <strong className="text-rose-600">Dr. 12413001</strong> Tenant Receivables (Customer) — QAR {form.amount.toLocaleString()}</p>
+                  <p className="font-mono">• <strong className="text-emerald-600">Cr. {form.expense_gl}</strong> {REVENUE_GL_OPTIONS.find(g => g.value === form.expense_gl)?.label.split("–")[1]?.trim() || "Recovery Income"} — QAR {form.amount.toLocaleString()}</p>
                   <p className="text-muted-foreground italic text-[10px]">Recognizes chargeback claim receivable from tenant.</p>
                 </>
               )}
@@ -12283,7 +12279,7 @@ function DebitNoteSubModule() {
               </div>
               <div className="p-3 rounded-lg bg-rose-500/10 border border-rose-500/20 space-y-1 text-[11px]">
                 <p className="font-semibold">GL Journal Entry Impact:</p>
-                <p className="font-mono">Dr. {viewNote.party_type === "Customer" ? "13100001 Trade Receivables" : "21000 Trade Payables"} — QAR {viewNote.amount.toLocaleString()}</p>
+                <p className="font-mono">Dr. {viewNote.party_type === "Customer" ? "12413001 Tenant Receivables" : "Supplier ledger (21000xxx)"} — QAR {viewNote.amount.toLocaleString()}</p>
                 <p className="font-mono">Cr. {viewNote.expense_gl} — QAR {viewNote.amount.toLocaleString()}</p>
               </div>
               {viewNote.notes && <p className="text-muted-foreground italic">{viewNote.notes}</p>}
@@ -12301,7 +12297,7 @@ function DebitNoteSubModule() {
 // ─────────────────────────────────────────────────────────────────────────────
 // CREDIT NOTE SUB-MODULE
 // AR-side: We credit a tenant/customer or vendor discount
-// GL: Dr. 41xxx Revenue (or expense) / Cr. 13100001 Trade Receivables
+// GL: Dr. 41xxx Revenue (or expense) / Cr. 12413001 Tenant Receivables
 // ─────────────────────────────────────────────────────────────────────────────
 function mapDbToCreditNote(r: any): CreditNote {
   return {
@@ -12321,6 +12317,7 @@ function mapDbToCreditNote(r: any): CreditNote {
 }
 
 function CreditNoteSubModule() {
+  useGlAccountOptions();
   const [notes, setNotes] = useState<CreditNote[]>([]);
   const [showModal, setShowModal] = useState(false);
   const [viewNote, setViewNote] = useState<CreditNote | null>(null);
@@ -12674,7 +12671,7 @@ function CreditNoteSubModule() {
             <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 space-y-1 text-[11px]">
               <p className="font-semibold text-emerald-700 dark:text-emerald-400">GL Posting Preview (upon Post to GL):</p>
               <p className="font-mono">• <strong className="text-rose-600">Dr. {form.revenue_gl}</strong> {REVENUE_GL_OPTIONS.find(g => g.value === form.revenue_gl)?.label.split("–")[1]?.trim()} — QAR {form.amount.toLocaleString()}</p>
-              <p className="font-mono">• <strong className="text-emerald-600">Cr. 13100001</strong> Trade Receivables — QAR {form.amount.toLocaleString()}</p>
+              <p className="font-mono">• <strong className="text-emerald-600">Cr. 12413001</strong> Tenant Receivables — QAR {form.amount.toLocaleString()}</p>
               <p className="text-muted-foreground italic text-[10px]">Reduces income recognized and clears receivable amount owed by customer.</p>
             </div>
           </div>
@@ -12714,7 +12711,7 @@ function CreditNoteSubModule() {
               <div className="p-3 rounded-lg bg-emerald-500/10 border border-emerald-500/20 space-y-1 text-[11px]">
                 <p className="font-semibold">GL Journal Entry:</p>
                 <p className="font-mono">Dr. {viewNote.revenue_gl} Revenue — QAR {viewNote.amount.toLocaleString()}</p>
-                <p className="font-mono">Cr. 13100001 Trade Receivables — QAR {viewNote.amount.toLocaleString()}</p>
+                <p className="font-mono">Cr. 12413001 Tenant Receivables — QAR {viewNote.amount.toLocaleString()}</p>
               </div>
               {viewNote.notes && <p className="text-muted-foreground italic">{viewNote.notes}</p>}
             </div>

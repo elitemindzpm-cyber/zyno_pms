@@ -1787,7 +1787,11 @@ router.post('/credit-debit-notes/:id/action', async (req: Request, res: Response
       if (note.status === 'POSTED') { const err: any = new Error('Note is already posted'); err.status = 409; throw err; }
       const amt = money2(note.amount);
       const isVendor = String(note.party_type).toLowerCase() === 'vendor';
-      const controlCode = isVendor ? AP_CONTROL_CODE : AR_CONTROL_CODE;
+      // A vendor note moves the supplier's own ledger (21000xxx), the same one its invoices and payments use.
+      const vendorName = String(note.party_name || '').trim();
+      const controlCode = isVendor
+        ? (vendorName ? (await ensureVendorLedgerTx(tx, { vendorName })).code : AP_CONTROL_CODE)
+        : AR_CONTROL_CODE;
       // Debit Note: Vendor -> Dr AP / Cr Expense; Customer -> Dr AR / Cr Revenue. Credit Note: reverse sides.
       const lines = note.note_type === 'DEBIT'
         ? [{ account_code: controlCode, debit: amt, credit: 0 }, { account_code: note.account_code, debit: 0, credit: amt }]

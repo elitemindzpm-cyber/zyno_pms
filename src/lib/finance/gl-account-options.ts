@@ -11,6 +11,13 @@ export const COMMON_GL_ACCOUNTS: GlAccountOption[] = [];
 /** Bank accounts (GL 12000 family). */
 export const BANK_GL_ACCOUNTS: GlAccountOption[] = [];
 
+/** Parties and posting accounts for the Debit / Credit Note forms (these lists used to be empty constants). */
+export type PartyOption = { id: string; name: string; agreement: string; agreements: string[]; doc: string };
+export const PARTY_VENDORS: PartyOption[] = [];
+export const PARTY_CUSTOMERS: PartyOption[] = [];
+export const EXPENSE_GL_OPTIONS: Array<{ value: string; label: string }> = [];
+export const REVENUE_GL_OPTIONS: Array<{ value: string; label: string }> = [];
+
 let loadPromise: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
@@ -43,8 +50,26 @@ export function loadGlAccountOptions(force = false): Promise<void> {
       code: String(r.account_code),
       name: `${r.account_code} - ${r.account_name}`,
     });
-    replace(COMMON_GL_ACCOUNTS, effectiveList.map(toOption));
-    replace(BANK_GL_ACCOUNTS, effectiveList.filter((r) => String(r.account_code).startsWith("12000")).map(toOption));
+    replace(COMMON_GL_ACCOUNTS, leaves.map(toOption));
+    replace(BANK_GL_ACCOUNTS, leaves.filter((r) => String(r.account_code).startsWith("12000")).map(toOption));
+    const toChoice = (r: any) => ({ value: String(r.account_code), label: `${r.account_code} – ${r.account_name}` });
+    EXPENSE_GL_OPTIONS.splice(0, EXPENSE_GL_OPTIONS.length, ...effectiveList.filter((r) => String(r.account_code).startsWith("5")).map(toChoice));
+    REVENUE_GL_OPTIONS.splice(0, REVENUE_GL_OPTIONS.length, ...effectiveList.filter((r) => String(r.account_code).startsWith("4")).map(toChoice));
+
+    const [vendorRes, customerRes] = await Promise.all([
+      db.from("fin_vendors").select("id, name, code, status").order("name").limit(5000),
+      db.from("customers").select("id, full_name, display_name").order("full_name").limit(5000),
+    ]);
+    if (!vendorRes.error) {
+      PARTY_VENDORS.splice(0, PARTY_VENDORS.length, ...((vendorRes.data as any[]) || [])
+        .filter((v) => String(v.status || "Active").toLowerCase() !== "inactive" && v.name)
+        .map((v) => ({ id: String(v.id), name: String(v.name), agreement: "", agreements: [], doc: "" })));
+    }
+    if (!customerRes.error) {
+      PARTY_CUSTOMERS.splice(0, PARTY_CUSTOMERS.length, ...((customerRes.data as any[]) || [])
+        .filter((c) => c.full_name || c.display_name)
+        .map((c) => ({ id: String(c.id), name: String(c.full_name || c.display_name), agreement: "", agreements: [], doc: "" })));
+    }
     listeners.forEach((fn) => fn());
   })();
   return loadPromise;
