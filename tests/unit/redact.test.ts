@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { Prisma } from '@prisma/client';
 import { scrubSecrets } from '../../server/lib/redact';
 
 test('password hash is removed from users.raw_user_meta_data, other metadata is kept', () => {
@@ -29,4 +30,11 @@ test('dates and plain values are untouched', () => {
   assert.equal(out.d, d);
   assert.equal(out.n, 5);
   assert.equal(out.nul, null);
+});
+
+test('Prisma Decimal values keep serialising as numbers/strings, not internal objects', () => {
+  const row: any = scrubSecrets({ id: 'a', amount: new Prisma.Decimal('6500.5'), nested: { total: new Prisma.Decimal(3000) } });
+  assert.equal(JSON.parse(JSON.stringify(row)).amount, '6500.5');
+  assert.equal(JSON.parse(JSON.stringify(row)).nested.total, '3000');
+  assert.ok(row.amount instanceof Prisma.Decimal);
 });

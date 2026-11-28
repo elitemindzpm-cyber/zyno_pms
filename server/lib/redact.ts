@@ -17,7 +17,10 @@ function scrubMetaString(raw: string): string {
 
 export function scrubSecrets<T>(value: T): T {
   if (Array.isArray(value)) return value.map((v) => scrubSecrets(v)) as unknown as T;
-  if (value && typeof value === 'object' && !(value instanceof Date) && !(typeof Buffer !== 'undefined' && Buffer.isBuffer(value))) {
+  // Objects that know how to serialise themselves (Prisma Decimal, Date, ...) must be left alone: rebuilding them
+  // as plain objects would expose their internals ({ s, e, d }) instead of the value.
+  if (value && typeof value === 'object' && typeof (value as any).toJSON === 'function') return value;
+  if (value && typeof value === 'object' && !(typeof Buffer !== 'undefined' && Buffer.isBuffer(value))) {
     const out: Record<string, any> = {};
     for (const [k, v] of Object.entries(value as Record<string, any>)) {
       if (SECRET_KEYS.has(k.toLowerCase())) continue;
