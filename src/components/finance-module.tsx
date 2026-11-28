@@ -4266,6 +4266,9 @@ function PayableInvoiceSubModule() {
 
   // Payment Settlement Dialog state
   const [payTarget, setPayTarget] = useState<any | null>(null);
+  // Multi-invoice settlement: unpaid invoices ticked in the table, and the amount to pay on each.
+  const [selectedPay, setSelectedPay] = useState<string[]>([]);
+  const [multiAmounts, setMultiAmounts] = useState<Record<string, string>>({});
   const [payForm, setPayForm] = useState({
     paymentDate: new Date().toISOString().slice(0, 10),
     paymentMethod: "Bank Wire / QNB Corporate Electronic",
@@ -4541,9 +4544,71 @@ function PayableInvoiceSubModule() {
     });
   }
 
+  function openMultiPay() {
+    const rows = allInvoices.filter((r: any) => selectedPay.includes(r.invoice_no) && r.status !== "Paid");
+    if (rows.length === 0) return;
+    const vendors = Array.from(new Set(rows.map((r: any) => String(r.vendor))));
+    if (vendors.length > 1) {
+      toast.error("Select invoices of one supplier only. One payment voucher settles one supplier.");
+      return;
+    }
+    const amounts: Record<string, string> = {};
+    rows.forEach((r: any) => { amounts[r.invoice_no] = String(r.amount); });
+    setMultiAmounts(amounts);
+    openPayModal({
+      multi: true,
+      items: rows,
+      vendor: vendors[0],
+      invoice_no: `${rows.length} invoices`,
+      amount: rows.reduce((sum: number, r: any) => sum + Number(r.amount || 0), 0),
+      property: rows[0]?.property,
+      raw: { vendor_id: rows[0]?.raw?.vendor_id },
+    });
+  }
+
   async function handleConfirmDisbursement() {
     if (!payTarget) return;
     try {
+      if (payTarget.multi) {
+        const items: any[] = payTarget.items || [];
+        const allocations = items.map((r: any) => ({
+          invoice_id: r.raw?.id && r.raw.id !== r.invoice_no ? String(r.raw.id) : undefined,
+          invoice_number: r.invoice_no,
+          grn_number: r.raw?.grn_number || undefined,
+          amount: Math.round(Number(multiAmounts[r.invoice_no] || 0) * 100) / 100,
+          due: Number(r.amount || 0),
+        })).filter((a) => a.amount > 0);
+        if (allocations.length === 0) { toast.error("Enter an amount to pay on at least one invoice."); return; }
+        const over = allocations.find((a) => a.amount > a.due + 0.005);
+        if (over) { toast.error(`Amount for ${over.invoice_number} is more than its outstanding ${over.due.toLocaleString()}.`); return; }
+        const total = Math.round(allocations.reduce((sum, a) => sum + a.amount, 0) * 100) / 100;
+        const multiCash = payForm.paymentMethod.includes("Cash") || payForm.paymentMethod.includes("Petty");
+        const multiBank = !multiCash
+          ? BANK_GL_ACCOUNTS.find((b) => payForm.disbursingBank?.includes(b.code)) || BANK_GL_ACCOUNTS[0]
+          : null;
+        const res: any = await apiRequest("/api/accounting/vendor-payment", {
+          method: "POST",
+          body: JSON.stringify({
+            vendor_id: payTarget.raw?.vendor_id || payTarget.vendor,
+            vendor_name: payTarget.vendor,
+            payment_date: payForm.paymentDate,
+            payment_method: multiCash ? "Cash" : payForm.paymentMethod,
+            bank_gl_code: multiCash ? "12100001" : (multiBank?.code || "12000001"),
+            reference_no: payForm.transactionReference,
+            narration: `Vendor Settlement - ${allocations.length} invoice(s) (${payTarget.vendor})`,
+            total_amount: total,
+            allocations: allocations.map(({ due, ...a }) => a),
+          }),
+        });
+        window.dispatchEvent(new Event("finance_vouchers_updated"));
+        window.dispatchEvent(new Event("ap_invoices_updated"));
+        window.dispatchEvent(new Event("pms_vendor_invoices_updated"));
+        toast.success(`Payment of QAR ${total.toLocaleString()} settled across ${allocations.length} invoice(s). Voucher ${res?.data?.voucher_number || ""} posted.`);
+        setPayTarget(null);
+        setSelectedPay([]);
+        await loadInvoices();
+        return;
+      }
       const isCash = payForm.paymentMethod.includes("Cash") || payForm.paymentMethod.includes("Petty");
       const bankOpt = !isCash
         ? BANK_GL_ACCOUNTS.find((b) => payForm.disbursingBank?.includes(b.code) || payForm.disbursingBank?.toLowerCase().includes("cbq") && b.name.toLowerCase().includes("cbq"))
@@ -4627,13 +4692,21 @@ function PayableInvoiceSubModule() {
           <h3 className="text-sm font-semibold">Accounts Payable (AP) Invoices</h3>
           <p className="text-xs text-muted-foreground">Invoices from suppliers, utility providers, and procurement orders awaiting payment settlement.</p>
         </div>
-        <Button size="sm" onClick={() => setOpen(true)} className="gap-2"><Plus className="h-4 w-4" /> Create AP Invoice</Button>
+        <div className="flex items-center gap-2">
+          {selectedPay.length > 0 && (
+            <Button size="sm" variant="outline" className="gap-2 border-emerald-500/50 text-emerald-700" onClick={openMultiPay}>
+              <CreditCard className="h-4 w-4" /> Pay selected ({selectedPay.length})
+            </Button>
+          )}
+          <Button size="sm" onClick={() => setOpen(true)} className="gap-2"><Plus className="h-4 w-4" /> Create AP Invoice</Button>
+        </div>
       </div>
 
       <div className="border rounded-lg overflow-hidden bg-card">
         <Table>
           <TableHeader>
             <TableRow className="bg-muted/50 text-xs">
+              <TableHead className="w-8"></TableHead>
               <TableHead className="font-bold">Entry Date</TableHead>
               <TableHead className="font-bold">Invoice #</TableHead>
               <TableHead className="font-bold">Vendor Name</TableHead>
@@ -4648,10 +4721,20 @@ function PayableInvoiceSubModule() {
           </TableHeader>
           <TableBody>
             {allInvoices.length === 0 && (
-              <TableRow><TableCell colSpan={10} className="text-center py-8 text-muted-foreground text-xs">No Accounts Payable invoices found.</TableCell></TableRow>
+              <TableRow><TableCell colSpan={11} className="text-center py-8 text-muted-foreground text-xs">No Accounts Payable invoices found.</TableCell></TableRow>
             )}
             {allInvoices.map((row) => (
               <TableRow key={row.invoice_no} className="hover:bg-muted/30 text-xs">
+                <TableCell>
+                  {row.status !== "Paid" && (
+                    <input
+                      type="checkbox"
+                      aria-label={`Select invoice ${row.invoice_no} for payment`}
+                      checked={selectedPay.includes(row.invoice_no)}
+                      onChange={(e) => setSelectedPay((cur) => e.target.checked ? [...cur, row.invoice_no] : cur.filter((n) => n !== row.invoice_no))}
+                    />
+                  )}
+                </TableCell>
                 <TableCell className="font-mono text-muted-foreground">{formatDateDDMMYYYY(row.date)}</TableCell>
                 <TableCell className="font-mono font-bold text-primary">{row.invoice_no}</TableCell>
                 <TableCell className="font-semibold">{row.vendor}</TableCell>
@@ -5001,9 +5084,35 @@ function PayableInvoiceSubModule() {
                 </div>
                 <div className="flex justify-between text-sm font-bold border-t border-emerald-500/20 pt-1.5">
                   <span>Net Payable Settlement:</span>
-                  <span className="text-emerald-600 font-mono">QAR {Number(payTarget.amount || 0).toLocaleString()}</span>
+                  <span className="text-emerald-600 font-mono">
+                    QAR {(payTarget.multi
+                      ? (payTarget.items || []).reduce((sum: number, r: any) => sum + (Number(multiAmounts[r.invoice_no]) || 0), 0)
+                      : Number(payTarget.amount || 0)).toLocaleString()}
+                  </span>
                 </div>
               </div>
+              {payTarget.multi && (
+                <div className="border rounded-lg divide-y">
+                  <div className="grid grid-cols-3 gap-2 p-2 text-[11px] font-semibold text-muted-foreground">
+                    <span>Invoice</span><span className="text-right">Outstanding</span><span className="text-right">Pay now</span>
+                  </div>
+                  {(payTarget.items || []).map((r: any) => (
+                    <div key={r.invoice_no} className="grid grid-cols-3 gap-2 p-2 items-center">
+                      <span className="font-mono">{r.invoice_no}</span>
+                      <span className="text-right font-mono">{Number(r.amount || 0).toLocaleString()}</span>
+                      <Input
+                        type="number"
+                        min={0}
+                        step="0.01"
+                        className="h-7 text-right font-mono"
+                        value={multiAmounts[r.invoice_no] ?? ""}
+                        onChange={(e) => setMultiAmounts((cur) => ({ ...cur, [r.invoice_no]: e.target.value }))}
+                      />
+                    </div>
+                  ))}
+                  <p className="p-2 text-[10px] text-muted-foreground">Leave an invoice at 0 to skip it (for example one under dispute). A smaller amount leaves the invoice partly paid.</p>
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>

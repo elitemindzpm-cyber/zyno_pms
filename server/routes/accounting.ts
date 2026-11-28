@@ -910,6 +910,67 @@ router.post('/early-vacate-reversals', async (req: Request, res: Response) => {
   }
 });
 
+// Cancels (returns) a lease's unpresented cheques: the cancellation voucher (Dr 21400001 / Cr 12900001) and the
+// status change of every cheque happen in ONE transaction, so a posted voucher can never be left with cheques
+// still "In Hand", or the other way round. The cheques and amounts are taken from the register, not the browser.
+router.post('/cancel-lease-pdcs', async (req: Request, res: Response) => {
+  try {
+    const role = (req as any).user?.role as string | undefined;
+    if (!dbAllowed(role, 'fin_vouchers', 'write')) return res.status(403).json({ error: 'Not authorized to cancel cheques' });
+    const b = req.body || {};
+    const leaseRef = String(b.lease_id || '').trim();
+    const effective = ymd(b.effective_date) || new Date().toISOString().slice(0, 10);
+    const cancelAll = b.cancel_all !== false;
+    const reason = String(b.reason || 'Lease termination / checkout').slice(0, 200);
+    if (!leaseRef) return res.status(400).json({ error: 'lease_id is required' });
+    const leaseRows = await prisma.$queryRaw<any[]>`SELECT id, lease_number, customer_id, property_id, unit_id FROM leases WHERE id = ${leaseRef} OR lease_number = ${leaseRef} LIMIT 1`;
+    if (!leaseRows.length) return res.status(404).json({ error: 'Lease not found' });
+    const lease = leaseRows[0];
+    const userId = (req as any).user?.id ?? null;
+    const result = await txn(async (tx) => {
+      const cheques = await tx.$queryRaw<any[]>`
+        SELECT id, cheque_number, amount, cheque_date FROM fin_pdc_register
+         WHERE lease_id = ${lease.id} AND LOWER(status) IN ('in hand', 'received', 'in_hand')
+           AND (${cancelAll ? 1 : 0} = 1 OR cheque_date >= ${effective})
+         FOR UPDATE`;
+      if (!cheques.length) return { count: 0, total: 0, voucher_number: null };
+      const total = money2(cheques.reduce((s, c) => s + Number(c.amount || 0), 0));
+      let voucherNumber: string | null = null;
+      if (total > 0) {
+        const ids = cheques.map((c) => String(c.id)).sort();
+        const posted = await postManualVoucher({
+          voucher_date: new Date().toISOString().slice(0, 10),
+          voucher_type: 'Journal',
+          description: `PDC Cancellation (${cheques.length} cheque${cheques.length === 1 ? '' : 's'}) - lease ${lease.lease_number || lease.id}: ${reason}`,
+          lines: [
+            { account_code: '21400001', debit: total, credit: 0, description: 'PDC cancelled' },
+            { account_code: '12900001', debit: 0, credit: total, description: 'PDC cancelled' },
+          ],
+          property_id: lease.property_id,
+          unit_id: lease.unit_id,
+          customer_id: lease.customer_id,
+          tenant_id: lease.customer_id,
+          lease_id: lease.id,
+          source_type: 'PDC_CANCEL',
+          source_id: lease.id,
+          created_by: userId,
+          idempotency_key: `PDCCANCEL|${lease.id}|${ids.join(',')}`,
+        }, tx);
+        voucherNumber = posted?.[0]?.voucher_number ?? null;
+      }
+      for (const c of cheques) {
+        await tx.$executeRaw`UPDATE fin_pdc_register SET status = 'Cancelled' WHERE id = ${c.id}`;
+      }
+      return { count: cheques.length, total, voucher_number: voucherNumber };
+    });
+    res.status(201).json({ data: result });
+  } catch (e: any) {
+    if (e?.status) return res.status(e.status).json({ error: e.message });
+    console.error('[cancel-lease-pdcs]', e?.message);
+    res.status(500).json({ error: 'Failed to cancel the cheques' });
+  }
+});
+
 // Journal ledger: posted journal vouchers, shaped for the Journal Ledger page.
 router.get('/journals', async (req: Request, res: Response) => {
   try {

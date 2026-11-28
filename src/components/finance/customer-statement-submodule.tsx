@@ -1,5 +1,6 @@
 import { kvStore } from "@/lib/kv-store";
 import React, { useState, useMemo, useEffect } from "react";
+import { ageingApi } from "@/lib/api-client";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -759,6 +760,32 @@ export function CustomerStatementSubModule({
       }
     };
   }, [currentCustomer, receivableInvoices, customerLeases, customerPdcs, vouchers, fromDate, toDate, unitFilter, typeFilter]);
+
+  // Ageing comes from the server (same /api/accounting/ageing the AR/AP ageing report uses), by days past due
+  // date, so this statement and that report always agree. The browser-side bucketing above is only a fallback
+  // when the server cannot be reached.
+  const [serverAging, setServerAging] = useState<{ current: number; d30_60: number; d61_90: number; d90plus: number } | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    const name = String(currentCustomer?.name || "").trim().toLowerCase();
+    if (!name) { setServerAging(null); return; }
+    const load = () => ageingApi.get("ar").then((res) => {
+      if (cancelled) return;
+      const mine = (res.data || []).filter((p: any) => String(p.partyName || "").trim().toLowerCase() === name);
+      const sum = (k: string) => Math.round(mine.reduce((a: number, p: any) => a + Number(p[k] || 0), 0) * 100) / 100;
+      setServerAging({
+        current: Math.round((sum("current") + sum("days1To30")) * 100) / 100,
+        d30_60: sum("days31To60"),
+        d61_90: sum("days61To90"),
+        d90plus: sum("days90Plus"),
+      });
+    }).catch(() => { if (!cancelled) setServerAging(null); });
+    void load();
+    const onChange = () => { void load(); };
+    window.addEventListener("finance_vouchers_updated", onChange);
+    return () => { cancelled = true; window.removeEventListener("finance_vouchers_updated", onChange); };
+  }, [currentCustomer?.name]);
+  const agingView = serverAging ?? summary.aging;
 
   // ──────────────────────────────────────────────────────────────────────────
   // SECURITY DEPOSIT LEDGER & RECONCILIATION (CUSTOMER-WISE)
@@ -1638,25 +1665,25 @@ export function CustomerStatementSubModule({
                 <span className="font-bold text-[11px] text-foreground flex items-center gap-1.5">
                   <Clock className="h-3.5 w-3.5 text-primary" /> Receivables Aging Analysis
                 </span>
-                <span className="text-[10px] text-muted-foreground">Standard 30-day aging brackets</span>
+                <span className="text-[10px] text-muted-foreground">Days past due date (same as the ageing report)</span>
               </div>
 
               <div className="grid grid-cols-4 gap-2 text-center font-mono text-xs">
                 <div className="p-2 rounded bg-background border">
-                  <span className="text-[10px] text-muted-foreground block">Current (0-30d)</span>
-                  <span className="font-bold text-foreground">QAR {summary.aging.current.toLocaleString()}</span>
+                  <span className="text-[10px] text-muted-foreground block">Current / up to 30d overdue</span>
+                  <span className="font-bold text-foreground">QAR {agingView.current.toLocaleString()}</span>
                 </div>
                 <div className="p-2 rounded bg-background border">
                   <span className="text-[10px] text-amber-600 dark:text-amber-400 block">31-60 Days</span>
-                  <span className="font-bold text-amber-600 dark:text-amber-400">QAR {summary.aging.d30_60.toLocaleString()}</span>
+                  <span className="font-bold text-amber-600 dark:text-amber-400">QAR {agingView.d30_60.toLocaleString()}</span>
                 </div>
                 <div className="p-2 rounded bg-background border">
                   <span className="text-[10px] text-orange-600 dark:text-orange-400 block">61-90 Days</span>
-                  <span className="font-bold text-orange-600 dark:text-orange-400">QAR {summary.aging.d61_90.toLocaleString()}</span>
+                  <span className="font-bold text-orange-600 dark:text-orange-400">QAR {agingView.d61_90.toLocaleString()}</span>
                 </div>
                 <div className="p-2 rounded bg-background border">
                   <span className="text-[10px] text-rose-600 dark:text-rose-400 block">&gt; 90 Days</span>
-                  <span className="font-bold text-rose-600 dark:text-rose-400">QAR {summary.aging.d90plus.toLocaleString()}</span>
+                  <span className="font-bold text-rose-600 dark:text-rose-400">QAR {agingView.d90plus.toLocaleString()}</span>
                 </div>
               </div>
             </div>

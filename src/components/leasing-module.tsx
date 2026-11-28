@@ -25,6 +25,7 @@ import { useAppData } from "@/lib/app-data-context";
 import { buildUnitTenantCustomers } from "@/lib/unit-tenant-customers";
 import { fetchAssets, updateAsset, db, type Asset as DbAsset } from "@/lib/db";
 import { insertVoucherOnce } from "@/lib/finance/voucher-persist";
+import { request as apiRequest } from "@/lib/api-client";
 import { getTodayIST, getCurrentISTDate, formatDateDDMMYYYY } from "@/lib/date-utils";
 import { DYNAMIC_MASTERS_UPDATED_EVENT, DynamicMastersService } from "@/lib/dynamic-masters-service";
 import { fetchCompanyBankAccounts, type CompanyBankAccount } from "@/lib/finance/bankAccounts";
@@ -3146,6 +3147,19 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
       ...matchingVouchers.map((v: any) => v.cheque_number || v.receiptNo).filter(Boolean),
     ]);
 
+    // The server posts the cancellation voucher and changes every cheque's status in one transaction. It runs
+    // first, so a failure stops here and leaves the screen and the books unchanged.
+    let serverCancel: { count: number; total: number; voucher_number: string | null } | null = null;
+    try {
+      const resp: any = await apiRequest("/api/accounting/cancel-lease-pdcs", {
+        method: "POST",
+        body: JSON.stringify({ lease_id: String(lease.id), effective_date: effectiveDate, cancel_all: cancelAll, reason: reasonText }),
+      });
+      serverCancel = resp?.data ?? null;
+    } catch (e) {
+      throw new Error(`Cheques were not cancelled: ${e instanceof Error ? e.message : "server error"}`);
+    }
+
     if (pdcIds.size > 0) {
       setPdcs((items) =>
         items.map((item) => (pdcIds.has(item.id) ? { ...item, status: "cancelled" as PdcStatus } : item))
@@ -3199,66 +3213,6 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         unit_ref: lease.unit,
         tenant_name: lease.tenantName,
       });
-
-      void insertVoucherOnce({
-          voucher_number: cnlVoucherNo,
-          voucher_date: effectiveDate,
-          voucher_type: "JV",
-          description: `PDC Cancellation (${cancelledCount} cheques) — ${lease.tenantName} (${lease.unit}): ${reasonText}`,
-          total_amount: totalCancelledAmount,
-          status: "posted",
-          posted_at: new Date().toISOString(),
-        })
-        .then(({ data: vData, error: vErr }) => {
-          if (!vErr && vData?.id) {
-            void db.from("fin_voucher_lines").insert([
-              {
-                voucher_id: vData.id,
-                account_code: "21400001",
-                account_name: `Customer PDC Liability - ${lease.unit}`,
-                debit_amount: totalCancelledAmount,
-                credit_amount: 0,
-                description: `PDC Cancelled — ${lease.tenantName}`,
-              },
-              {
-                voucher_id: vData.id,
-                account_code: "12900001",
-                account_name: "Rent PDC In Hand",
-                debit_amount: 0,
-                credit_amount: totalCancelledAmount,
-                description: `PDC Cancelled — ${lease.tenantName}`,
-              },
-            ]);
-          }
-        });
-    }
-
-    // Update DB pdcs and fin_pdc_register tables
-    try {
-      const chqArr = Array.from(chequeNumbers);
-      if (chqArr.length > 0) {
-        await db
-          .from("pdcs")
-          .update({ status: "cancelled", status_pdc: "Cancelled" } as any)
-          .in("cheque_no", chqArr);
-        await db
-          .from("fin_pdc_register")
-          .update({ status: "Cancelled" } as any)
-          .in("cheque_number", chqArr);
-      }
-      if (lease.unit) {
-        let q = db
-          .from("pdcs")
-          .update({ status: "cancelled", status_pdc: "Cancelled" } as any)
-          .eq("unit_name", lease.unit)
-          .in("status_pdc", ["In Hand", "in hand", "Received", "received"]);
-        if (!cancelAll && effectiveDate) {
-          q = q.gte("cheque_date", effectiveDate);
-        }
-        await q;
-      }
-    } catch (dbErr) {
-      console.warn("[cancelLeasePdcs] DB PDC status update notice:", dbErr);
     }
 
     if (options?.terminateLease) {
