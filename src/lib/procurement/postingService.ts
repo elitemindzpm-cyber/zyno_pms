@@ -104,11 +104,11 @@ export async function postPayableInvoice(invoiceId: string) {
   const tax = Number(invoice.tax_amount || 0);
   const total = Number(invoice.total_amount || subtotal + tax - Number(invoice.discount_amount || 0));
 
-  // Resolve: 21610001 GR/IR (debit), 21000001 AP (credit), 12500001 Input VAT (optional debit)
+  // Resolve: 21610001 GR/IR (debit), 21000001 AP (credit), 13100001 Input VAT (optional debit)
   const [grir, ap, inputVat] = await Promise.all([
     resolveGlOnlyAccount('21610'),
     resolveGlOnlyAccount('21000'),
-    resolveGlOnlyAccount('12500'),
+    resolveGlOnlyAccount('13100001'),
   ]);
 
   const lines: AccountingEventLine[] = [

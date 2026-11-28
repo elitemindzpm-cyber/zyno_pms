@@ -905,7 +905,7 @@ export function invalidateRules(transactionType: TransactionType): void {
  *
  * Use cases:
  *  - GL-level postings that don't need a unit SL (e.g. 22100001 Trade Payables,
- *    21600001 Output VAT, 12600001 Input VAT, 42200001 Gain on Disposal).
+ *    21700001 Output VAT, 13100001 Input VAT, 42200001 Gain on Disposal).
  *  - Caller does not want to fan-out to a unit-specific SL.
  */
 export async function resolveGlOnlyAccount(

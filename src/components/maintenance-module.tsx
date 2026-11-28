@@ -5701,7 +5701,7 @@ export function MaintenanceModule({ role }: MaintenanceModuleProps) {
                       {generatedReceipt.taxAmount > 0 && (
                         <TableRow className="text-xs">
                           <TableCell className="py-1.5 px-2.5">
-                            <div className="font-mono font-semibold text-foreground">21300001 - VAT / Input Tax Recoverable</div>
+                            <div className="font-mono font-semibold text-foreground">13100001 - Input VAT (Recoverable)</div>
                           </TableCell>
                           <TableCell className="py-1.5 px-2.5 font-mono text-[11px] text-muted-foreground">
                             {generatedReceipt.costCenter}

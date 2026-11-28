@@ -307,7 +307,7 @@ export function ProformaInvoiceDialog({
                   {taxAmount > 0 && (
                     <div className="flex justify-between p-2 rounded bg-background border">
                       <span className="text-rose-600 dark:text-rose-400 font-semibold">
-                        Dr. 12800001 — Input VAT / Recoverable Tax
+                        Dr. 13100001 — Input VAT (Recoverable)
                       </span>
                       <span className="font-bold">QAR {taxAmount.toLocaleString('en-US', { minimumFractionDigits: 2 })}</span>
                     </div>
