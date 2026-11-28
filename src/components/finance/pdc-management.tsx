@@ -1,3 +1,4 @@
+import { findUnitByName } from "@/lib/unit-lookup";
 import { kvStore } from "@/lib/kv-store";
 import { useState, useEffect, useMemo } from "react";
 import { useSearch } from "@tanstack/react-router";
@@ -1520,7 +1521,7 @@ export function PdcManagement() {
       receiptNo: `REC-PDC-${chqNo}`,
       acknowledgementNo: `ACK-${chqNo}`,
       date: pdc.cheque_date || new Date().toISOString().split("T")[0],
-      tenantName: pdc.tenant_name && pdc.tenant_name !== "—" ? pdc.tenant_name : "Valued Tenant",
+      tenantName: pdc.tenant_name && pdc.tenant_name !== "—" ? pdc.tenant_name : "—",
       propertyName: pdc.property_name && pdc.property_name !== "—" ? pdc.property_name : "Property",
       unitRef: pdc.unit_ref && pdc.unit_ref !== "—" ? pdc.unit_ref : "Unit",
       leaseStartDate: pdc.lease_start || pdc.cheque_date,
@@ -1647,7 +1648,7 @@ export function PdcManagement() {
         receiptNo: receiptNum,
         acknowledgementNo: `ACK-CASH-${chqNo}-${installmentNum}`,
         date: receiptDate,
-        tenantName: pdc.tenant_name && pdc.tenant_name !== "—" ? pdc.tenant_name : "Valued Tenant",
+        tenantName: pdc.tenant_name && pdc.tenant_name !== "—" ? pdc.tenant_name : "—",
         propertyName: pdc.property_name && pdc.property_name !== "—" ? pdc.property_name : "Property",
         unitRef: pdc.unit_ref && pdc.unit_ref !== "—" ? pdc.unit_ref : "Unit",
         leaseStartDate: pdc.lease_start || receiptDate,
@@ -1906,7 +1907,7 @@ export function PdcManagement() {
         receiptNo: receiptNum,
         acknowledgementNo: `ACK-TRF-${chqNo}-${installmentNum}`,
         date: receiptDate,
-        tenantName: pdc.tenant_name && pdc.tenant_name !== "—" ? pdc.tenant_name : "Valued Tenant",
+        tenantName: pdc.tenant_name && pdc.tenant_name !== "—" ? pdc.tenant_name : "—",
         propertyName: pdc.property_name && pdc.property_name !== "—" ? pdc.property_name : "Property",
         unitRef: pdc.unit_ref && pdc.unit_ref !== "—" ? pdc.unit_ref : "Unit",
         leaseStartDate: pdc.lease_start || receiptDate,
@@ -2093,7 +2094,7 @@ export function PdcManagement() {
         setReceiptData({
           receiptNo: `OR-${Date.now().toString().slice(-6)}`,
           date: isDirectTransfer ? directBankTransferDate : new Date().toISOString().split("T")[0],
-          tenantName: lease.tenantName || "Valued Tenant",
+          tenantName: lease.tenantName || "—",
           propertyName: lease.property || "Property",
           unitRef: lease.unit || "Unit",
           leaseStartDate: lease.startDate || new Date().toISOString().split("T")[0],
@@ -2148,9 +2149,9 @@ export function PdcManagement() {
       }
     }
 
-    const prop = lease?.property || "Old Salata - Residence No:23";
+    const prop = lease?.property || "—";
     const unit = lease?.unit || "Unit";
-    const tenant = lease?.tenantName || "Valued Tenant";
+    const tenant = lease?.tenantName || "—";
 
     setAddPdcLoading(true);
     try {
@@ -2163,7 +2164,7 @@ export function PdcManagement() {
       const [{ data: leaseRow }, { data: unitRow }, { data: finBankAccounts }] = await Promise.all([
         leaseLookup,
         unit && unit !== "Unit"
-          ? db.from("units").select("id, property_id").or(`unit_ref.eq.${unit},unit_code.eq.${unit},unit_name.eq.${unit}`).limit(1).maybeSingle()
+          ? findUnitByName(unit, { propertyName: prop }).then((u) => ({ data: u, error: null } as any))
           : Promise.resolve({ data: null, error: null } as any),
         db.from("fin_bank_accounts").select("id, account_title, bank_id"),
       ]);
@@ -3505,7 +3506,7 @@ export function PdcManagement() {
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground font-medium">Customer / Tenant:</span>
-                      <span className="font-semibold text-foreground">{cashPdc.tenant_name || "Valued Tenant"}</span>
+                      <span className="font-semibold text-foreground">{cashPdc.tenant_name || "—"}</span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-muted-foreground font-medium">Property &amp; Unit:</span>
@@ -3879,7 +3880,7 @@ export function PdcManagement() {
                         <span className="text-[10px] font-medium text-muted-foreground flex items-center gap-1">
                           <User className="h-3 w-3 text-muted-foreground" /> Customer / Tenant
                         </span>
-                        <p className="font-semibold text-foreground truncate">{bankTransferPdc.tenant_name || "Valued Tenant"}</p>
+                        <p className="font-semibold text-foreground truncate">{bankTransferPdc.tenant_name || "—"}</p>
                       </div>
                       <div className="space-y-0.5">
                         <span className="text-[10px] font-medium text-muted-foreground flex items-center gap-1">

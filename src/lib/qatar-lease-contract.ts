@@ -57,6 +57,8 @@ export interface LeaseContractData {
   waterNumber?: string;
   zoneEn?: string;
   zoneAr?: string;
+  streetNameEn?: string;
+  streetNameAr?: string;
   streetNumber?: string;
   buildingNumber?: string;
   propertyAddressEn?: string;
@@ -76,6 +78,13 @@ export interface LeaseContractData {
   securityDepositMonthsEn?: string;
   securityDepositMonthsAr?: string;
   securityDepositAmount?: number;
+  depositReceivedAmount?: number;
+  landlordSignNameEn?: string;
+  landlordSignNameAr?: string;
+  tenantSignNameEn?: string;
+  tenantSignNameAr?: string;
+  rentPaymentGracePeriodDaysEn?: string;
+  postDatedChequeCountEn?: string;
   // Terms agreed on the lease record (printed as "Additional Terms" when present)
   penaltiesEn?: string;
   maintenanceResponsibilityEn?: string;
@@ -405,6 +414,39 @@ function toArabicTenantName(raw: string): string {
   return s;
 }
 
+
+const EN_COUNT_WORDS = ["zero","one","two","three","four","five","six","seven","eight","nine","ten","eleven","twelve","thirteen","fourteen","fifteen","sixteen","seventeen","eighteen","nineteen","twenty"];
+const AR_COUNT_WORDS = ["صفر","واحد","اثنان","ثلاثة","أربعة","خمسة","ستة","سبعة","ثمانية","تسعة","عشرة","أحد عشر","اثنا عشر","ثلاثة عشر","أربعة عشر","خمسة عشر","ستة عشر","سبعة عشر","ثمانية عشر","تسعة عشر","عشرون"];
+function countWordsEn(n: number): string { return EN_COUNT_WORDS[n] ?? String(n); }
+function countWordsAr(n: number): string { return AR_COUNT_WORDS[n] ?? String(n); }
+
+const EN_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+const AR_MONTHS = ["يناير","فبراير","مارس","أبريل","مايو","يونيو","يوليو","أغسطس","سبتمبر","أكتوبر","نوفمبر","ديسمبر"];
+function ordinalSuffix(day: number): string {
+  if (day % 100 >= 11 && day % 100 <= 13) return "th";
+  return ({ 1: "st", 2: "nd", 3: "rd" } as Record<number, string>)[day % 10] || "th";
+}
+// "04th January 2026" (the day's ending is raised, as printed on the contract)
+export function longDateEnHtml(dateStr: string): string {
+  const p = parseDateParts(dateStr);
+  if (!p) return dateStr || "—";
+  return `${String(p.day).padStart(2, "0")}<sup>${ordinalSuffix(p.day)}</sup> ${EN_MONTHS[p.month]} ${p.year}`;
+}
+// "04 يناير 2026"
+export function longDateAr(dateStr: string): string {
+  const p = parseDateParts(dateStr);
+  if (!p) return dateStr || "—";
+  return `${String(p.day).padStart(2, "0")} ${AR_MONTHS[p.month]} ${p.year}`;
+}
+// "Mr. RONALDO GILLES VILLAFRANCA": the title keeps its case, the name is capitalised
+function upperNameKeepTitle(name: string): string {
+  const m = String(name || "").trim().match(/^(Mr\.|Ms\.|Mrs\.|Dr\.|Eng\.|M\/s\.?)\s+(.*)$/i);
+  return m ? `${m[1]} ${m[2].toUpperCase()}` : String(name || "—").toUpperCase();
+}
+function titleCaseName(name: string): string {
+  return String(name || "—").trim().toLowerCase().replace(/(^|\s)(\S)/g, (_m, a, b) => a + b.toUpperCase()).replace(/^(Mr|Ms|Mrs|Dr|Eng)\.?\s/, (m0, t) => `${t}. `);
+}
+
 /**
  * Builds full dynamic contract data matching the specific tenant and property
  */
@@ -438,6 +480,8 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
   const pCode = raw.propertyCode || raw.properties?.property_code || cleanPropertyCode(propName);
   const uCode = raw.unitCode || cleanUnitCode(rawUnit);
   const unique4 = generate4DigitCode(`${tenantName}-${raw.id || sDate}-${unitNum}`);
+  // The date the contract is made (signed), not the lease start date.
+  const contractDateSrc = raw.contractDate || raw.contract_date || raw.agreement_date || raw.created_at || sDate;
   const standardContractNum = `${pCode}-${uCode}-${unique4}`;
 
   // Unit attributes — resolve from explicit fields first, then fall back gracefully
@@ -450,14 +494,18 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
     ? bedroomsToEnglish(bedroomsNum)
     : "—"; // not recorded on the unit
 
-  const furnishing = raw.furnishingStatusEn || raw.furnishing || raw.furnishing_type || "—";
-  const furnishingAr = furnishing === "—" ? "—" : furnishing.toLowerCase().includes("fully") ? "مفروش بالكامل" : furnishing.toLowerCase().includes("unfurnished") ? "غير مفروش" : "نصف مفروش";
+  const furnishingRaw = String(raw.furnishingStatusEn || raw.furnishing || raw.furnishing_type || "—").trim();
+  const fl = furnishingRaw.toLowerCase();
+  const furnishing = furnishingRaw === "—" ? "—" : fl.includes("unfurnished") || fl.includes("un-furnished") ? "Unfurnished" : fl.includes("semi") || fl.includes("partly") ? "Semi-Furnished" : "Furnished";
+  const furnishingAr = furnishing === "—" ? "—" : furnishing === "Unfurnished" ? "غير مفروشة" : furnishing === "Semi-Furnished" ? "نصف مفروشة" : "مفروشة";
 
   // Meters — use explicit passed values first, then unit-level fields
   const elecMeter = raw.electricityNumber || raw.electricity_meter_no || raw.kahramaa_electricity_no || raw.elecMeter || "—";
   const waterMeter = raw.waterNumber || raw.water_meter_no || raw.kahramaa_water_no || raw.waterMeter || "—";
-  const zone = raw.zoneEn || raw.area_zone || (propName.includes("WAKRA") ? "Al Wakara-90" : propName.includes("SALATA") ? "Old Salata-18" : propName);
-  const zoneAr = raw.zoneAr || (zone.includes("Wakara") ? "الوكرة 90" : zone.includes("Salata") ? "السلطة القديمة 18" : zone);
+  const zone = raw.zoneEn || raw.area_zone || raw.zone || propName;
+  const zoneAr = raw.zoneAr || raw.area_zone_ar || zone;
+  const streetName = raw.streetNameEn || raw.street_name || raw.streetName || "";
+  const streetNameAr = raw.streetNameAr || raw.street_name_ar || streetName;
   const street = raw.streetNumber || raw.street_building_name || raw.street_no || "—";
   const building = raw.buildingNumber || raw.building_no || raw.property_code || "—";
 
@@ -481,14 +529,18 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
 
   return {
     contractNumber: raw.contractNumber && String(raw.contractNumber).trim() ? String(raw.contractNumber).trim() : standardContractNum,
-    contractDate: raw.contractDate || formatEnglishDate(sDate),
-    contractDateAr: raw.contractDateAr || formatArabicDate(sDate),
+    contractDate: formatEnglishDate(contractDateSrc),
+    contractDateAr: formatArabicDate(contractDateSrc),
 
-    landlordNameEn: raw.landlordNameEn || "M/s. AL AMEEN REAL ESTATE",
-    landlordNameAr: raw.landlordNameAr || "السادة/ الأمين للعقارات",
+    landlordNameEn: raw.landlordNameEn || "M/s. AL AMEEN ENTERPRISES",
+    landlordNameAr: raw.landlordNameAr || "السادة/ الأمين للمشاريع",
     landlordPoBox: raw.landlordPoBox || "5213",
     landlordAddressEn: raw.landlordAddressEn || "Doha, Qatar",
     landlordAddressAr: raw.landlordAddressAr || "الدوحة- قطر",
+    landlordSignNameEn: raw.landlordSignNameEn || String(raw.landlordNameEn || "Al Ameen Enterprises").replace(/^M\/s\.?\s*/i, "").replace(/\w\S*/g, (w: string) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()),
+    landlordSignNameAr: raw.landlordSignNameAr || raw.landlordNameAr || "السادة/ الأمين للمشاريع",
+    tenantSignNameEn: raw.tenantSignNameEn || titleCaseName(tenantName),
+    tenantSignNameAr: raw.tenantSignNameAr || raw.tenantNameAr || `السيد/ ${toArabicTenantName(tenantName)}`,
     landlordPhone: raw.landlordPhone || "+974 4400 0000",
     landlordEmail: raw.landlordEmail || "leasing@property.qa",
 
@@ -504,7 +556,7 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
     occupancyConditionAr: raw.occupancyConditionAr || "يجب ان يكون الساكن عائلة واحدة فقط",
 
     bedroomCount: bedrooms,
-    bedroomCountAr: bedroomsNum !== null ? bedroomsToArabic(bedroomsNum) : String(bedrooms).replace("Three", "3").replace("Two", "2").replace("One", "1"),
+    bedroomCountAr: bedroomsNum !== null ? String(bedroomsNum) : "—",
     furnishingStatusEn: furnishing,
     furnishingStatusAr: furnishingAr,
     propertyUnitNumber: unitNum,
@@ -512,6 +564,8 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
     waterNumber: waterMeter,
     zoneEn: zone,
     zoneAr: zoneAr,
+    streetNameEn: streetName,
+    streetNameAr: streetNameAr,
     streetNumber: street,
     buildingNumber: building,
     propertyCode: pCode,
@@ -524,10 +578,12 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
     monthlyRentWordsAr: raw.monthlyRentWordsAr || numberToArabicWords(rent),
     currentChequeCount: 1,
     postDatedChequeCount: postDatedCount,
-    postDatedChequeCountAr: postDatedCount === 11 ? "أحد عشر" : String(postDatedCount),
+    postDatedChequeCountAr: countWordsAr(postDatedCount),
+    postDatedChequeCountEn: countWordsEn(postDatedCount),
     securityDepositMonthsEn: raw.securityDepositMonthsEn || depositMonthsEn,
     securityDepositMonthsAr: raw.securityDepositMonthsAr || depositMonthsAr,
     securityDepositAmount: deposit,
+    depositReceivedAmount: Number(raw.depositReceivedAmount ?? raw.total_deposit_received ?? (deposit + utilDeposit)),
     electricityWaterDeposit: utilDeposit,
     electricityWaterDepositWordsEn: raw.electricityWaterDepositWordsEn || numberToEnglishWords(utilDeposit),
     electricityWaterDepositWordsAr: raw.electricityWaterDepositWordsAr || numberToArabicWords(utilDeposit),
@@ -545,7 +601,8 @@ export function buildContractData(raw: Partial<LeaseContractData> | any): LeaseC
     inventoryReferenceEn: raw.inventoryReferenceEn || "inventory list",
     inventoryReferenceAr: raw.inventoryReferenceAr || "قائمة الجرد",
     rentPaymentGracePeriodDays: graceDays,
-    rentPaymentGracePeriodDaysAr: raw.rentPaymentGracePeriodDaysAr || numberToArabicWords(graceDays),
+    rentPaymentGracePeriodDaysAr: raw.rentPaymentGracePeriodDaysAr || countWordsAr(graceDays),
+    rentPaymentGracePeriodDaysEn: raw.rentPaymentGracePeriodDaysEn || countWordsEn(graceDays),
     landlordTerminationNoticePeriodEn: raw.landlordTerminationNoticePeriodEn || "two weeks",
     landlordTerminationNoticePeriodAr: raw.landlordTerminationNoticePeriodAr || "أسبوعين",
     governingLawEn: raw.governingLawEn || "QATAR, LAW NO.4 for the year 2008 amendments concerning of premises and building",
@@ -923,38 +980,38 @@ export function generateBilingualLeaseContractHtml(inputData: Partial<LeaseContr
           <!-- Preamble -->
           <tr class="preamble-box">
             <td class="col-en">
-              <div><strong>Contract is made on ${d.contractDate}</strong></div>
+              <div>Contract is made on ${longDateEnHtml(d.contractDate || "")}</div>
               <div>This contract has been made between :</div>
-              <div><strong>${d.landlordNameEn}</strong>, P.O.Box: ${d.landlordPoBox}, ${d.landlordAddressEn} (herein after called <strong>LANDLORD</strong>) and</div>
-              <div><strong>${d.tenantNameEn}</strong>, Qatar ID No. <strong>${d.tenantQid}</strong>, P.O. Box: ${d.tenantPoBox}, ${d.tenantAddressEn}, Mob : <strong>${d.tenantMobile}</strong> (herein after called <strong>TENANT</strong>).</div>
-              <div class="note-text">(Note: - ${d.occupancyConditionEn})</div>
+              <div><strong>${d.landlordNameEn}</strong>, P.O.Box: ${d.landlordPoBox}, ${d.landlordAddressEn} (herein after called LANDLORD) and</div>
+              <div><strong>${upperNameKeepTitle(d.tenantNameEn || "")}</strong>, ID No: ${d.tenantQid}${d.tenantPoBox && d.tenantPoBox !== "—" ? `, P.O. Box: ${d.tenantPoBox}` : ""}, ${d.tenantAddressEn}, Mob : ${d.tenantMobile}.<br/>(herein after called TENANT).</div>
+              <div class="note-text"><strong>(Note: - ${d.occupancyConditionEn})</strong></div>
             </td>
             <td class="col-ar">
-              <div><strong>ابرمت هذا العقد بتاريخ ${d.contractDateAr}م</strong></div>
+              <div>ابرمت هذا العقد بتاريخ ${longDateAr(d.contractDate || "")} م</div>
               <div>تم ابرام هذا العقد بين كلا من:</div>
-              <div><strong>${d.landlordNameAr}</strong> ص .ب رقم: ${d.landlordPoBox}، ${d.landlordAddressAr} (ويشار اليها فيما يلي بعبارة <strong>المؤجر</strong>) و</div>
-              <div><strong>${d.tenantNameAr}</strong>, بطاقة الشخصية رقم <strong>${d.tenantQid}</strong> ص.ب رقم ${d.tenantPoBox} ${d.tenantAddressAr} ، رقم الجوال <strong>${d.tenantMobile}</strong> (ويشار اليها فيما يلي بعبارة <strong>المستأجر</strong>).</div>
-              <div class="note-text">(ملاحظة : ${d.occupancyConditionAr})</div>
+              <div><strong>${d.landlordNameAr}</strong> ص .ب رقم: ${d.landlordPoBox} ${d.landlordAddressAr} (ويشار اليها فيما يلي بعبارة المؤجر) و</div>
+              <div><strong>${d.tenantNameAr}</strong> بطاقة الشخصية رقم: ${d.tenantQid}${d.tenantPoBox && d.tenantPoBox !== "—" ? ` ص.ب رقم ${d.tenantPoBox}` : ""} ${d.tenantAddressAr} ، رقم الجوال ${d.tenantMobile} (ويشار اليها فيما يلي بعبارة المستأجر)</div>
+              <div class="note-text"><strong>(ملاحظة : ${d.occupancyConditionAr})</strong></div>
             </td>
           </tr>
 
-          <!-- Clause 1 (Flat details, meter numbers, and address in bold) -->
+          <!-- Clause 1 (Flat details, meter numbers, and address) -->
           <tr>
             <td class="col-en">
-              <span class="clause-num">1)</span> The LANDLORD hereby leases to the TENANT the premises <strong>${d.bedroomCount || ""} Bedrooms ${d.furnishingStatusEn || ""} Flat No: ${d.propertyUnitNumber || ""}</strong>, Electricity No. <strong>${d.electricityNumber || ""}</strong>, Water No. <strong>${d.waterNumber || ""}</strong> located at <strong>${d.zoneEn || ""}, Street No. ${d.streetNumber || ""} and Building No.${d.buildingNumber || ""}</strong>.
+              <span class="clause-num">1)</span>The LANDLORD hereby leases to the TENANT the premises <strong>${d.bedroomCount || ""} Bedrooms ${d.furnishingStatusEn || ""} Flat No: ${d.propertyUnitNumber || ""}, Electricity No. ${d.electricityNumber || ""}</strong>, Water No. ${d.waterNumber || ""} located at <strong>${d.zoneEn || ""}, ${d.streetNameEn ? `Street Name ${d.streetNameEn} No. ${d.streetNumber || ""}` : `Street No. ${d.streetNumber || ""}`} and Building No.${d.buildingNumber || ""}.</strong>
             </td>
             <td class="col-ar">
-              <span class="clause-num">1)</span> اجر المؤجر إلى المستأجر <strong>شقة ${d.furnishingStatusAr || ""} عدد(${d.bedroomCountAr || d.bedroomCount || ""}) غرف النوم</strong>. رقم الشقة: <strong>${d.propertyUnitNumber || ""}</strong>  رقم الكهرباء: <strong>${d.electricityNumber || ""}</strong> رقم الماء: <strong>${d.waterNumber || ""}</strong> يقع في <strong>${d.zoneAr || ""} شارع رقم ${d.streetNumber || ""} ومبنى رقم ${d.buildingNumber || ""}</strong>.
+              اجر المؤجر إلى المستأجر شقة ${d.furnishingStatusAr || ""} عدد(<strong>${d.bedroomCountAr || ""}</strong>) غرف النوم. <strong>رقم الشقة: ${d.propertyUnitNumber || ""} رقم الكهرباء: ${d.electricityNumber || ""}</strong> رقم الماء: ${d.waterNumber || ""} يقع في <strong>${d.zoneAr || ""} ، ${d.streetNameAr ? `اسم الشارع ${d.streetNameAr} رقم ${d.streetNumber || ""}` : `شارع رقم ${d.streetNumber || ""}`} ومبنى رقم ${d.buildingNumber || ""}.</strong>
             </td>
           </tr>
 
           <!-- Clause 2 -->
           <tr>
             <td class="col-en">
-              <span class="clause-num">2)</span> The rent shall be <strong>${d.currency} ${d.monthlyRent}/- (${d.monthlyRentWordsEn})</strong> per month payable, every month in advance (i.e. one current dated Cheque and remaining <strong>${d.postDatedChequeCount}</strong> postdated cheques).${d.hasRentFree ? `<br/><span style="color: #0f172a; font-weight: 600;">[13-Month Term with 1-Month Rent-Free Concession: 12 cheques collected covering 12 paid months. ${d.rentFreePosition === 'LAST_MONTH' ? 'Month 13 is granted as a Rent-Free Concession.' : 'Month 1 is granted as a Rent-Free Concession.'}]</span>` : ''}
+              <span class="clause-num">2)</span> The rent shall be <strong>Qrs.${d.monthlyRent}/-</strong> (${d.monthlyRentWordsEn}) per month payable, every month in advance (i.e. one current dated Cheque and remaining ${d.postDatedChequeCountEn} postdated cheques).${d.hasRentFree ? `<br/><span style="color: #0f172a; font-weight: 600;">[13-Month Term with 1-Month Rent-Free Concession: 12 cheques collected covering 12 paid months. ${d.rentFreePosition === 'LAST_MONTH' ? 'Month 13 is granted as a Rent-Free Concession.' : 'Month 1 is granted as a Rent-Free Concession.'}]</span>` : ''}
             </td>
             <td class="col-ar">
-              <span class="clause-num">2)</span> يكون مبلغ الإيجار <strong>${d.monthlyRent} ${d.currencyAr} (${d.monthlyRentWordsAr})</strong> شهريا ويسدد مقدما لكل شهر (وذلك شيك واحد تاريخ مؤرخة و<strong>${d.postDatedChequeCountAr}</strong> شيكات بتاريخ مؤجلة للدفع).${d.hasRentFree ? `<br/><span style="color: #0f172a; font-weight: 600;">[عقد لمدة 13 شهراً مع إعفاء شهر واحد: يتم تحصيل 12 شيكاً تغطي الأشهر المدفوعة. ${d.rentFreePosition === 'LAST_MONTH' ? 'الشهر 13 يعتبر شهر إعفاء مجاني.' : 'الشهر الأول يعتبر شهر إعفاء مجاني.'}]</span>` : ''}
+              يكون مبلغ الإيجار <strong>${d.monthlyRent} ريال قطري</strong> (${d.monthlyRentWordsAr}) شهريا ويسدد مقدما لكل شهر (وذلك شيك واحد تاريخ مؤرخة و${d.postDatedChequeCountAr} شيكات بتاريخ مؤجلة للدفع).${d.hasRentFree ? `<br/><span style="color: #0f172a; font-weight: 600;">[عقد لمدة 13 شهراً مع إعفاء شهر واحد: يتم تحصيل 12 شيكاً تغطي الأشهر المدفوعة. ${d.rentFreePosition === 'LAST_MONTH' ? 'الشهر 13 يعتبر شهر إعفاء مجاني.' : 'الشهر الأول يعتبر شهر إعفاء مجاني.'}]</span>` : ''}
             </td>
           </tr>
 
@@ -964,65 +1021,35 @@ export function generateBilingualLeaseContractHtml(inputData: Partial<LeaseContr
               <span class="clause-num">3)</span> Landlord agrees to cash the postdated cheques on or after the due date on the cheques.
             </td>
             <td class="col-ar">
-              <span class="clause-num">3)</span> وافق المؤجر على صرف الشيكات المؤجلة في نفس التاريخ أو بعد تاريخ استحقاق الشيكات.
+              وافق المؤجر على صرف الشيكات المؤجلة في نفس التاريخ أو بعد تاريخ استحقاق الشيكات.
             </td>
           </tr>
 
           <!-- Clause 4 -->
           <tr>
             <td class="col-en">
-              <span class="clause-num">4)</span> In addition, <strong>${d.securityDepositMonthsEn}</strong> rent for security deposit and <strong>${d.currency} ${d.electricityWaterDeposit}/-</strong> for Electricity / water deposit to be paid by the Tenant, which are refundable at the end of Tenancy.
+              <span class="clause-num">4)</span> In addition, ${d.securityDepositMonthsEn} rent for security deposit${(d.electricityWaterDeposit || 0) > 0 ? ` and Qr ${d.electricityWaterDeposit}/- for Electricity / water deposit` : ""} to be paid by the Tenant, which are refundable at the end of Tenancy${(d.depositReceivedAmount || 0) > 0 ? ` (received Qr ${d.depositReceivedAmount}/- as deposit)` : ""}.
             </td>
             <td class="col-ar">
-              <span class="clause-num">4)</span> بالإضافة الى مبلغ إيجار <strong>${d.securityDepositMonthsAr}</strong> كضمان و<strong>${d.electricityWaterDeposit} ${d.currencyAr}</strong> كتأمين للكهرباء/المياه التي يتم دفعها على المستأجر. وهذا المبلغ قابلة للاسترداد في نهاية فترة الايجار.
+              بالإضافة الى مبلغ إيجار ${d.securityDepositMonthsAr} كضمان${(d.electricityWaterDeposit || 0) > 0 ? ` و ${d.electricityWaterDeposit} ريال قطري كتأمين للكهرباء/المياه` : ""} التي يتم دفعها على المستأجر. وهذا المبلغ قابلة للاسترداد في نهاية فترة الايجار${(d.depositReceivedAmount || 0) > 0 ? `(تم استلام ${d.depositReceivedAmount} ريال قطري كوديعة)` : ""}.
             </td>
           </tr>
 
           <!-- Clause 5 -->
           <tr>
             <td class="col-en">
-              <span class="clause-num">5)</span> The lease terms shall be <strong>${d.leaseDurationWordsEn}</strong>, beginning <strong>${d.leaseStartDate}</strong> and ending <strong>${d.leaseEndDate}</strong> (<strong>${d.leaseMonthsCount}</strong> months irrevocable), renewable on the basis of mutual agreement of both parties.
+              <span class="clause-num">5)</span> The lease terms shall be <strong>${d.leaseDurationWordsEn}</strong>, beginning <strong>${longDateEnHtml(d.leaseStartDate || "")}</strong> and ending <strong>${longDateEnHtml(d.leaseEndDate || "")}</strong> (${d.leaseMonthsCount} months irrevocable), renewable on the basis of mutual agreement of both parties.
             </td>
             <td class="col-ar">
-              <span class="clause-num">5)</span> تكون مدة الايجار <strong>${d.leaseDurationWordsAr}</strong>، تبدأ من تاريخ <strong>${d.leaseStartDateAr}</strong> وحتى <strong>${d.leaseEndDateAr}</strong> (<strong>${d.leaseMonthsCount}</strong> شهور غير قابل للإلغاء) وقابلة للتجديد على موافقة كلى الطرفين.
+              تكون مدة الايجار <strong>${d.leaseDurationWordsAr}</strong>، تبدأ من تاريخ <strong>${longDateAr(d.leaseStartDate || "")}</strong> وحتى <strong>${longDateAr(d.leaseEndDate || "")}</strong> (${d.leaseMonthsCount}شهور غير قابل للإلغاء) وقابلة للتجديد على موافقة كلى الطرفين.
             </td>
           </tr>
 
-          <!-- Clause 6 -->
-          <tr>
-            <td class="col-en">
-              <span class="clause-num">6)</span> This contract shall be renewable on the same terms for further period unless either party informs the other in writing by email of their desire to terminate the contract at <strong>${d.renewalNoticePeriodDays}</strong> days prior to the expiry of this contract.
-            </td>
-            <td class="col-ar">
-              <span class="clause-num">6)</span> يكون هذا العقد قابلاً للتجديد بنفس الشروط لفترة أخرى ما لم يقم أحد الطرفين بإبلاغ الطرف الآخر كتابيًا عبر البريد الإلكتروني برغبته في إنهاء العقد قبل <strong>${d.renewalNoticePeriodDaysAr}</strong> يومًا من انتهاء هذا العقد.
-            </td>
-          </tr>
-
-          <!-- Clause 7 -->
-          <tr>
-            <td class="col-en">
-              <span class="clause-num">7)</span> The TENANT to acknowledges having inspected the premises on the signing the contract after having inspected the premises and equipment with accessories as per the <strong>${d.inventoryReferenceEn}</strong>.
-            </td>
-            <td class="col-ar">
-              <span class="clause-num">7)</span> يقر المستأجر بأنه عاين العقار عند توقيع العقد، بعد ان قام بتفتيش العقار والمعدات ذات اللوازم وفقا ل<strong>${d.inventoryReferenceAr}</strong>.
-            </td>
-          </tr>
-
-          <!-- Clause 8 -->
-          <tr>
-            <td class="col-en">
-              <span class="clause-num">8)</span> The TENANT undertake to keep the leased premises in good condition and to use as agreed for the purpose for which it is leased and abstain from placing therein inflammable materials or anything which is likely to endanger the safety of leased premises.
-            </td>
-            <td class="col-ar">
-              <span class="clause-num">8)</span> يتعهد المستأجر بالاحتفاظ العين المؤجرة في حالة جيدة واستخدامه على النحو المتفق عليه للغرض الذي يتم تأجيره والامتناع عن وضع مواد قابلة للاشتعال فيه او اي شيء من شأنه أن يعرض للخطر.
-            </td>
-          </tr>
         </table>
       </div>
     </div>
     <div class="page-footer">
-      <div>Al Ameen Real Estate • Tenancy Contract Ref: ${d.contractNumber}</div>
-      <div>Page 1 of 3 • الصفحة 1 من 3</div>
+      <div><strong>1</strong> | Page</div>
     </div>
   </div>
 
@@ -1038,13 +1065,42 @@ export function generateBilingualLeaseContractHtml(inputData: Partial<LeaseContr
 
       <div class="page-body-padded">
         <table class="contract-table">
+          <!-- Clause 6 -->
+          <tr>
+            <td class="col-en">
+              <span class="clause-num">6)</span> This contract shall be renewable on the same terms for further period unless either party informs the other in writing by email of their desire to terminate the contract at ${d.renewalNoticePeriodDays} days prior to the expiry of this contract.
+            </td>
+            <td class="col-ar">
+              يكون هذا العقد قابلاً للتجديد بنفس الشروط لفترة أخرى ما لم يقم أحد الطرفين بإبلاغ الطرف الآخر كتابيًا عبر البريد الإلكتروني برغبته في إنهاء العقد قبل ${d.renewalNoticePeriodDaysAr} يومًا من انتهاء هذا العقد.
+            </td>
+          </tr>
+
+          <!-- Clause 7 -->
+          <tr>
+            <td class="col-en">
+              <span class="clause-num">7)</span> The TENANT to acknowledges having inspected the premises on the signing the contract after having inspected the premises and equipment with accessories as per the <strong>${d.inventoryReferenceEn}</strong>.
+            </td>
+            <td class="col-ar">
+              يقر المستأجر بأنه عاين العقار عند توقيع العقد، بعد ان قام بتفتيش العقار والمعدات ذات اللوازم وفقا ل<strong>${d.inventoryReferenceAr}</strong>.
+            </td>
+          </tr>
+
+          <!-- Clause 8 -->
+          <tr>
+            <td class="col-en">
+              <span class="clause-num">8)</span> The TENANT undertake to keep the leased premises in good condition and to use as agreed for the purpose for which it is leased and abstain from placing therein inflammable materials or anything which is likely to endanger the safety of leased premises.
+            </td>
+            <td class="col-ar">
+              يتعهد المستأجر بالاحتفاظ العين المؤجرة في حالة جيدة واستخدامه على النحو المتفق عليه للغرض الذي يتم تأجيره والامتناع عن وضع مواد قابلة للاشتعال فيه او اي شيء من شأنه أن يعرض للخطر.
+            </td>
+          </tr>
           <!-- Clause 9 -->
           <tr>
             <td class="col-en">
               <span class="clause-num">9)</span> The TENANT shall not make any changes to leased premises or effect any substantial modification whether through demolition, construction, removal of barriers or other construction work except pursuant to a written authorization from the LANDLORD.
             </td>
             <td class="col-ar">
-              <span class="clause-num">9)</span> يتعهد المستأجر بعدم إحداث تغيير في العين المؤجرة او اي تعديلات جوهرية سواء عن طريق الهدم او إزالة البناء او الحواجز لأعمال البناء إلا بموجب إذن خطي من المؤجر.
+              يتعهد المستأجر بعدم إحداث تغيير في العين المؤجرة او اي تعديلات جوهرية سواء عن طريق الهدم او إزالة البناء او الحواجز لأعمال البناء إلا بموجب إذن خطي من المؤجر.
             </td>
           </tr>
 
@@ -1054,7 +1110,7 @@ export function generateBilingualLeaseContractHtml(inputData: Partial<LeaseContr
               <span class="clause-num">10)</span> The TENANT may effect at its own cost improvements in the leased premises such as decoration and refurbishment works, install equipment to bring water, electricity, telephone and the like, provided that such works and installation shall be in accordance with standard procedure and usage.
             </td>
             <td class="col-ar">
-              <span class="clause-num">10)</span> ويجوز للمستأجر أن يجري تحسينات على تكلفته الخاصة في العين المؤجرة مثل أعمال الديكور والتجديد ، وتركيب معدات لجلب المياه والكهرباء والهاتف وما شابه ذلك ، شريطة أن تكون هذه الأعمال والتركيب متفقة مع الإجراء والاستخدام المعياريين.
+              ويجوز للمستأجر أن يجري تحسينات على تكلفته الخاصة في العين المؤجرة مثل أعمال الديكور والتجديد ، وتركيب معدات لجلب المياه والكهرباء والهاتف وما شابه ذلك ، شريطة أن تكون هذه الأعمال والتركيب متفقة مع الإجراء والاستخدام المعياريين.
             </td>
           </tr>
 
@@ -1064,7 +1120,7 @@ export function generateBilingualLeaseContractHtml(inputData: Partial<LeaseContr
               <span class="clause-num">11)</span> To use the Property with customary care and to repair any damage caused by the TENANT or his guests, (reasonable wear and tear accepted) to the property including all fixtures, fittings and decorations. At the expiry of the Lease to return the premises in good state of repair and condition to the satisfaction of the LANDLORD.
             </td>
             <td class="col-ar">
-              <span class="clause-num">11)</span> استخدام عين المؤجرة مع الرعاية العرفية وإصلاح أي ضرر يسببه المستأجر أو ضيوفه ، (البلى المعقول مقبولة) للممتلكات بما في ذلك كل التجهيزات والتجهيزات والأوسمة. وعند انتهاء مدة عقد الإيجار لإعادة العين في حالة جيدة من الإصلاح والحالة إلى ما يرضي المالك.
+              استخدام عين المؤجرة مع الرعاية العرفية وإصلاح أي ضرر يسببه المستأجر أو ضيوفه ، (البلى المعقول مقبولة) للممتلكات بما في ذلك كل التجهيزات والتجهيزات والأوسمة. وعند انتهاء مدة عقد الإيجار لإعادة العين في حالة جيدة من الإصلاح والحالة إلى ما يرضي المالك.
             </td>
           </tr>
 
@@ -1074,7 +1130,7 @@ export function generateBilingualLeaseContractHtml(inputData: Partial<LeaseContr
               <span class="clause-num">12)</span> Electricity, water or any other consumption charges to be paid by the Tenant.
             </td>
             <td class="col-ar">
-              <span class="clause-num">12)</span> يلتزم المستأجر بسداد جميع المستحقات من فواتير الكهرباء والمياه المستخدمات الأخرى.
+              يلتزم المستأجر بسداد جميع المستحقات من فواتير الكهرباء والمياه المستخدمات الأخرى.
             </td>
           </tr>
 
@@ -1084,21 +1140,40 @@ export function generateBilingualLeaseContractHtml(inputData: Partial<LeaseContr
               <span class="clause-num">13)</span> The LANDLORD undertake to carry out all maintenance of the Property throughout the term of this LEASE other than damages caused by the gross negligence or willful misconduct of the TENANT, its personnel occupying the property or its guests.
             </td>
             <td class="col-ar">
-              <span class="clause-num">13)</span> يلتزم المؤجر بالقيام بالصيانة للعين المؤجرة طوال مدة عقد الإيجار غير الأضرار الناجمة عن الإهمال الجسيم أو سوء السلوك المتعمد من جانب المستأجر أو موظفيه الذين يسكنون في العقار أو ضيوفه.
+              يلتزم المؤجر بالقيام بالصيانة للعين المؤجرة طوال مدة عقد الإيجار غير الأضرار الناجمة عن الإهمال الجسيم أو سوء السلوك المتعمد من جانب المستأجر أو موظفيه الذين يسكنون في العقار أو ضيوفه.
             </td>
           </tr>
 
+        </table>
+      </div>
+    </div>
+    <div class="page-footer">
+      <div><strong>2</strong> | Page</div>
+    </div>
+  </div>
+
+  <!-- ==================== PAGE 3 ==================== -->
+  <div class="page-sheet">
+    <div class="page-content">
+      <div class="page-header-secondary-wrapper">
+        <div class="page-header-secondary">
+          <img src="${AL_AMEEN_PAGE2_PLUS_HEADER_BASE64}" alt="Al Ameen Logo" />
+        </div>
+      </div>
+
+      <div class="page-body-padded">
+        <table class="contract-table">
           <!-- Clause 14 -->
           <tr>
             <td class="col-en">
               <span class="clause-num">14)</span> The Landlord may terminate the contract even prior to its expiry date, and ask the Tenant to vacate the Subject of Tenancy immediately for any of the following reasons:<br/>
-              <div style="padding-left: 10px; margin-top: 3px;">a) If the Tenant fails to pay the due rental within <strong>${d.rentPaymentGracePeriodDays}</strong> days from the due date.</div>
+              <div style="padding-left: 10px; margin-top: 3px;">a) If the Tenant fails to pay the due rental within ${d.rentPaymentGracePeriodDaysEn} days from the due date.</div>
               <div style="padding-left: 10px; margin-top: 2px;">b) If the Tenant uses or allows the use of the Subject of Tenancy in a manner contrary to the reasonable terms and conditions of the Tenancy Contract and which contravenes public order or morals or prejudices the interest of the Landlord.</div>
               <div style="margin-top: 4px;">In such event of termination resulting from the reasons specified in (a) and (b) above, the Landlord shall have the right to take any necessary step against the Tenant which will include legal action to recover all dues and claim rental till the end date of the Tenancy Contract and also any compensation resulting from any such violation.</div>
             </td>
             <td class="col-ar">
-              <span class="clause-num">14)</span> يحق للمؤجر إنهاء العقد قبل تاريخ انتهاء الصلاحية، ويطلب من المستأجر إخلاء موضوع الإيجار على الفور لأي من الأسباب التالية:-<br/>
-              <div style="padding-right: 10px; margin-top: 3px;">ا) إذا فشل المستأجر في دفع الإيجار المستحق خلال <strong>${d.rentPaymentGracePeriodDaysAr}</strong> أيام من تاريخ الاستحقاق.</div>
+              يحق للمؤجر إنهاء العقد قبل تاريخ انتهاء الصلاحية، ويطلب من المستأجر إخلاء موضوع الإيجار على الفور لأي من الأسباب التالية:-<br/>
+              <div style="padding-right: 10px; margin-top: 3px;">ا) إذا فشل المستأجر في دفع الإيجار المستحق خلال ${d.rentPaymentGracePeriodDaysAr} أيام من تاريخ الاستحقاق.</div>
               <div style="padding-right: 10px; margin-top: 2px;">ب) إذا كان المستأجر يستخدم او يسمح باستخدام موضوع الإيجار بطريقة تتعارض مع الشروط والأحكام المعقولة لعقد الإيجار والتي تتعارض مع النظام العام او الآداب او تخل بمصلحة المؤجر.</div>
               <div style="margin-top: 4px;">وفي مثل هذه الحالة لإنهاء العقد عن الأسباب المذكورة في (أ) و (ب) أعلاه ، يكون للمؤجر الحق في اتخاذ اي اجراء الضرورية ضد المستأجر والتي ستتضمن إجراء قانونيا لاسترداد جميع المستحقات والمطالبة بالتأجير حتى نهاية تاريخ عقد الإيجار وأي تعويض نشأ عن اي من هذا المخالفة.</div>
             </td>
@@ -1107,14 +1182,14 @@ export function generateBilingualLeaseContractHtml(inputData: Partial<LeaseContr
           <!-- Clause 15 -->
           <tr>
             <td class="col-en">
-              <span class="clause-num">15)</span> The LANDLORD shall have the right to terminate this LEASE and take possession of the property and eject the tenant giving <strong>${d.landlordTerminationNoticePeriodEn}</strong> notice in writing if:<br/>
+              <span class="clause-num">15)</span> The LANDLORD shall have the right to terminate this LEASE and take possession of the property and eject the tenant giving ${d.landlordTerminationNoticePeriodEn} notice in writing if:<br/>
               <div style="padding-left: 10px; margin-top: 2px;">a. Assigns the leased premises to a third party without obtaining prior written approval from the LANDLORD.</div>
               <div style="padding-left: 10px; margin-top: 2px;">b. The TENANT is in breach of any obligations within this LEASE.</div>
               <div style="padding-left: 10px; margin-top: 2px;">c. In case of any cheque return from bank.</div>
               <div style="padding-left: 10px; margin-top: 2px;">d. In case of any other circumstances that are deemed force majeure by the LANDLORD.</div>
             </td>
             <td class="col-ar">
-              <span class="clause-num">15)</span> ويحق للمؤجر إنهاء هذا الإيجار والاستيلاء على الممتلكات وإخلاء المستأجر بإعطائه إخطاراً خطياً مدته <strong>${d.landlordTerminationNoticePeriodAr}</strong> إذا:<br/>
+              ويحق للمؤجر إنهاء هذا الإيجار والاستيلاء على الممتلكات وإخلاء المستأجر بإعطائه إخطاراً خطياً مدته <strong>${d.landlordTerminationNoticePeriodAr}</strong> إذا:<br/>
               <div style="padding-right: 10px; margin-top: 2px;">أ. التنازل عن العين المؤجرة لطرف ثالث دون الحصول على موافقة خطية مسبقة من المؤجر.</div>
               <div style="padding-right: 10px; margin-top: 2px;">ب. إخلال المستأجر بأي من الالتزامات الواردة في هذا العقد.</div>
               <div style="padding-right: 10px; margin-top: 2px;">ج. في حال رجوع أي شيك من البنك.</div>
@@ -1128,7 +1203,7 @@ export function generateBilingualLeaseContractHtml(inputData: Partial<LeaseContr
               <span class="clause-num">16)</span> Any condition not appearing in this contract shall be governed by the <strong>${d.governingLawEn}</strong>.
             </td>
             <td class="col-ar">
-              <span class="clause-num">16)</span> ويخضع أي شروط غير وارد في هذا العقد <strong>${d.governingLawAr}</strong>.
+              ويخضع أي شروط غير وارد في هذا العقد <strong>${d.governingLawAr}</strong>.
             </td>
           </tr>
 
@@ -1138,19 +1213,18 @@ export function generateBilingualLeaseContractHtml(inputData: Partial<LeaseContr
               <span class="clause-num">17)</span> The <strong>${d.jurisdictionEn}</strong> shall have jurisdiction to deal with and decide any dispute or difference arising from the implementation or interpretation of this contract.
             </td>
             <td class="col-ar">
-              <span class="clause-num">17)</span> تختص <strong>${d.jurisdictionAr}</strong> حصريا بالفصل في أي نزاع ناشئ عن تطبيق وتنفيذ هذا العقد.
+              تختص <strong>${d.jurisdictionAr}</strong> حصريا بالفصل في أي نزاع ناشئ عن تطبيق وتنفيذ هذا العقد.
             </td>
           </tr>
         </table>
       </div>
     </div>
     <div class="page-footer">
-      <div>Al Ameen Real Estate • Tenancy Contract Ref: ${d.contractNumber}</div>
-      <div>Page 2 of 3 • الصفحة 2 من 3</div>
+      <div><strong>3</strong> | Page</div>
     </div>
   </div>
 
-  <!-- ==================== PAGE 3 ==================== -->
+  <!-- ==================== PAGE 4 ==================== -->
   <div class="page-sheet">
     <div class="page-content">
       <!-- Page 2+ Header (Image 2 on the right) -->
@@ -1169,7 +1243,7 @@ export function generateBilingualLeaseContractHtml(inputData: Partial<LeaseContr
               <span class="clause-num">18)</span> The Tenant undertakes to observe and comply in full with the applicable Qatari Laws and Regulations related to the safety and security of the Leased Property. The Tenant shall be the sole responsible party, irrespective of the causes whatsoever, for any damage or theft of his personal belongings or of any asset within the boundaries of the leased Property premises due to any trespassing, intruder break –in activities, or fire incident (God forbid) that might be experienced by the Tenant during the timeline of this Tenancy Agreement.
             </td>
             <td class="col-ar">
-              <span class="clause-num">18)</span> ويتعهد المستأجر بالتقيد بالقوانين والأنظمة القطرية المتعلقة بسلامة وأمن العين المؤجرة والامتثال الكامل لها. يكون المستأجر هو الطرف المسؤول الوحيد ، بغض النظر عن الأسباب أيا كانت ، عن أي ضرر أو سرقة لممتلكاته الشخصية أو لأية أصول تقع داخل حدود العين المؤجرة للممتلكات بسبب أي تعدي على الممتلكات أو اقتحام أو وقوع حوادث حريق. (لا سمح الله) والتي قد يمر بها المستأجر خلال الجدول الزمني هذه الاتفاقية الإيجار.
+              ويتعهد المستأجر بالتقيد بالقوانين والأنظمة القطرية المتعلقة بسلامة وأمن العين المؤجرة والامتثال الكامل لها. يكون المستأجر هو الطرف المسؤول الوحيد ، بغض النظر عن الأسباب أيا كانت ، عن أي ضرر أو سرقة لممتلكاته الشخصية أو لأية أصول تقع داخل حدود العين المؤجرة للممتلكات بسبب أي تعدي على الممتلكات أو اقتحام أو وقوع حوادث حريق. (لا سمح الله) والتي قد يمر بها المستأجر خلال الجدول الزمني هذه الاتفاقية الإيجار.
             </td>
           </tr>
 
@@ -1182,10 +1256,10 @@ export function generateBilingualLeaseContractHtml(inputData: Partial<LeaseContr
               <span class="clause-num">22)</span> ${d.petPolicyEn}
             </td>
             <td class="col-ar">
-              <span class="clause-num">19)</span> يتعهدالمستأجر باحترام حق الجار ، ويحترم التقاليد المحلية للمساكن الخاصة والمباني العامة والأماكن المحيطة بالعين المؤجرة.<br/>
-              <span class="clause-num">20)</span> إذا كان المستأجر ينوي إخلاء العقار المؤجر قبل انتهاء مدة الإيجار التعاقدي ، فيجب على المستأجر تقديم إشعار مدته <strong>${d.earlyVacationNoticePeriodAr}</strong> ودفع الإيجار الكامل لذلك الشهر بالإضافة إلى ما يعادل إيجار <strong>${d.earlyVacationCompensationAr}</strong> إضافي كتعويض. إذا غادر المستأجر البلد "نهائياً" ، فلن يتم تحصيل أي تعويض عليه ، بشرط أن يقدم لنا نسخة من تصريح الإقامة الملغى أو خطاب الإنهاء من الشركة.${d.hasRentFree ? `<br/><div style="margin-top: 4px; padding: 4px 6px; background-color: #f8fafc; border-right: 2px solid #0f172a; direction: rtl;"><strong>بند استرداد الإعفاء (الشرط الفاسخ للامتياز):</strong> إن إعفاء شهر الإيجار الممنوح في ${d.rentFreePosition === 'LAST_MONTH' ? 'الشهر 13 (مكافأة إتمام العقد)' : 'الشهر الأول (حافز الانتقال)'} مشروط بوفاء المستأجر بكامل مدة العقد (${d.leaseMonthsCount || 13} شهراً). في حال الإنهاء المبكر أو الإخلاء قبل انتهاء المدة، يعتبر الإعفاء لاغياً ويستحق إيجار شهر الإعفاء (${d.monthlyRent} ${d.currencyAr}) فوراً ويخصم من التأمين أو يُحصّل قانونياً.</div>` : ''}<br/>
-              <span class="clause-num">21)</span> يجب على المستأجر دفع جميع الرسوم الأخرى، بما في ذلك الغرامات والعقوبات البلدية، إذا كان هناك انتهاك لقانون النظافة العامة رقم 18.${d.hasRentFree ? ` <strong>فواتير كهرماء والخدمات:</strong> رسوم الكهرباء والماء والتبريد والبلدية ليست مجانية ويلتزم المستأجر بسدادها من اليوم الأول وطوال فترة الإعفاء.` : ''}<br/>
-              <span class="clause-num">22)</span> ${d.petPolicyAr}
+              يتعهدالمستأجر باحترام حق الجار ، ويحترم التقاليد المحلية للمساكن الخاصة والمباني العامة والأماكن المحيطة بالعين المؤجرة.<br/>
+              إذا كان المستأجر ينوي إخلاء العقار المؤجر قبل انتهاء مدة الإيجار التعاقدي ، فيجب على المستأجر تقديم إشعار مدته <strong>${d.earlyVacationNoticePeriodAr}</strong> ودفع الإيجار الكامل لذلك الشهر بالإضافة إلى ما يعادل إيجار <strong>${d.earlyVacationCompensationAr}</strong> إضافي كتعويض. إذا غادر المستأجر البلد "نهائياً" ، فلن يتم تحصيل أي تعويض عليه ، بشرط أن يقدم لنا نسخة من تصريح الإقامة الملغى أو خطاب الإنهاء من الشركة.${d.hasRentFree ? `<br/><div style="margin-top: 4px; padding: 4px 6px; background-color: #f8fafc; border-right: 2px solid #0f172a; direction: rtl;"><strong>بند استرداد الإعفاء (الشرط الفاسخ للامتياز):</strong> إن إعفاء شهر الإيجار الممنوح في ${d.rentFreePosition === 'LAST_MONTH' ? 'الشهر 13 (مكافأة إتمام العقد)' : 'الشهر الأول (حافز الانتقال)'} مشروط بوفاء المستأجر بكامل مدة العقد (${d.leaseMonthsCount || 13} شهراً). في حال الإنهاء المبكر أو الإخلاء قبل انتهاء المدة، يعتبر الإعفاء لاغياً ويستحق إيجار شهر الإعفاء (${d.monthlyRent} ${d.currencyAr}) فوراً ويخصم من التأمين أو يُحصّل قانونياً.</div>` : ''}<br/>
+              يجب على المستأجر دفع جميع الرسوم الأخرى، بما في ذلك الغرامات والعقوبات البلدية، إذا كان هناك انتهاك لقانون النظافة العامة رقم 18.${d.hasRentFree ? ` <strong>فواتير كهرماء والخدمات:</strong> رسوم الكهرباء والماء والتبريد والبلدية ليست مجانية ويلتزم المستأجر بسدادها من اليوم الأول وطوال فترة الإعفاء.` : ''}<br/>
+              ${d.petPolicyAr}
             </td>
           </tr>
 
@@ -1218,57 +1292,30 @@ export function generateBilingualLeaseContractHtml(inputData: Partial<LeaseContr
         </table>
 
         <!-- Signatures Block -->
-        <table class="signatures-block">
+        <table class="signatures-block" style="margin-top: 22px;">
           <tr>
-            <td style="width: 50%; padding-right: 6px;">
-              <div class="sig-box">
-                <div class="sig-header">
-                  <span>NAME OF LANDLORD</span>
-                  <span style="font-family: 'Cairo', sans-serif;">(اسم المؤجر)</span>
-                </div>
-                <div style="font-size: 8.5pt; line-height: 1.4;">
-                  <div><strong>${d.landlordNameEn}</strong></div>
-                  <div>P.O.Box: ${d.landlordPoBox}, ${d.landlordAddressEn}</div>
-                  <div style="font-family: 'Cairo', sans-serif; direction: rtl; margin-top: 2px;"><strong>${d.landlordNameAr}</strong></div>
-                  <div style="font-family: 'Cairo', sans-serif; direction: rtl;">ص .ب رقم: ${d.landlordPoBox} ، ${d.landlordAddressAr}</div>
-                </div>
-                <div style="margin-top: 8px; border-top: 1px dashed #64748b; padding-top: 3px; display: flex; justify-content: space-between; font-size: 7.8pt; color: #475569;">
-                  <span>Signature / التوقيع: ________________</span>
-                  <span>Date: ${d.landlordSignatureDate}</span>
-                </div>
-                <div class="stamp-box">
-                  Company Stamp / ختم الشركة
-                </div>
-              </div>
+            <td style="width: 50%; padding-right: 10px;">
+              <div style="font-weight: 700; font-size: 10pt;">NAME OF LANDLORD</div>
+              <div style="font-family: 'Cairo', sans-serif; direction: rtl; text-align: left; font-weight: 700;">(اسم المؤجر)</div>
+              <div style="margin-top: 4px;">${d.landlordSignNameEn}</div>
+              <div>P.O.Box: ${d.landlordPoBox}, ${(d.landlordAddressEn || "").replace(/,\s*/g, "-")}</div>
+              <div style="font-family: 'Cairo', sans-serif; direction: rtl; text-align: left;">${d.landlordSignNameAr}</div>
+              <div style="font-family: 'Cairo', sans-serif; direction: rtl; text-align: left;">ص .ب رقم: ${d.landlordPoBox} ، ${d.landlordAddressAr}</div>
             </td>
-            <td style="width: 50%; padding-left: 6px;">
-              <div class="sig-box">
-                <div class="sig-header">
-                  <span>NAME OF TENANT</span>
-                  <span style="font-family: 'Cairo', sans-serif;">(اسم المستأجر)</span>
-                </div>
-                <div style="font-size: 8.5pt; line-height: 1.4;">
-                  <div><strong>${d.tenantNameEn}</strong></div>
-                  <div>P.O.Box: ${d.tenantPoBox}, ${d.tenantAddressEn}</div>
-                  <div style="font-family: 'Cairo', sans-serif; direction: rtl; margin-top: 2px;"><strong>${d.tenantNameAr}</strong></div>
-                  <div style="font-family: 'Cairo', sans-serif; direction: rtl;">ص .ب رقم: ${d.tenantPoBox} ، ${d.tenantAddressAr}</div>
-                </div>
-                <div style="margin-top: 8px; border-top: 1px dashed #64748b; padding-top: 3px; display: flex; justify-content: space-between; font-size: 7.8pt; color: #475569;">
-                  <span>Signature / التوقيع: ________________</span>
-                  <span>Date: ${d.tenantSignatureDate}</span>
-                </div>
-                <div class="stamp-box" style="border: none; color: #0f172a; font-size: 8.2pt; text-transform: none; justify-content: flex-start;">
-                  Qatar ID No. / رقم البطاقة الشخصية: <strong>${d.tenantQid}</strong>
-                </div>
-              </div>
+            <td style="width: 50%; padding-left: 10px; text-align: right;">
+              <div style="font-weight: 700; font-size: 10pt;">NAME OF TENANT</div>
+              <div style="font-family: 'Cairo', sans-serif; direction: rtl; font-weight: 700;">(اسم المستأجر)</div>
+              <div style="margin-top: 4px;">${d.tenantSignNameEn}</div>
+              <div>${d.tenantPoBox && d.tenantPoBox !== "—" ? `P.O.Box: ${d.tenantPoBox}, ` : ""}${(d.tenantAddressEn || "").replace(/\s*–\s*/g, "-")}</div>
+              <div style="font-family: 'Cairo', sans-serif; direction: rtl;">${d.tenantSignNameAr}</div>
+              <div style="font-family: 'Cairo', sans-serif; direction: rtl;">${d.tenantPoBox && d.tenantPoBox !== "—" ? `ص .ب رقم :${d.tenantPoBox} ، ` : ""}${d.tenantAddressAr}</div>
             </td>
           </tr>
         </table>
       </div>
     </div>
     <div class="page-footer">
-      <div>Al Ameen Real Estate • Tenancy Contract Ref: ${d.contractNumber}</div>
-      <div>Page 3 of 3 • الصفحة 3 من 3</div>
+      <div><strong>4</strong> | Page</div>
     </div>
   </div>
 </body>
