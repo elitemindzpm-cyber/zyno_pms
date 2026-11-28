@@ -1860,7 +1860,7 @@ router.get('/vendors/ledgers', async (req: Request, res: Response) => {
         orderBy: { account_code: 'asc' },
       }),
       prisma.$queryRaw<Array<{ account_code: string; net_credit: any }>>`
-        SELECT l.account_code, COALESCE(SUM(l.credit - l.debit), 0) AS net_credit
+        SELECT l.account_code, COALESCE(SUM(l.credit_amount - l.debit_amount), 0) AS net_credit
         FROM fin_voucher_lines l
         INNER JOIN fin_vouchers v ON v.id = l.voucher_id
         WHERE LOWER(v.status) = 'posted' AND l.account_code LIKE '21000%'
@@ -2012,7 +2012,7 @@ router.get('/vendor-open-items', async (req: Request, res: Response) => {
         },
       }),
       prisma.$queryRaw<Array<{ net_credit: any }>>`
-        SELECT COALESCE(SUM(l.credit - l.debit), 0) AS net_credit
+        SELECT COALESCE(SUM(l.credit_amount - l.debit_amount), 0) AS net_credit
         FROM fin_voucher_lines l
         INNER JOIN fin_vouchers v ON v.id = l.voucher_id
         WHERE LOWER(v.status) = 'posted' AND l.account_code = ${ledgerCode}`,
@@ -2095,7 +2095,9 @@ router.post('/vendor-payment', async (req: Request, res: Response) => {
         vendorName,
       ].filter(Boolean)));
 
-      // Load current invoice balances inside the locked transaction
+      // Load current invoice balances inside the locked transaction.
+      // An invoice is either a procurement invoice (proc_ap_invoices) or a manual finance AP invoice (fin_ap_invoices).
+      const sourceById = new Map<string, 'proc' | 'fin'>();
       const allocInputs = [];
       for (const raw of rawAllocations) {
         const payAmt = money2(raw?.amount);
@@ -2109,16 +2111,31 @@ router.post('/vendor-payment', async (req: Request, res: Response) => {
           FROM proc_ap_invoices
           WHERE ${invId ? Prisma.sql`id = ${invId}` : Prisma.sql`invoice_number = ${invNo}`}
           LIMIT 1 FOR UPDATE`;
-        if (!invRows.length) {
+        let inv: any = invRows[0];
+        let source: 'proc' | 'fin' = 'proc';
+        if (!inv) {
+          const finRows = await tx.$queryRaw<any[]>`
+            SELECT id, invoice_no AS invoice_number, NULL AS grn_number, NULL AS po_number, amount AS total_amount, amount, paid_amount, status
+            FROM fin_ap_invoices
+            WHERE ${invId ? Prisma.sql`id = ${invId}` : Prisma.sql`invoice_no = ${invNo}`}
+            LIMIT 1 FOR UPDATE`;
+          if (finRows.length) { inv = finRows[0]; source = 'fin'; }
+        }
+        if (!inv) {
           throw Object.assign(new Error(`Invoice ${invNo || invId} not found`), { status: 404 });
         }
-        const inv = invRows[0];
+        sourceById.set(String(inv.id), source);
         const totalAmt = money2(inv.total_amount ?? inv.amount ?? 0);
-        const priorRows = await tx.$queryRaw<Array<{ paid: any }>>`
-          SELECT COALESCE(SUM(amount_paid), 0) AS paid
-          FROM fin_payment_receipts
-          WHERE invoice_number = ${String(inv.invoice_number)}`;
-        const alreadyPaid = inv.status === 'PAID' ? totalAmt : money2(priorRows[0]?.paid ?? 0);
+        let alreadyPaid: number;
+        if (source === 'fin') {
+          alreadyPaid = String(inv.status).toLowerCase() === 'paid' ? totalAmt : money2(inv.paid_amount ?? 0);
+        } else {
+          const priorRows = await tx.$queryRaw<Array<{ paid: any }>>`
+            SELECT COALESCE(SUM(amount_paid), 0) AS paid
+            FROM fin_payment_receipts
+            WHERE invoice_number = ${String(inv.invoice_number)}`;
+          alreadyPaid = inv.status === 'PAID' ? totalAmt : money2(priorRows[0]?.paid ?? 0);
+        }
         const remaining = Math.max(0, money2(totalAmt - alreadyPaid));
         allocInputs.push({
           invoice_id: String(inv.id),
@@ -2191,10 +2208,17 @@ router.post('/vendor-payment', async (req: Request, res: Response) => {
             },
           });
           if (alloc.invoice_id) {
-            await tx.proc_ap_invoices.update({
-              where: { id: alloc.invoice_id },
-              data: { status: alloc.new_status },
-            });
+            if (sourceById.get(alloc.invoice_id) === 'fin') {
+              await tx.$executeRaw`UPDATE fin_ap_invoices
+                SET paid_amount = paid_amount + ${alloc.amount},
+                    status = ${alloc.new_status === 'PAID' ? 'Paid' : 'Partial'}
+                WHERE id = ${alloc.invoice_id}`;
+            } else {
+              await tx.proc_ap_invoices.update({
+                where: { id: alloc.invoice_id },
+                data: { status: alloc.new_status },
+              });
+            }
           }
         }
       } else {
@@ -2220,7 +2244,7 @@ router.post('/vendor-payment', async (req: Request, res: Response) => {
 
       // If supplier's net payable balance is now settled to 0 (or below 0.01), close all open invoices/GRNs for this supplier.
       const balRows = await tx.$queryRaw<Array<{ net_credit: any }>>`
-        SELECT COALESCE(SUM(l.credit - l.debit), 0) AS net_credit
+        SELECT COALESCE(SUM(l.credit_amount - l.debit_amount), 0) AS net_credit
         FROM fin_voucher_lines l
         INNER JOIN fin_vouchers v ON v.id = l.voucher_id
         WHERE LOWER(v.status) = 'posted' AND l.account_code = ${vendorLedger.code}`;

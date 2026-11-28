@@ -186,13 +186,34 @@ export async function ensureVendorLedgerTx(
     nextCode = nextVendorLedgerCode(allCodes.map((r) => r.code));
   }
 
+  // The chart hierarchy this supplier ledger belongs to (class -> group -> type). coa_sl needs all of it.
+  const cls = glRow.class_id ? await tx.coa_classes.findUnique({ where: { id: glRow.class_id } }) : null;
+  const grp = cls?.group_id ? await tx.coa_groups.findUnique({ where: { id: cls.group_id } }) : null;
+  const typ = grp?.type_id ? await tx.coa_types.findUnique({ where: { id: grp.type_id } }) : null;
+  // A sibling supplier/payables ledger supplies the posting settings (normal balance, flags).
+  const sibling = slCandidates[0] ?? null;
+
   if (!existingSl) {
+    if (!cls || !grp || !typ) {
+      throw Object.assign(new Error('The supplier payables chart hierarchy (class, group, type) is incomplete'), { status: 409 });
+    }
     await tx.coa_sl.create({
       data: {
         code: nextCode,
         name: effectiveName,
         gl_id: glRow.id,
         gl_code: glRow.code,
+        class_id: cls.id,
+        class_code: cls.code,
+        group_id: grp.id,
+        group_code: grp.code,
+        type_id: typ.id,
+        type_code: typ.code,
+        normal_balance: sibling?.normal_balance || 'Credit',
+        is_control_account: false,
+        is_posting_account: true,
+        allows_direct_posting: true,
+        requires_vendor: true,
         is_active: true,
       },
     });
@@ -200,18 +221,11 @@ export async function ensureVendorLedgerTx(
 
   const existingErp = await tx.erp_chart_of_accounts.findUnique({ where: { code: nextCode } });
   if (!existingErp) {
-    const cls = glRow.class_id ? await tx.coa_classes.findUnique({ where: { id: glRow.class_id } }) : null;
-    const grp = cls?.group_id ? await tx.coa_groups.findUnique({ where: { id: cls.group_id } }) : null;
-    const typ = grp?.type_id ? await tx.coa_types.findUnique({ where: { id: grp.type_id } }) : null;
     await tx.erp_chart_of_accounts.create({
       data: {
         code: nextCode,
         name: effectiveName,
         type: typ?.name || 'Liabilities',
-        parent_code: glRow.code,
-        level: 5,
-        is_posting: true,
-        is_active: true,
         type_code: typ?.code || '2',
         type_name: typ?.name || 'Liabilities',
         group_code: grp?.code || '21',
