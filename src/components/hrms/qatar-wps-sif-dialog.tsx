@@ -93,7 +93,7 @@ export function QatarWpsSifDialog({
         }
       }
 
-      const rawQid = emp.qid || emp.national_id || emp.qatar_id || emp.id_number || "";
+      const rawQid = emp.qid || emp.qid_passport_no || emp.national_id || emp.qatar_id || emp.id_number || "";
       const rawIban = emp.iban || emp.bank_account_number || "";
 
       // Formatting only. A missing or malformed QID/IBAN is reported by the server validation and blocks

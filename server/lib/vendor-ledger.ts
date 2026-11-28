@@ -122,6 +122,9 @@ export async function ensureVendorLedgerTx(
   tx: any,
   args: { vendorId?: string | number | null; vendorName?: string | null },
 ): Promise<{ code: string; name: string; vendorId: number | null }> {
+  // Two requests for a brand-new supplier (a double click, or two users) must not both create its ledger code.
+  // Locking the parent GL row makes the second one wait, then find the ledger the first one created.
+  await tx.$queryRaw`SELECT id FROM coa_gl WHERE code = ${VENDOR_AP_PARENT_GL_CODE} FOR UPDATE`;
   let vendor: any = null;
   if (args.vendorId !== undefined && args.vendorId !== null && String(args.vendorId).trim() !== '') {
     const rawId = String(args.vendorId).trim();

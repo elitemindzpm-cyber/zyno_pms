@@ -3212,7 +3212,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         property_name: lease.property,
         unit_ref: lease.unit,
         tenant_name: lease.tenantName,
-      });
+      }, { skipDbPersist: true }); // already posted by the server in this flow
     }
 
     if (options?.terminateLease) {
@@ -3310,7 +3310,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           property_name: lease.property,
           unit_ref: lease.unit,
           tenant_name: lease.tenantName,
-        });
+        }, { skipDbPersist: true }); // already posted by the server in this flow
       }
 
       return {
@@ -6090,7 +6090,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         property_name: propName,
         unit_ref: unitRef,
         tenant_name: tenantName,
-      });
+      }, { skipDbPersist: true }); // already posted by the server in this flow
     }
 
     if (totalDeductions > 0) {
@@ -6109,7 +6109,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
         property_name: propName,
         unit_ref: unitRef,
         tenant_name: tenantName,
-      });
+      }, { skipDbPersist: true }); // already posted by the server in this flow
 
       if (mode === "DEDUCT_FROM_DEPOSIT") {
         // 2. Settle against deposit liability: Dr 21500 / Cr 12413
@@ -6127,7 +6127,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           property_name: propName,
           unit_ref: unitRef,
           tenant_name: tenantName,
-        });
+        }, { skipDbPersist: true }); // already posted by the server in this flow
       } else if (mode === "PAY_SEPARATELY") {
         // 2. Separate collection: Dr Cash/Bank / Cr 12413
         addFinanceStoreVoucher({
@@ -6144,7 +6144,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
           property_name: propName,
           unit_ref: unitRef,
           tenant_name: tenantName,
-        });
+        }, { skipDbPersist: true }); // already posted by the server in this flow
       }
     }
 
@@ -13840,7 +13840,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                                 <span>QAR {totalDeductions.toLocaleString()}</span>
                               </div>
                               <div className="flex justify-between font-mono text-amber-600 opacity-80">
-                                <span>&nbsp;&nbsp;CR 41400/41100 Recovery Income</span>
+                                <span>&nbsp;&nbsp;CR 41201003 Other Income-Damages</span>
                                 <span>QAR {totalDeductions.toLocaleString()}</span>
                               </div>
                               <div className="flex justify-between font-mono text-purple-700">
@@ -13875,7 +13875,7 @@ function LeasingPage({ role }: { role?: "admin" | "prop-mgr" | "leasing" }) {
                                 <span>QAR {totalDeductions.toLocaleString()}</span>
                               </div>
                               <div className="flex justify-between font-mono text-amber-600 opacity-80">
-                                <span>&nbsp;&nbsp;CR 41400/41100 Recovery Income</span>
+                                <span>&nbsp;&nbsp;CR 41201003 Other Income-Damages</span>
                                 <span>QAR {totalDeductions.toLocaleString()}</span>
                               </div>
                               <div className="flex justify-between font-mono text-blue-700">

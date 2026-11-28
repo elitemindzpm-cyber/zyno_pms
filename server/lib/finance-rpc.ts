@@ -66,7 +66,27 @@ export async function resolveUnitSl(unitId: string, propertyId: string, glCode: 
   const existing = await prisma.$queryRaw<{ sl_code: string; sl_name: string; coa_account_id: string | null }[]>`
     SELECT sl_code, sl_name, coa_account_id FROM fin_unit_sl_accounts
     WHERE unit_id = ${unitId} AND gl_code = ${glCode} AND is_active = TRUE`;
-  if (existing.length) return [existing[0]];
+  if (existing.length) {
+    // A unit's mapping can outlive its chart account (removed or deactivated by hand). Posting to such a code is
+    // refused ("not in the chart of accounts"), so put the account back instead of leaving the unit unusable.
+    const ex = existing[0];
+    const acct = await prisma.$queryRaw<{ id: string; is_active: any }[]>`
+      SELECT id, is_active FROM fin_coa_accounts WHERE account_code = ${ex.sl_code} LIMIT 1`;
+    if (acct.length && Number(acct[0].is_active) === 1) return [ex];
+    const parent = await prisma.$queryRaw<{ id: string; account_type: string; group_name: string | null; class_name: string | null }[]>`
+      SELECT id, account_type, group_name, class_name FROM fin_coa_accounts WHERE account_code = ${glCode} LIMIT 1`;
+    if (!parent.length) return [ex];
+    let coaId = acct.length ? String(acct[0].id) : randomUUID();
+    if (acct.length) {
+      await prisma.$executeRaw`UPDATE fin_coa_accounts SET is_active = TRUE WHERE id = ${coaId}`;
+    } else {
+      await prisma.$executeRaw`INSERT INTO fin_coa_accounts
+        (id, account_code, account_name, account_type, account_level, group_name, class_name, parent_account_id, is_active)
+        VALUES (${coaId}, ${ex.sl_code}, ${ex.sl_name}, ${parent[0].account_type}, 'SL', ${parent[0].group_name}, ${parent[0].class_name}, ${parent[0].id}, TRUE)`;
+    }
+    await prisma.$executeRaw`UPDATE fin_unit_sl_accounts SET coa_account_id = ${coaId} WHERE unit_id = ${unitId} AND gl_code = ${glCode}`;
+    return [{ ...ex, coa_account_id: coaId }];
+  }
 
   return txn(async (tx) => {
     const seq = await tx.$executeRaw`INSERT INTO app_sequences (name, current_value) VALUES ('fin_unit_sl_seq', 1)

@@ -655,6 +655,7 @@ export async function resolveAccountingAccounts(
         transaction_type: 'DAMAGE_CHARGE',
         debit_gl_code: '12413',
         credit_gl_code: '41201',
+        credit_sl_code: '41201003', // Other Income-Damages (entries sheet)
         is_active: true,
       }];
     } else if (ctx.transactionType === 'PENALTY_CHARGE') {

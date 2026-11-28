@@ -1402,11 +1402,14 @@ router.post('/ap-invoices', async (req: Request, res: Response) => {
     await txn(async (tx) => {
       const exists = await tx.$queryRaw<any[]>`SELECT id FROM fin_ap_invoices WHERE invoice_no = ${invoiceNo} LIMIT 1 FOR UPDATE`;
       if (exists.length) { const err: any = new Error(`Invoice ${invoiceNo} already exists`); err.status = 409; throw err; }
+      // Credit the supplier's own ledger (21000xxx), so the supplier balance and its payments (which debit that
+      // ledger) agree. Without a supplier name it falls back to the control account.
+      const apLedger = String(b.vendor || '').trim() ? await ensureVendorLedgerTx(tx, { vendorName: String(b.vendor).trim() }) : null;
       const posted = await postManualVoucher({
         voucher_date: date, voucher_type: 'Journal', reference_no: invoiceNo,
         idempotency_key: `AP_CREATE|${invoiceNo}`,
         description: `Invoice ${invoiceNo} from ${b.vendor || ''}`.trim(),
-        lines: [...debitLines, { account_code: AP_CONTROL_CODE, debit: 0, credit: total }],
+        lines: [...debitLines, { account_code: apLedger?.code || AP_CONTROL_CODE, debit: 0, credit: total }],
         created_by: (req as any).user?.id ?? null,
       }, tx);
       await tx.$executeRaw`INSERT INTO fin_ap_invoices

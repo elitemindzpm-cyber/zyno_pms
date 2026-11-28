@@ -6,8 +6,8 @@ import { HttpError } from '../lib/errors';
 import { num, money } from './leases';
 import { postGlEvent } from './posting';
 
-const SALARY_EXPENSE = '50100';     // Staff Salary (GL)
-const SALARY_PAYABLE = '21900';     // Salary Payable (GL)
+const SALARY_EXPENSE = '51101001';  // Staff Basic Salary (SL under Staff Cost 51101)
+const SALARY_PAYABLE = '22005001';  // Salary Payables (SL under Other Provisions 22005)
 const STAFF_RECEIVABLE = '12412';   // Staff Current Account: loan instalments recovered from salary
 const WORKING_DAYS = 30;
 const UNPAID_STATUSES = ['ABSENT', 'UNPAID_LEAVE', 'LOP'];

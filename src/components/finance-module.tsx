@@ -4269,6 +4269,7 @@ function PayableInvoiceSubModule() {
   // Multi-invoice settlement: unpaid invoices ticked in the table, and the amount to pay on each.
   const [selectedPay, setSelectedPay] = useState<string[]>([]);
   const [multiAmounts, setMultiAmounts] = useState<Record<string, string>>({});
+  const [paying, setPaying] = useState(false);
   const [payForm, setPayForm] = useState({
     paymentDate: new Date().toISOString().slice(0, 10),
     paymentMethod: "Bank Wire / QNB Corporate Electronic",
@@ -4567,7 +4568,8 @@ function PayableInvoiceSubModule() {
   }
 
   async function handleConfirmDisbursement() {
-    if (!payTarget) return;
+    if (!payTarget || paying) return;
+    setPaying(true);
     try {
       if (payTarget.multi) {
         const items: any[] = payTarget.items || [];
@@ -4652,6 +4654,8 @@ function PayableInvoiceSubModule() {
       await loadInvoices();
     } catch (e: any) {
       toast.error(e.message || "Failed to settle payment");
+    } finally {
+      setPaying(false);
     }
   }
 
@@ -5213,13 +5217,13 @@ function PayableInvoiceSubModule() {
                   General Ledger Posting Impact (Auto-Posted upon Settlement):
                 </div>
                 <div className="font-mono">
-                  • <strong className="text-blue-600">Dr. 21000</strong> Trade Payables - Vendors — QAR {Number(payTarget.amount || 0).toLocaleString()}
+                  • <strong className="text-blue-600">Dr. 21000</strong> Trade Payables - Vendors — QAR {(payTarget.multi ? (payTarget.items || []).reduce((sum: number, r: any) => sum + (Number(multiAmounts[r.invoice_no]) || 0), 0) : Number(payTarget.amount || 0)).toLocaleString()}
                 </div>
                 <div className="font-mono">
                   {payForm.paymentMethod.includes("Cash") || payForm.paymentMethod.includes("Petty") ? (
-                    <>• <strong className="text-amber-600">Cr. 12100001</strong> Cash in Hand / Operating Cash — QAR {Number(payTarget.amount || 0).toLocaleString()}</>
+                    <>• <strong className="text-amber-600">Cr. 12100001</strong> Cash in Hand / Operating Cash — QAR {(payTarget.multi ? (payTarget.items || []).reduce((sum: number, r: any) => sum + (Number(multiAmounts[r.invoice_no]) || 0), 0) : Number(payTarget.amount || 0)).toLocaleString()}</>
                   ) : (
-                    <>• <strong className="text-emerald-600">Cr. 12000001</strong> Bank Operating Account (QNB) — QAR {Number(payTarget.amount || 0).toLocaleString()}</>
+                    <>• <strong className="text-emerald-600">Cr. 12000001</strong> Bank Operating Account (QNB) — QAR {(payTarget.multi ? (payTarget.items || []).reduce((sum: number, r: any) => sum + (Number(multiAmounts[r.invoice_no]) || 0), 0) : Number(payTarget.amount || 0)).toLocaleString()}</>
                   )}
                 </div>
               </div>
@@ -5227,7 +5231,7 @@ function PayableInvoiceSubModule() {
           )}
           <DialogFooter>
             <Button variant="outline" onClick={() => setPayTarget(null)}>Cancel</Button>
-            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1" onClick={handleConfirmDisbursement}>
+            <Button className="bg-emerald-600 hover:bg-emerald-700 text-white gap-1" disabled={paying} onClick={handleConfirmDisbursement}>
               <CheckCircle2 className="h-4 w-4" /> Confirm & Disburse Settlement
             </Button>
           </DialogFooter>

@@ -4,6 +4,7 @@ import prisma, { txn } from '../lib/prisma';
 import { HttpError } from '../lib/errors';
 import { num, money } from './leases';
 import { postGlEvent } from './posting';
+import { ensureVendorLedgerTx } from '../lib/vendor-ledger';
 
 /**
  * Delegation of authority. An approver may approve a purchase order up to their own employee
@@ -154,12 +155,16 @@ export async function approvePayableInvoice(invoiceId: string, approverUserId: s
     }
     const total = money([...byAccount.values()].reduce((s, v) => s + v, 0));
 
+    // Credit the supplier's own ledger so it agrees with payments to that supplier.
+    const supplier = inv.vendor_id ? await ensureVendorLedgerTx(tx, { vendorId: String(inv.vendor_id) }) : null;
+    const apCode = supplier && supplier.code ? supplier.code : AP_CONTROL;
+
     const posted = await postGlEvent({
       eventType: 'MANUAL_JOURNAL', sourceType: 'AP_INVOICE', sourceId: invoiceId,
       idempotencyKey: `ap:${invoiceId}`, description: `Vendor invoice ${inv.doc_number ?? invoiceId}`,
       lines: [
         ...[...byAccount.entries()].map(([code, amount]) => ({ code, debit: amount, credit: 0 })),
-        { code: AP_CONTROL, debit: 0, credit: total },
+        { code: apCode, debit: 0, credit: total },
       ],
       tx,
     });

@@ -188,47 +188,9 @@ export async function executeFinalSettlement(
     return {} as PostingResult;
   };
 
-  // 1. Move each deposit bucket from its source GL to its refundable counterpart.
-  //    Source-account driven: SECURITY → 21500[unit SL], QATAR_COOL → 21100003, etc.
-  for (const bucket of depositBuckets) {
-    const { debit: drDep, credit: crDep } = await resolveAccountingAccounts({
-      transactionType: 'DEPOSIT_TO_REFUNDABLE',
-      depositType: bucket.depositType,
-      propertyId: financeInput.propertyId,
-      unitId: financeInput.unitId,
-      tenantId: financeInput.tenantId,
-      leaseId: financeInput.leaseId,
-      unitName: financeInput.unitName,
-    });
-
-    const vchDep = queueVoucher({
-      voucher_date: dateStr,
-      voucher_type: 'Journal',
-      description: `Final Settlement: Move ${bucket.depositType} Deposit to Refundable – ${financeInput.unitName || ''}`,
-      reference_no: financeInput.referenceNo ? `SETTLE-DEP-${bucket.depositType}-${financeInput.referenceNo}` : undefined,
-      tenant_id: financeInput.tenantId,
-      property_id: financeInput.propertyId,
-      unit_id: financeInput.unitId,
-      lease_id: financeInput.leaseId,
-      lines: [
-        {
-          account_code: drDep.slCode,
-          account_name: `${drDep.glName} / ${drDep.slName}`,
-          debit: bucket.amount,
-          credit: 0,
-          description: drDep.slName,
-        },
-        {
-          account_code: crDep.slCode,
-          account_name: `${crDep.glName} / ${crDep.slName}`,
-          debit: 0,
-          credit: bucket.amount,
-          description: crDep.slName,
-        },
-      ],
-    });
-    vouchers.push(vchDep);
-  }
+  // 1. (removed) The deposit is no longer reclassified to a refundable account first. The entries sheet settles
+  //    straight from the deposit ledger (Dr 21500 / Cr Bank). The old reclass debited 21500 and credited 21100,
+  //    but the offset and refund below debit 21500 again, so 21500 went negative and 21100 never cleared.
 
   // 2. Recognize non-invoiced charges into AR (12413)
   for (const deduction of financeInput.deductions) {
